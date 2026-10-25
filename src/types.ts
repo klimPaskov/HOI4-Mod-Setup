@@ -642,6 +642,12 @@ export interface InstallationExternalAction {
 }
 
 /** A tool the reviewed plan needs on this computer, checked before any file changes. */
+export interface AgentSetupResult {
+  state: "ready" | "incomplete" | "not_needed";
+  /** The tool's own words when it is not ready. */
+  detail: string;
+}
+
 export interface SetupRequirement {
   id: string;
   label: string;

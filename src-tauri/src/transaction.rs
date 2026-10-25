@@ -5788,6 +5788,8 @@ fn build_transaction_readiness(
         },
         dependency_status: "pass".into(),
         workflow_3d_state,
+        development_tools_state: String::new(),
+        development_tools_reason: String::new(),
         workflow_super_events_state,
         live_testing: plan.live_testing.clone(),
         live_testing_runtime_state: plan
