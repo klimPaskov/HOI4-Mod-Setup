@@ -57,6 +57,14 @@ test("a refusal from the model provider carries its short reason", async () => {
   assert.match(await plain.text(), /HTTP 500\./);
 });
 
+test("a refused key says why without exposing it", async () => {
+  const response = await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(403, '{"error":{"message":"Key limit exceeded"}}', []));
+  assert.equal(response.status, 503);
+  const text = await response.text();
+  assert.match(text, /not available right now: Key limit exceeded\./);
+  assert.ok(!text.includes(KEY));
+});
+
 test("a redirect from the model provider is refused, not followed", async () => {
   const response = await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(302, "", []));
   assert.equal(response.status, 502);

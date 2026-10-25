@@ -98,8 +98,11 @@ export async function handle(request, env, upstreamFetch) {
     return reply(429, "The free assistant has reached its limit for now. Try again later, or choose another assistant.", cors);
   }
   if (upstream.status === 401 || upstream.status === 403) {
-    // The maintainer's key, not the user's: never report it as theirs.
-    return reply(503, "The free assistant is not available right now. Choose another assistant.", cors);
+    // The maintainer's key, not the user's: never report it as theirs. The
+    // provider's own short reason (never the key) says whether it is a limit,
+    // a policy setting, or a bad key, which the maintainer needs.
+    const reason = upstreamReason(await upstream.text());
+    return reply(503, `The free assistant is not available right now${reason}. Choose another assistant.`, cors);
   }
   const replyText = await upstream.text();
   if (new TextEncoder().encode(replyText).length > MAX_REPLY_BYTES) return reply(502, "The model's reply was too large.", cors);
