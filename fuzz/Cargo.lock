@@ -1157,7 +1157,7 @@ dependencies = [
 
 [[package]]
 name = "hoi4-mod-setup"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "base64 0.22.1",
  "brotli",
