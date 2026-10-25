@@ -6,7 +6,7 @@ and source or homepage evidence for release review. It does not replace maintain
 review of bundled assets or the complete license text supplied by each dependency
 before a public binary release.
 
-Inventory counts: 160 JavaScript packages and 425 Rust packages.
+Inventory counts: 160 JavaScript packages and 427 Rust packages.
 
 ## JavaScript dependencies
 
@@ -30,6 +30,7 @@ Inventory counts: 160 JavaScript packages and 425 Rust packages.
 | @babel/parser | 7.29.7 | MIT | https://babel.dev/docs/en/next/babel-parser |
 | @babel/plugin-transform-react-jsx-self | 7.29.7 | MIT | https://babel.dev/docs/en/next/babel-plugin-transform-react-jsx-self |
 | @babel/plugin-transform-react-jsx-source | 7.29.7 | MIT | https://babel.dev/docs/en/next/babel-plugin-transform-react-jsx-source |
+| @babel/runtime | 7.29.10 | MIT | https://babel.dev/docs/en/next/babel-runtime |
 | @babel/runtime | 7.29.7 | MIT | https://babel.dev/docs/en/next/babel-runtime |
 | @babel/template | 7.29.7 | MIT | https://babel.dev/docs/en/next/babel-template |
 | @babel/traverse | 7.29.7 | MIT | https://babel.dev/docs/en/next/babel-traverse |
@@ -47,8 +48,8 @@ Inventory counts: 160 JavaScript packages and 425 Rust packages.
 | @jridgewell/trace-mapping | 0.3.31 | MIT | https://github.com/jridgewell/sourcemaps/tree/main/packages/trace-mapping |
 | @playwright/test | 1.62.1 | Apache-2.0 | https://playwright.dev |
 | @rolldown/pluginutils | 1.0.0-beta.27 | MIT | https://github.com/rolldown/rolldown#readme |
-| @rollup/rollup-win32-x64-gnu | 4.62.2 | MIT | https://rollupjs.org/ |
-| @rollup/rollup-win32-x64-msvc | 4.62.2 | MIT | https://rollupjs.org/ |
+| @rollup/rollup-win32-x64-gnu | 4.65.0 | MIT | https://rollupjs.org/ |
+| @rollup/rollup-win32-x64-msvc | 4.65.0 | MIT | https://rollupjs.org/ |
 | @standard-schema/spec | 1.1.0 | MIT | https://standardschema.dev |
 | @tauri-apps/api | 2.11.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri#readme |
 | @tauri-apps/cli-win32-x64-msvc | 2.11.5 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri#readme |
@@ -126,11 +127,10 @@ Inventory counts: 160 JavaScript packages and 425 Rust packages.
 | parse5 | 7.3.0 | MIT | https://parse5.js.org |
 | pathe | 2.0.3 | MIT | https://github.com/unjs/pathe#readme |
 | picocolors | 1.1.1 | ISC | https://github.com/alexeyraspopov/picocolors#readme |
-| picomatch | 4.0.5 | MIT | https://github.com/micromatch/picomatch |
 | picomatch | 4.0.7 | MIT | https://github.com/micromatch/picomatch |
 | playwright-core | 1.62.1 | Apache-2.0 | https://playwright.dev |
 | playwright | 1.62.1 | Apache-2.0 | https://playwright.dev |
-| postcss | 8.5.23 | MIT | https://postcss.org/ |
+| postcss | 8.5.31 | MIT | https://postcss.org/ |
 | pretty-format | 27.5.1 | MIT | https://github.com/facebook/jest#readme |
 | punycode | 2.3.1 | MIT | https://mths.be/punycode |
 | react-dom | 19.3.0 | MIT | https://react.dev/ |
@@ -138,7 +138,7 @@ Inventory counts: 160 JavaScript packages and 425 Rust packages.
 | react-refresh | 0.17.0 | MIT | https://react.dev/ |
 | react | 19.3.0 | MIT | https://react.dev/ |
 | redent | 3.0.0 | MIT | https://github.com/sindresorhus/redent#readme |
-| rollup | 4.62.2 | MIT | https://rollupjs.org/ |
+| rollup | 4.65.0 | MIT | https://rollupjs.org/ |
 | rrweb-cssom | 0.8.0 | MIT | https://github.com/rrweb-io/CSSOM#readme |
 | safer-buffer | 2.1.2 | MIT | https://github.com/ChALkeR/safer-buffer#readme |
 | saxes | 6.0.0 | ISC | https://github.com/lddubeau/saxes#readme |
@@ -160,7 +160,7 @@ Inventory counts: 160 JavaScript packages and 425 Rust packages.
 | tr46 | 5.1.1 | MIT | https://github.com/jsdom/tr46#readme |
 | typescript | 5.9.3 | Apache-2.0 | https://www.typescriptlang.org/ |
 | update-browserslist-db | 1.2.3 | MIT | https://github.com/browserslist/update-db#readme |
-| vite | 6.4.3 | MIT | https://vite.dev |
+| vite | 6.4.4 | MIT | https://vite.dev |
 | vitest | 4.1.11 | MIT | https://vitest.dev |
 | w3c-xmlserializer | 5.0.0 | MIT | https://github.com/jsdom/w3c-xmlserializer#readme |
 | webidl-conversions | 7.0.0 | BSD-2-Clause | https://github.com/jsdom/webidl-conversions#readme |
@@ -300,6 +300,8 @@ Inventory counts: 160 JavaScript packages and 425 Rust packages.
 | hex | 0.4.3 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | hkdf | 0.12.4 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | hmac | 0.12.1 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
+| hoi4-setup-core | 0.1.0 | Apache-2.0 | path dependency |
+| hoi4-setup-web | 0.1.0 | Apache-2.0 | path dependency |
 | html5ever | 0.38.0 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | http-body-util | 0.1.4 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | http-body | 1.1.0 | MIT | registry+https://github.com/rust-lang/crates.io-index |
@@ -422,8 +424,8 @@ Inventory counts: 160 JavaScript packages and 425 Rust packages.
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT | registry+https://github.com/rust-lang/crates.io-index |
 | rustix | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | registry+https://github.com/rust-lang/crates.io-index |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
-| rustls-webpki | 0.103.15 | ISC | registry+https://github.com/rust-lang/crates.io-index |
-| rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT | registry+https://github.com/rust-lang/crates.io-index |
+| rustls-webpki | 0.103.16 | ISC | registry+https://github.com/rust-lang/crates.io-index |
+| rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | registry+https://github.com/rust-lang/crates.io-index |
 | rustversion | 1.0.23 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | rusty-fork | 0.3.1 | MIT/Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 | registry+https://github.com/rust-lang/crates.io-index |
@@ -546,7 +548,7 @@ Inventory counts: 160 JavaScript packages and 425 Rust packages.
 | web_atoms | 0.2.5 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | web-sys | 0.3.103 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | web-time | 1.1.0 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
-| webpki-roots | 1.0.9 | CDLA-Permissive-2.0 | registry+https://github.com/rust-lang/crates.io-index |
+| webpki-roots | 1.0.11 | CDLA-Permissive-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | winapi-util | 0.1.11 | Unlicense OR MIT | registry+https://github.com/rust-lang/crates.io-index |
 | windows_aarch64_gnullvm | 0.52.6 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | windows_aarch64_gnullvm | 0.53.1 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
