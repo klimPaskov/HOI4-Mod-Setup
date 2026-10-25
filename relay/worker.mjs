@@ -13,7 +13,9 @@ const MAX_BODY_BYTES = 256 * 1024;
 const MAX_MESSAGE_CHARS = 160_000;
 const MAX_SCHEMA_BYTES = 48 * 1024;
 const MAX_REPLY_BYTES = 4 * 1024 * 1024;
-const MAX_TOKENS = 8192;
+// A reasoning model spends output tokens thinking before it answers; the review of an installed project
+// needs far more than the answer itself (8,192 truncated it).
+const MAX_TOKENS = 32768;
 const UPSTREAM = "https://openrouter.ai/api/v1/chat/completions";
 const ROUTE = "/v1/chat/completions";
 const APP_URL = "https://klimpaskov.github.io/HOI4-Mod-Setup/";
