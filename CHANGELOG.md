@@ -6,7 +6,6 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## 0.7.0 - 2026-10-25
 
-- Update `rustls-webpki`, `webpki-roots`, and `webpki-root-certs` (distrusted emSign intermediates) and `vite` 6.4.4 (`launch-editor` path check bypass on Windows), so `cargo audit` and `pnpm audit` pass again.
 - Fix first installs that kept asking to undo changes: when HOI4 Agent Tools is selected but no python.org Python is on the computer, Review changes now shows the missing requirement and how to fix it, with a **Check again** button, and blocks **Start installation** before any file is written. Previously the bootstrap failed after the files were applied, readiness blocked the lock, and the only recovery was **Undo changes**, which returned on every retry.
 - Explain an interrupted installation on the recovery screen: **What stopped setup** and the next step are visible without opening Details, and the message after **Undo changes** says the mod is as it was and what to change before trying again.
 - Keep an existing mod's own valid `descriptor.mod`, `thumbnail.png`, and `README.md` by default on its first import, instead of asking the user to compare their descriptor with a generated one. Invalid files and a thumbnail chosen in the app still go through conflict review.
@@ -28,7 +27,6 @@ HOI4 Mod Setup follows semantic versioning.
 - Fix Claude API setup analysis failing with an HTTP 400 about `minimum` and `maximum`: the schema sent to Anthropic leaves out the keywords its structured output does not support, and Setup still checks every reply against the full schema.
 - Add `hoi4_mod_setup::service`, a facade for server hosts: per-session scan, analysis, plan and approval state with no process-wide stores, an injected credential store, an explicit workspace root and state root, a public root-identity function, and a declared Node runtime. Desktop commands call the same gate code. `keyring` is now the default-on `os-keyring` feature, so a server can build without it and without `libdbus`. See `docs/39_service_facade.md`.
 - Fix exact restoration after a process stop during apply: new bytes are placed through a temporary file named for the transaction and operation (and for the lock), so rollback removes the `.hoi4ms-placing-*.tmp` file a hard stop left beside the destination instead of leaving an extra file in the project, and a retry after a stop during rollback replaces its own stale temporary. Directories that an operation created beside its destination and files outside the project root are not yet covered.
-- Add `hoi4_mod_setup::service`, a facade for server hosts: per-session scan, analysis, plan and approval state with no process-wide stores, an injected credential store, an explicit workspace root and state root, a public root-identity function, and a declared Node runtime. Desktop commands call the same gate code. `keyring` is now the default-on `os-keyring` feature, so a server can build without it and without `libdbus`. See `docs/39_service_facade.md`.
 - Move the plan builder behind `service::DefaultPlanBuilder` and a `SourceFetcher` seam so a server builds the same plans as the desktop from a caller-given state root, cache root and Node runtime. The desktop path is unchanged. See `docs/39_service_facade.md`.
 - Add a free setup assistant that needs no account: the app sends one structured request through the maintainer's relay to a free OpenRouter model, and it becomes the default once the relay is deployed. The maintainer's key stays a relay secret and never ships in the app or the web page.
 - Add OpenRouter as a setup assistant on desktop and web, with **Sign in with OpenRouter** (OAuth PKCE) or a pasted key. A free model is the default choice.
@@ -52,8 +50,7 @@ HOI4 Mod Setup follows semantic versioning.
 - Record generated text once in the installation lock instead of also as a byte array.
 - Bring the web edition close to the desktop app: context documents and images, a choice of the findings the assistant reads, image providers, portraits, and live testing, update, repair, change, and removal of an existing setup, merge previews and rename for changed files, readiness checks, a launcher file for existing mods, and a local model as the setup assistant.
 - Record the raw source hash in installation locks written by the web edition, so the desktop app can maintain them.
-
-Coding clients are never started by setup; client sign-in and in-client behavior beyond reading the documented files are not tested.
+- Update `rustls-webpki`, `webpki-roots`, and `webpki-root-certs` (distrusted emSign intermediates) and `vite` 6.4.4 (`launch-editor` path check bypass on Windows), so `cargo audit` and `pnpm audit` pass again.
 
 ## 0.6.3 - 2026-10-18
 
