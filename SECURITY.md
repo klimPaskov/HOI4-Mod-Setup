@@ -4,7 +4,7 @@ HOI4 Mod Setup reads and writes development repositories, downloads workflow fil
 
 ## Reporting a vulnerability
 
-Use GitHub private vulnerability reporting when it is enabled for the repository. If it is unavailable, use the private security contact listed in the repository profile or release notes.
+Use [GitHub private vulnerability reporting](https://github.com/klimPaskov/HOI4-Mod-Setup/security/advisories/new) (the repository's **Security** tab, then **Report a vulnerability**). It is enabled, and only the maintainers can see the report.
 
 Do not open a public issue for:
 
@@ -22,11 +22,11 @@ Include a concise reproduction, affected version, platform, impact, and any safe
 
 ## Response expectations
 
-Maintainers should acknowledge a report, reproduce it in a private branch, classify affected releases, prepare a fix and regression test, and coordinate disclosure. Exact response timelines should be published once the maintainer team and support capacity are known.
+Maintainers acknowledge a report, reproduce it in a private branch, classify affected releases, prepare a fix and regression test, and coordinate disclosure with the reporter. The project is maintained by one person in their own time, so responses are best effort and no fixed timeline is promised.
 
 ## Supported versions
 
-Before the first stable release, only the latest published preview may receive security fixes. After stable release, the project should publish a support table here.
+Only the latest [stable release](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest) receives security fixes. The app updates itself on start, so reporters should reproduce on the latest version first.
 
 ## Security requirements for contributions
 
