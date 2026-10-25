@@ -35,11 +35,24 @@ test("forwards the reviewed shape with the secret key and the configured model o
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://openrouter.ai/api/v1/chat/completions");
   assert.equal(calls[0].init.headers.authorization, `Bearer ${KEY}`);
-  assert.equal(calls[0].init.redirect, "error");
+  assert.equal(calls[0].init.redirect, "manual");
   const sent = JSON.parse(calls[0].init.body);
   assert.deepEqual(Object.keys(sent).sort(), ["max_tokens", "messages", "model", "provider", "response_format"]);
   assert.equal(sent.model, MODEL);
   assert.equal(sent.max_tokens, 8192);
+});
+
+test("the upstream call uses only fetch options the Workers runtime accepts", async () => {
+  const calls = [];
+  await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(200, '{"choices":[]}', calls));
+  // Workers throw on any other redirect mode ("error"), which showed up only once deployed.
+  assert.ok(["follow", "manual"].includes(calls[0].init.redirect));
+});
+
+test("a redirect from the model provider is refused, not followed", async () => {
+  const response = await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(302, "", []));
+  assert.equal(response.status, 502);
+  assert.match(await response.text(), /could not reach its model/);
 });
 
 test("desktop requests without an Origin are served without CORS headers", async () => {

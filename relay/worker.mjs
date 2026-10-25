@@ -80,9 +80,14 @@ export async function handle(request, env, upstreamFetch) {
         "x-title": "HOI4 Mod Setup",
       },
       body: JSON.stringify(upstreamBody),
-      redirect: "error",
+      // Workers accept only "follow" or "manual" here ("error" throws), so a
+      // redirect is held back and refused below instead of followed.
+      redirect: "manual",
     });
   } catch {
+    return reply(502, "The free assistant could not reach its model.", cors);
+  }
+  if (upstream.status >= 300 && upstream.status < 400) {
     return reply(502, "The free assistant could not reach its model.", cors);
   }
   if (upstream.status === 429 || upstream.status === 402) {
