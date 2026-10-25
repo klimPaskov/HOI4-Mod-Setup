@@ -513,6 +513,12 @@ pub struct ReadinessInput {
     pub dependency_status: String,
     #[serde(default)]
     pub workflow_3d_state: String,
+    /// State of the development tools step (`runtime.agent_sync`) in the lock:
+    /// empty when the project never had one.
+    #[serde(default)]
+    pub development_tools_state: String,
+    #[serde(default)]
+    pub development_tools_reason: String,
     #[serde(default)]
     pub workflow_super_events_state: String,
     #[serde(default)]
@@ -576,6 +582,8 @@ impl Default for ReadinessInput {
             conflict_status: "pass".into(),
             dependency_status: "pass".into(),
             workflow_3d_state: "not_selected".into(),
+            development_tools_state: String::new(),
+            development_tools_reason: String::new(),
             workflow_super_events_state: "not_selected".into(),
             live_testing: None,
             live_testing_runtime_state: String::new(),
@@ -955,6 +963,11 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         }
     }
     add_workflow_3d_check(&mut checks, &input.workflow_3d_state);
+    add_development_tools_check(
+        &mut checks,
+        &input.development_tools_state,
+        &input.development_tools_reason,
+    );
     add_super_events_check(&mut checks, &input.workflow_super_events_state);
     add_portrait_check(
         &mut checks,
@@ -1323,6 +1336,35 @@ fn add_wiki_check(checks: &mut Vec<ReadinessCheck>, input: &ReadinessInput) {
             kind: "required_pages".into(),
             value: json!({"required": input.wiki_required_pages.len(), "missing": missing, "broken_links": input.wiki_broken_links}),
             path: Some("paradox_wiki/".into()),
+        }],
+    });
+}
+
+/// The package's `check.py setup` step. Never blocking: the project itself is
+/// usable without it, and the report says what is left to do.
+fn add_development_tools_check(checks: &mut Vec<ReadinessCheck>, state: &str, reason: &str) {
+    let status = match state {
+        "" | "not_selected" | "unsupported_platform" => return,
+        "ready" => "pass",
+        _ => "warn",
+    };
+    checks.push(ReadinessCheck {
+        id: "tools.development".into(),
+        category: "workflow".into(),
+        label: "Development tools".into(),
+        status: status.into(),
+        blocking: false,
+        message: Some(if status == "pass" {
+            "The development tools are prepared: Python packages, game folder, and agent files.".into()
+        } else if reason.trim().is_empty() {
+            "The development tools are not prepared yet; run Repair to try again. The project itself is usable.".into()
+        } else {
+            format!("The development tools are not fully prepared: {}", reason.trim())
+        }),
+        evidence: vec![ReadinessEvidence {
+            kind: "workflow_state".into(),
+            value: json!(state),
+            path: None,
         }],
     });
 }
@@ -1842,6 +1884,16 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         },
         dependency_status: dependency_status.into(),
         workflow_3d_state,
+        development_tools_state: lock
+            .as_ref()
+            .and_then(|lock| lock.optional_workflows.get(crate::agent_setup::COMPONENT_ID))
+            .map(|workflow| workflow.state.clone())
+            .unwrap_or_default(),
+        development_tools_reason: lock
+            .as_ref()
+            .and_then(|lock| lock.optional_workflows.get(crate::agent_setup::COMPONENT_ID))
+            .and_then(|workflow| workflow.reason.clone())
+            .unwrap_or_default(),
         workflow_super_events_state,
         live_testing_runtime_state: lock.as_ref().and_then(|lock| lock.optional_workflows.get("workflow.live_tools")).map(|workflow| workflow.state.clone()).unwrap_or_default(),
         live_testing: lock.as_ref().map(|lock| lock.live_testing.clone().unwrap_or_else(|| crate::live_testing::legacy_selection(&lock.components))),
@@ -2597,5 +2649,32 @@ mod live_provider_readiness_tests {
             assert!(!row.blocking);
             assert_eq!(row.evidence[0].value["gameplay_verified"], false);
         }
+    }
+
+    #[test]
+    fn the_development_tools_step_is_reported_but_never_blocks() {
+        let mut checks = Vec::new();
+        add_development_tools_check(&mut checks, "", "");
+        add_development_tools_check(&mut checks, "not_selected", "");
+        assert!(
+            checks.is_empty(),
+            "a project without the step shows nothing"
+        );
+
+        add_development_tools_check(&mut checks, "ready", "");
+        add_development_tools_check(
+            &mut checks,
+            "incomplete",
+            "Python 3.9 or newer was not found",
+        );
+        add_development_tools_check(&mut checks, "selected_pending", "");
+        assert_eq!(checks.len(), 3);
+        assert!(checks
+            .iter()
+            .all(|check| !check.blocking && check.id == "tools.development"));
+        assert_eq!(checks[0].status, "pass");
+        assert_eq!(checks[1].status, "warn");
+        assert!(checks[1].message.as_deref().unwrap().contains("Python 3.9"));
+        assert_eq!(checks[2].status, "warn");
     }
 }

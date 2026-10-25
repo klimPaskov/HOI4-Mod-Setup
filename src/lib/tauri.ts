@@ -1,5 +1,5 @@
 import { findingDisplayValue, findingLabel } from "../findings";
-import type { SetupRequirement } from "../types";
+import type { AgentSetupResult, SetupRequirement } from "../types";
 import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, ContextDocument, ContextImage, ContextPick, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, UpdateSourceSelection, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
@@ -123,6 +123,7 @@ interface TauriCommandMap {
   build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; analysisOverride?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"]; imageGeneration?: ImageGenerationSelection; liveTesting?: LiveTestingSelection; primaryCodingEnvironment?: CodingEnvironmentId; additionalCodingEnvironments?: CodingEnvironmentId[]; analysisConfirmationValues?: CodexAnalysisConfirmationValues; updateSource?: UpdateSourceSelection }; result: InstallationPlan };
   approve_installation: { args: { planId: string }; result: void };
   check_installation_requirements: { args: { planId: string }; result: SetupRequirement[] };
+  run_agent_setup: { args: { planId: string; projectRoot: string }; result: AgentSetupResult };
   resolve_installation_conflict: { args: { planId: string; path: string; choice: string }; result: InstallationPlan };
   apply_installation: { args: { planId: string; projectRoot: string }; result: TransactionJournal };
   rollback_installation: { args: { projectRoot: string; transactionId: string }; result: TransactionJournal };
@@ -649,6 +650,11 @@ export async function applyInstallation(planId: string, projectRoot: string): Pr
 
 export async function applyInstallationResult(planId: string, projectRoot: string): Promise<CommandResult<TransactionJournal>> {
   return invokeCommandResult("apply_installation", { planId, projectRoot });
+}
+
+/** Prepare the development tools the installed package ships (after an apply). */
+export async function runAgentSetupResult(planId: string, projectRoot: string): Promise<CommandResult<AgentSetupResult>> {
+  return invokeCommandResult("run_agent_setup", { planId, projectRoot });
 }
 
 export async function openInCodex(projectRoot: string): Promise<OpenInCodexResult | null> {
