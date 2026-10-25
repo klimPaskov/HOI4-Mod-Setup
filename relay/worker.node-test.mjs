@@ -49,6 +49,14 @@ test("the upstream call uses only fetch options the Workers runtime accepts", as
   assert.ok(["follow", "manual"].includes(calls[0].init.redirect));
 });
 
+test("a refusal from the model provider carries its short reason", async () => {
+  const response = await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(404, '{"error":{"message":"No endpoints found matching your data policy"}}', []));
+  assert.equal(response.status, 502);
+  assert.match(await response.text(), /HTTP 404: No endpoints found matching your data policy/);
+  const plain = await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(500, "not json", []));
+  assert.match(await plain.text(), /HTTP 500\./);
+});
+
 test("a redirect from the model provider is refused, not followed", async () => {
   const response = await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(302, "", []));
   assert.equal(response.status, 502);
