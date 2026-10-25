@@ -7,6 +7,9 @@ import type { AiAccountStatus, AiProviderId, CodexAnalysisResult, ContextDocumen
 import { renderCoverPng, renderReferenceJpeg } from "./lib/images";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
+// These tests describe the app before the free relay is set; the free default has its own file.
+vi.mock("./free-assistant.json", () => ({ default: { endpoint: null, model: "nvidia/nemotron-3-super-120b-a12b:free" } }));
+
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
   return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), buildMaintenancePlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), checkInstallationRequirements: vi.fn(), confirmCodexAnalysis: vi.fn(), draftModDescription: vi.fn(), findInterruptedTransaction: vi.fn(), forgetContextAttachment: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickContextDocuments: vi.fn(), pickContextImages: vi.fn(), pickProjectFolder: vi.fn(), readDiagnostics: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
