@@ -58,10 +58,67 @@ pub fn adapt_selected_source(
         adapt_portrait_config_source(&conditional, context.portrait)?
     } else if is_super_events_runtime_component(component_id) {
         adapt_super_events_source(&conditional, context.identity)?
+    } else if normalized.ends_with("/hoi4-feature-assets/tools/project_settings.json") {
+        adapt_asset_tool_settings(&conditional, context.identity)
+    } else if normalized == ".tools/gfx/settings.json" {
+        adapt_gfx_settings(&conditional, context.identity)
     } else {
         conditional
     };
     adapt_component_blocks(adapted, context.selected_components)
+}
+
+/// Replace the string value of `key` in a JSON text, keeping the file's own
+/// layout and every other line. A value that is not a plain string, or a key
+/// that is absent, leaves the text unchanged.
+fn set_json_string_value(text: &str, key: &str, value: &str) -> String {
+    let pattern = format!(r#"("{}"\s*:\s*)"(?:[^"\\]|\\.)*""#, regex::escape(key));
+    let Ok(regex) = Regex::new(&pattern) else {
+        return text.to_string();
+    };
+    let Ok(encoded) = serde_json::to_string(value) else {
+        return text.to_string();
+    };
+    regex
+        .replace(text, |captures: &regex::Captures<'_>| {
+            format!("{}{}", &captures[1], encoded)
+        })
+        .into_owned()
+}
+
+/// The shared asset tools read the mod's name and id prefix from this file
+/// (the source ships "HOI4" and "hoi4").
+fn adapt_asset_tool_settings(bytes: &[u8], identity: &ProjectIdentity) -> Vec<u8> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return bytes.to_vec();
+    };
+    let mut adapted = set_json_string_value(text, "project_label", identity.display_name.trim());
+    if let Some(prefix) = identity
+        .script_prefix
+        .as_deref()
+        .filter(|p| !p.trim().is_empty())
+    {
+        adapted = set_json_string_value(&adapted, "id_prefix", prefix.trim());
+    }
+    adapted.into_bytes()
+}
+
+/// `gfx.py` groups registries whose file name starts with this prefix on its
+/// contact sheets; the mod's own script prefix is the sensible value.
+fn adapt_gfx_settings(bytes: &[u8], identity: &ProjectIdentity) -> Vec<u8> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return bytes.to_vec();
+    };
+    match identity
+        .script_prefix
+        .as_deref()
+        .filter(|p| !p.trim().is_empty())
+    {
+        Some(prefix) => {
+            set_json_string_value(text, "shared_registry_prefix", prefix.trim()).into_bytes()
+        }
+        None => bytes.to_vec(),
+    }
 }
 
 pub fn adapt_subagent_for_spawn(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
@@ -679,4 +736,84 @@ pub fn adapt_codex_config(
         AppError::Source(format!("adapted Codex configuration is invalid: {error}"))
     })?;
     Ok(rendered.into_bytes())
+}
+
+#[cfg(test)]
+mod project_settings_tests {
+    use super::*;
+
+    fn identity(name: &str, prefix: Option<&str>) -> ProjectIdentity {
+        ProjectIdentity {
+            display_name: name.into(),
+            project_id: "x".into(),
+            author: String::new(),
+            version: "1".into(),
+            supported_game_version: "*".into(),
+            project_root: std::path::PathBuf::from("."),
+            default_branch: "main".into(),
+            script_prefix: prefix.map(str::to_string),
+            primary_namespace: None,
+            descriptor_tags: Vec::new(),
+            launcher_descriptor_path: None,
+        }
+    }
+
+    const ASSET: &str = "{
+ \"_about\": \"keep \\\"this\\\" text\",
+ \"project_label\": \"HOI4\",
+ \"id_prefix\": \"hoi4\",
+ \"reference_folder\": \"vanilla_reference\"
+}
+";
+    const GFX: &str = "{
+ \"asset_tools\": \"a/b\",
+ \"shared_registry_prefix\": \"\"
+}
+";
+
+    #[test]
+    fn the_asset_tools_get_the_mods_name_and_prefix_and_nothing_else_changes() {
+        let adapted = adapt_asset_tool_settings(
+            ASSET.as_bytes(),
+            &identity("Atlantis \"Rising\"", Some("atl")),
+        );
+        let text = String::from_utf8(adapted).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["project_label"], "Atlantis \"Rising\"");
+        assert_eq!(value["id_prefix"], "atl");
+        assert_eq!(value["reference_folder"], "vanilla_reference");
+        assert_eq!(value["_about"], "keep \"this\" text");
+        // Same lines in the same order: only the two values differ.
+        assert_eq!(text.lines().count(), ASSET.lines().count());
+        assert!(text.contains(" \"reference_folder\": \"vanilla_reference\""));
+    }
+
+    #[test]
+    fn without_a_prefix_only_the_label_is_set() {
+        let text = String::from_utf8(adapt_asset_tool_settings(
+            ASSET.as_bytes(),
+            &identity("Mod", None),
+        ))
+        .unwrap();
+        assert!(text.contains("\"project_label\": \"Mod\""));
+        assert!(text.contains("\"id_prefix\": \"hoi4\""));
+    }
+
+    #[test]
+    fn the_gfx_registry_prefix_is_the_script_prefix() {
+        let text = String::from_utf8(adapt_gfx_settings(
+            GFX.as_bytes(),
+            &identity("Mod", Some("atl")),
+        ))
+        .unwrap();
+        assert!(text.contains("\"shared_registry_prefix\": \"atl\""));
+        assert_eq!(
+            adapt_gfx_settings(GFX.as_bytes(), &identity("Mod", None)),
+            GFX.as_bytes()
+        );
+        assert_eq!(
+            adapt_gfx_settings(b"not json", &identity("Mod", Some("atl"))),
+            b"not json"
+        );
+    }
 }

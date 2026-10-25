@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Fill the per-mod settings of the package's asset and gfx tools from the mod's name and script prefix: `project_label` and `id_prefix` in `hoi4-feature-assets/tools/project_settings.json`, and `shared_registry_prefix` in `.tools/gfx/settings.json`, instead of leaving the source's generic "HOI4" values. The files keep their layout; a missing prefix leaves its value alone. The web edition gets the same adaptation.
+
 - Let a hosted setup analysis take up to five minutes instead of two. The free model reasons before it answers and needs longer than two minutes on a large installed project, which showed as "The selected provider is temporarily unavailable" on every attempt of an update or repair review.
 
 ## 0.7.1 - 2026-10-25
