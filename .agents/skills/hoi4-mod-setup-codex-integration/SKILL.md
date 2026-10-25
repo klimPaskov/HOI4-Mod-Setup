@@ -220,6 +220,9 @@ hosted API profiles and not a release claim. Read the accepted boundary in
 - use native structured-output request formats for Anthropic, Gemini, and Grok;
   API requests contain no tools, provider output is bounded, and redirects are
   disabled
+- send Anthropic only the supported schema subset (`anthropic_output_schema` in
+  `analysis.rs` strips numeric, string-length, `maxItems`, and `minItems` > 1
+  keywords); the runtime validator still enforces the full schema
 
 ## Analysis boundary
 

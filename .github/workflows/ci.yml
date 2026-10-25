@@ -147,6 +147,28 @@ jobs:
         if: steps.detect.outputs.present == 'true'
         run: node scripts/run_rust_tests.mjs
 
+  service-without-keyring:
+    name: Service facade without the OS keyring (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure Rust
+        shell: bash
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+      - name: Check that no keyring or D-Bus crate is in the build
+        shell: bash
+        run: |
+          if cargo tree -p hoi4-mod-setup --no-default-features -e normal | grep -E 'keyring|dbus'; then
+            echo "the server build must not depend on keyring or D-Bus"
+            exit 1
+          fi
+      - name: Build the library for a server host
+        run: cargo build -p hoi4-mod-setup --lib --no-default-features
+      - name: Test the service facade
+        run: "cargo test -p hoi4-mod-setup --lib --no-default-features -- service:: credentials::"
+
   core-wasm:
     name: Portable core (wasm32)
     runs-on: ubuntu-latest
