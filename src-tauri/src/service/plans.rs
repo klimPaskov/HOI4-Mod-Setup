@@ -54,6 +54,49 @@ pub(crate) fn merge_bytes(context: &MergeContext, path: &str) -> Result<Vec<u8>,
     Ok(bytes)
 }
 
+/// What an update does with a project instruction file whose installed bytes
+/// are an adaptation of the source (ownership "merged").
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MergedUpdate {
+    /// The file holds exactly what the old source adapted to: take the new one.
+    Replace,
+    /// The file differs from the old adaptation only where the new source is
+    /// unchanged, so both sets of changes apply without a decision.
+    Merged(Vec<u8>),
+    /// The user edited the file, or the changes overlap: show it for review.
+    NeedsReview,
+}
+
+/// Decide an update of a merged instruction file from three byte strings:
+/// `base` is the old source adapted for this project (rebuilt from the exact
+/// revision the lock recorded), `local` is the file now, `incoming` is the new
+/// source adapted the same way. A file the user has edited since the last
+/// install (`local_modified`) is never changed without review.
+pub(crate) fn reconcile_merged_update(
+    base: &[u8],
+    local: &[u8],
+    incoming: &[u8],
+    local_modified: bool,
+) -> MergedUpdate {
+    if local == base {
+        return MergedUpdate::Replace;
+    }
+    if local_modified {
+        return MergedUpdate::NeedsReview;
+    }
+    let (Ok(base), Ok(local), Ok(incoming)) = (
+        std::str::from_utf8(base),
+        std::str::from_utf8(local),
+        std::str::from_utf8(incoming),
+    ) else {
+        return MergedUpdate::NeedsReview;
+    };
+    match three_way_merge(base, local, incoming) {
+        Ok(merged) => MergedUpdate::Merged(merged.into_bytes()),
+        Err(_) => MergedUpdate::NeedsReview,
+    }
+}
+
 /// The descriptor, thumbnail and README an existing mod already has are the
 /// mod's own files, not setup output. A valid one is kept by default so the
 /// first import of a real mod does not ask the user to compare their own
@@ -614,4 +657,101 @@ pub(crate) fn resolve_conflict(
         refresh_flattened_outputs(prepared).map_err(|error| error.to_string())?;
     }
     Ok(prepared.plan.clone())
+}
+
+#[cfg(test)]
+mod merged_update_tests {
+    use super::*;
+
+    const OLD: &str = "# Rules
+
+## 4. Rules
+1. one
+2. two
+
+## 5. Next
+last
+";
+    const NEW: &str = "# Rules
+
+## 4. Rules
+1. one
+2. two
+
+## 4a. Tools
+run checks
+
+## 5. Next
+last
+";
+
+    #[test]
+    fn an_unedited_file_takes_the_new_adaptation() {
+        assert_eq!(
+            reconcile_merged_update(OLD.as_bytes(), OLD.as_bytes(), NEW.as_bytes(), false),
+            MergedUpdate::Replace
+        );
+    }
+
+    #[test]
+    fn custom_rules_survive_when_the_new_section_goes_somewhere_else() {
+        let local = OLD.replace(
+            "2. two
+",
+            "2. two
+3. my own rule
+",
+        );
+        match reconcile_merged_update(OLD.as_bytes(), local.as_bytes(), NEW.as_bytes(), false) {
+            MergedUpdate::Merged(bytes) => {
+                let text = String::from_utf8(bytes).unwrap();
+                assert!(text.contains("3. my own rule"), "{text}");
+                assert!(text.contains("## 4a. Tools"), "{text}");
+            }
+            other => panic!("expected a clean merge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_edited_file_is_reviewed_even_when_the_merge_would_be_clean() {
+        let local = OLD.replace(
+            "2. two
+",
+            "2. two
+3. my own rule
+",
+        );
+        assert_eq!(
+            reconcile_merged_update(OLD.as_bytes(), local.as_bytes(), NEW.as_bytes(), true),
+            MergedUpdate::NeedsReview
+        );
+    }
+
+    #[test]
+    fn overlapping_changes_are_reviewed_not_guessed() {
+        let local = OLD.replace(
+            "last
+",
+            "my ending
+",
+        );
+        let incoming = OLD.replace(
+            "last
+",
+            "their ending
+",
+        );
+        assert_eq!(
+            reconcile_merged_update(OLD.as_bytes(), local.as_bytes(), incoming.as_bytes(), false),
+            MergedUpdate::NeedsReview
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_text_is_reviewed() {
+        assert_eq!(
+            reconcile_merged_update(b"a", &[0xff, 0xfe], b"b", false),
+            MergedUpdate::NeedsReview
+        );
+    }
 }
