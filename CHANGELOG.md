@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Update `CLAUDE.md` and `AGENTS.md` without asking when you never edited them, and merge the new template into them when you added your own rules. An update used to ask about both files every time the instruction template changed, offering only Keep, Replace, Rename, or Skip, so a mod with custom rules could not take a new section without losing them. The update now rebuilds what the old template adapted to and merges three ways; an edited file is still a reviewed conflict and now offers **Merge**.
+
 ## 0.7.1 - 2026-10-25
 
 - Turn on the free setup assistant. The relay is deployed, so a first run needs no account, key, or sign-in: the free model is offered and is the default on desktop and web. It sends one structured request through the maintainer's Cloudflare relay to a free OpenRouter model, and the app shows that free models may keep what is sent and that everyone shares one daily limit. When the limit is reached the app says so and offers another assistant.

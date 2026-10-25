@@ -43,6 +43,21 @@ local file's line ending and final newline are kept. Update and repair do not
 raise a conflict for a file that already holds the incoming bytes, or for an
 unchanged merged file the source no longer ships.
 
+### Instruction files on update
+
+`CLAUDE.md` and `AGENTS.md` are adaptations of the source's templates, so the
+lock holds only their hash. An update rebuilds the base itself: it fetches the
+template from the exact revision and hash the lock recorded and adapts it the
+way the new template is adapted. Then:
+
+- the file equals that base: the new adaptation replaces it, with no question;
+- the file differs only in places the new template did not change (your own
+  rules, a section moved elsewhere): the two sets of changes are merged and
+  shown in the review as a **Merge**, with no conflict to resolve;
+- you edited the file since the last install: it is a reviewed conflict that now
+  offers **Merge**, and nothing is applied until you choose;
+- the changes overlap, or the file is not text: a reviewed conflict as before.
+
 ### Rename
 
 Install incoming at a reviewed alternate path. Validate references or report that the file is review-only.
