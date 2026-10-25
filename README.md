@@ -8,76 +8,41 @@
 
 [![Watch the HOI4 Mod Setup video: One App, All HOI4 Tools](docs/images/setup-app-demo-thumbnail.png)](https://www.youtube.com/watch?v=qdFbLO92dQI)
 
-Prepare a new or existing **Hearts of Iron IV mod** for AI-assisted development.
-It adds project instructions, skills, specialist subagents, HOI4 tools, and an
-offline wiki, adapted to your mod, for Claude Code, Codex, Cursor, and
-[many more coding clients](docs/36_coding_environment_catalog.md). It is for HOI4
-modders who want an AI agent that knows how their mod and the game's script work.
+Prepare a new or existing **Hearts of Iron IV mod** for AI-assisted development: project
+instructions, skills, subagents, HOI4 tools, and an offline wiki for Claude Code, Codex, Cursor,
+and [many more coding clients](docs/36_coding_environment_catalog.md).
 
-## Recommended: the desktop app
+**Two ways to use it:**
 
-The desktop app is the full setup. It writes into your mod after you review every
-change, backs up first, and can undo it. It also installs and checks the HOI4
-Agent Tools server, keeps your keys in the system credential store, supports
-Claude and ChatGPT account sign-in, Git, the 3D workflow and live testing, and
-can update, repair, or remove its setup later.
+- **[Desktop app](#desktop-app-recommended)** (recommended): the full setup for Windows, macOS, and Linux.
+- **[Web edition](#web-edition-lightweight)**: lighter and faster for the basics, with nothing to install.
 
-## Download
+## Desktop app (recommended)
+
+Writes into your mod after you review every change, with a backup and **Undo changes**. Installs
+the HOI4 Agent Tools, supports Claude and ChatGPT sign-in, Git, and the 3D workflow, and can update,
+repair, or remove its setup later.
 
 - Windows: [`.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe)
-- Mac, Apple silicon: [`.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-arm64.dmg) · Intel: [`.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-x64.dmg)
-- Linux x86-64: [AppImage](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.AppImage) or [Debian package](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.deb) ([Linux guide](docs/LINUX.md))
+- Mac: [Apple silicon `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-arm64.dmg) · [Intel `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-x64.dmg)
+- Linux: [AppImage](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.AppImage) or [Debian package](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.deb) ([Linux guide](docs/LINUX.md))
 
-The app updates itself. Signing details for each download are in the
-[release notes](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest).
+Open it, choose **Create new mod** or **Import existing mod**, and follow the steps. The app
+updates itself; [release notes](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest) list the
+signing details.
 
-[![The desktop app: create a new mod or import an existing one](docs/screenshots/01-welcome.jpg)](docs/USER_GUIDE.md)
+## Web edition (lightweight)
 
-1. Open the app and choose **Create new mod** or **Import existing mod**.
-2. Pick a setup assistant (the free model when offered, or your own account or API key).
-3. Review what it found and suggests, then start the installation.
+[**Open the web edition →**](https://klimpaskov.github.io/HOI4-Mod-Setup/app/) Nothing to install and
+nothing uploaded. Start a new mod or drop your mod's folder, review the result, and download a ZIP to
+unpack over a **copy** of your mod. When you want more later, download the extra pieces manually or use
+the desktop app for the fuller install.
 
-## Lightweight option: the web edition
+## Existing mods
 
-Not ready to install anything, or only need the basics? The
-[web edition](https://klimpaskov.github.io/HOI4-Mod-Setup/app/) is a faster, lighter
-way to get the same project instructions, skills, and subagents. Nothing is
-installed or uploaded: you start a new mod or drop your mod's folder on the page,
-review the result, and download a ZIP to unpack over a **copy** of your mod (or a
-Git checkout).
-
-[![The web edition: drop a mod folder or start a new mod](docs/screenshots/18-web-edition.png)](https://klimpaskov.github.io/HOI4-Mod-Setup/app/)
-
-It does not need the full workflow. When you want more later, download the extra
-pieces manually from the [Agentic HOI4 Modding](https://github.com/klimPaskov/Agentic-HOI4-Modding)
-and [HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-tools) repositories,
-or drop the same folder into the desktop app for the fuller install.
-
-| | Desktop (recommended) | Web (lightweight) |
-| --- | --- | --- |
-| Install | Windows, macOS, Linux | None |
-| Writes to your mod | Yes, after review, with backup and **Undo changes** | No: you download a ZIP |
-| Existing mods | Pick the folder | Drop the folder (read-only) |
-| Update or repair later | **Manage an existing project** | Drop the folder again |
-| Your API key | OS credential store | The tab's memory only |
-| Claude / ChatGPT account sign-in | Yes | No |
-| HOI4 Agent Tools install and checks, Git, 3D workflow, live testing | Yes | No |
-
-## Using an existing mod
-
-- **Your files stay yours.** A valid `descriptor.mod`, `thumbnail.png`, and
-  `README.md` are kept as they are, and your mod content is never touched.
-- **Import** only reads the folder. Installation then adds the setup on top.
-- **Reimport or update** the same folder any time: the app recognises its setup
-  and offers **Update** or **Repair**. Unchanged setup files are refreshed; files
-  you edited are never overwritten silently and are shown for review (keep,
-  use new, merge, keep both, or skip). Repeating an update with nothing new
-  changes nothing.
-- **Interrupted?** If the app is closed or the computer sleeps during install, the next
-  time you open the folder it offers **Undo changes**, which restores the mod
-  as it was. A full install takes several minutes, so keep the app open.
-
-More in the [user guide](docs/USER_GUIDE.md#existing-mods-import-reimport-update).
+Your `descriptor.mod`, `thumbnail.png`, `README.md`, and mod content are never overwritten. Importing
+only reads the folder. Updating again shows only the files you edited, and an interrupted install can
+be undone. Details in the [user guide](docs/USER_GUIDE.md#existing-mods-import-reimport-update).
 
 ## Learn more
 
