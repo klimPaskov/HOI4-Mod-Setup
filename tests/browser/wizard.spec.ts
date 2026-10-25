@@ -138,8 +138,12 @@ test("maintenance repair sends the changed image provider in its reviewed plan r
 test("pre-apply recovery presents details and safe choices", async ({ page }) => {
   await page.goto("/?screenshot=recovery");
   await expect(page.locator("#screen-title")).toBeVisible();
+  // The cause is visible without opening Details, and repeated inside them.
+  const cause = page.getByText("Launcher descriptor path did not match the selected project root.", { exact: true });
+  await expect(page.getByText("What stopped setup", { exact: true })).toBeVisible();
+  await expect(page.locator(".recovery-cause").getByText("Launcher descriptor path did not match the selected project root.", { exact: true })).toBeVisible();
   await page.getByText("Details", { exact: true }).click();
-  await expect(page.getByText("Launcher descriptor path did not match the selected project root.", { exact: true })).toBeVisible();
+  await expect(cause).toHaveCount(2);
   await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
 });
 

@@ -9840,7 +9840,7 @@ my tweak
         }];
         let journal = new_journal(&plan, &plan.project_id, project.path());
         let project_directory = RootedDir::open_read(project.path()).unwrap();
-        let lock = build_lock(
+        let mut lock = build_lock(
             &plan,
             &prepared,
             &journal,
@@ -9849,6 +9849,9 @@ my tweak
             &project_directory,
         )
         .unwrap();
+        // The example lock names Windows launcher paths, which are not
+        // absolute on other platforms and are not what this test is about.
+        lock.files.retain(|file| !file.external);
         let locked = lock
             .files
             .iter()
