@@ -127,6 +127,14 @@ Your mod was not changed by this failed preparation.
 **Fix:** Try preparing the changes again later.
 The app keeps the unverified files out of your mod.
 
+## A pinned setup version does not match its manifest
+
+> The files of this setup version do not match its published manifest, so it was refused. Nothing was changed. Choose Latest, a release, or a newer commit.
+
+**Cause:** You pinned **Specific commit** (or a release) and one of that version's files is larger than its published manifest declares. The setup source refreshes its manifest in a separate commit after it changes content, so a commit made between the two is inconsistent.
+
+**Fix:** Choose **Latest verified source**, a **Release**, or a commit whose message is "refresh setup package manifest" (the newest commit usually is). The app never installs files that disagree with their manifest.
+
 ## The setup source could not be downloaded
 
 > The setup source could not be downloaded or prepared. Check your connection and try again; nothing was changed.

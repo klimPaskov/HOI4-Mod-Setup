@@ -698,6 +698,12 @@ fn planning_user_message(error: AppError) -> String {
             } else if lower.contains("os error 206") || lower.contains("filename or extension is too long") {
                 "A file path is too long for Windows. Move the project to a shorter folder or turn on Windows long paths, then try again. Nothing was changed."
                     .into()
+            } else if lower.contains("source blob response exceeds its bounded size limit") {
+                // A file larger than its manifest declares: the published
+                // manifest and files of this version disagree. A commit made
+                // before the source's manifest refresh does this.
+                "The files of this setup version do not match its published manifest, so it was refused. Nothing was changed. Choose Latest, a release, or a newer commit."
+                    .into()
             } else if lower.contains("checksum") || lower.contains("sha-256") {
                 "The setup source did not pass verification. Nothing was changed; try again later."
                     .into()
@@ -7589,6 +7595,16 @@ mod tests {
         ));
         assert!(message.contains("different assistant address"));
         assert!(message.contains("Nothing was changed."));
+    }
+
+    #[test]
+    fn a_pinned_version_whose_manifest_disagrees_with_its_files_is_explained() {
+        let message = planning_user_message(AppError::Source(
+            "source blob response exceeds its bounded size limit".into(),
+        ));
+        assert!(message.contains("do not match its published manifest"));
+        assert!(message.contains("Choose Latest, a release, or a newer commit"));
+        assert!(!message.contains("connection"));
     }
 
     #[test]

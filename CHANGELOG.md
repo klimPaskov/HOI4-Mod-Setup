@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Say why a pinned setup version is refused when its files disagree with its published manifest (a commit made before the source's manifest refresh), instead of asking the user to check their connection. Pinning **Specific commit** and **Release** was checked live on a release build: both resolve to the exact full revision and record it in the plan.
+
 ## 0.7.0 - 2026-10-25
 
 - Update `rustls-webpki`, `webpki-roots`, and `webpki-root-certs` (distrusted emSign intermediates) and `vite` 6.4.4 (`launch-editor` path check bypass on Windows), so `cargo audit` and `pnpm audit` pass again.
