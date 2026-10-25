@@ -6,45 +6,62 @@
 [![Download](https://img.shields.io/github/v/release/klimPaskov/HOI4-Mod-Setup?label=Download&logo=github&color=2ea44f)](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
 [![Issues](https://img.shields.io/badge/Bugs%20%26%20Ideas-Issues-24292f?logo=github&logoColor=white)](https://github.com/klimPaskov/HOI4-Mod-Setup/issues)
 
+[![Watch the HOI4 Mod Setup video: One App, All HOI4 Tools](docs/images/setup-app-demo-thumbnail.png)](https://www.youtube.com/watch?v=qdFbLO92dQI)
+
 Prepare a new or existing **Hearts of Iron IV mod** for AI-assisted development.
 It adds project instructions, skills, specialist subagents, HOI4 tools, and an
 offline wiki, adapted to your mod, for Claude Code, Codex, Cursor, and
 [many more coding clients](docs/36_coding_environment_catalog.md). It is for HOI4
 modders who want an AI agent that knows how their mod and the game's script work.
 
-### [**Try the web version →**](https://klimpaskov.github.io/HOI4-Mod-Setup/app/)
+## Recommended: the desktop app
 
-No install, nothing uploaded. Or [download the desktop app](#download).
+The desktop app is the full setup. It writes into your mod after you review every
+change, backs up first, and can undo it. It also installs and checks the HOI4
+Agent Tools server, keeps your keys in the system credential store, supports
+Claude and ChatGPT account sign-in, Git, the 3D workflow and live testing, and
+can update, repair, or remove its setup later.
+
+## Download
+
+- Windows: [`.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe)
+- Mac, Apple silicon: [`.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-arm64.dmg) · Intel: [`.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-x64.dmg)
+- Linux x86-64: [AppImage](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.AppImage) or [Debian package](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.deb) ([Linux guide](docs/LINUX.md))
+
+The app updates itself. Signing details for each download are in the
+[release notes](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest).
+
+[![The desktop app: create a new mod or import an existing one](docs/screenshots/01-welcome.jpg)](docs/USER_GUIDE.md)
+
+1. Open the app and choose **Create new mod** or **Import existing mod**.
+2. Pick a setup assistant (the free model when offered, or your own account or API key).
+3. Review what it found and suggests, then start the installation.
+
+## Lightweight option: the web edition
+
+Not ready to install anything, or only need the basics? The
+[web edition](https://klimpaskov.github.io/HOI4-Mod-Setup/app/) is a faster, lighter
+way to get the same project instructions, skills, and subagents. Nothing is
+installed or uploaded: you start a new mod or drop your mod's folder on the page,
+review the result, and download a ZIP to unpack over a **copy** of your mod (or a
+Git checkout).
 
 [![The web edition: drop a mod folder or start a new mod](docs/screenshots/18-web-edition.png)](https://klimpaskov.github.io/HOI4-Mod-Setup/app/)
 
-## Quick start
+It does not need the full workflow. When you want more later, download the extra
+pieces manually from the [Agentic HOI4 Modding](https://github.com/klimPaskov/Agentic-HOI4-Modding)
+and [HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-tools) repositories,
+or drop the same folder into the desktop app for the fuller install.
 
-**In your browser** (about five minutes):
-
-1. Open the [web edition](https://klimpaskov.github.io/HOI4-Mod-Setup/app/).
-2. Choose **New mod**, or drop your mod's folder on **Existing mod**.
-3. Pick a setup assistant: the free model when offered, **Sign in with
-   OpenRouter**, or your own API key (Claude, Gemini, Grok, DeepSeek, GLM).
-4. Review what it found and suggests, then **Download** the ZIP.
-5. Unpack the ZIP over a **copy** of your mod (or a Git checkout) and open the
-   folder in your coding client.
-
-**On your computer:** [download](#download), open the app, choose **Create new
-mod** or **Import existing mod**, and follow the steps. The app backs up
-first, shows every change before it writes, and can undo it.
-
-## Web or desktop?
-
-| | Web | Desktop |
+| | Desktop (recommended) | Web (lightweight) |
 | --- | --- | --- |
-| Install | None | Windows, macOS, Linux |
-| Writes to your mod | No: you download a ZIP | Yes, after review, with backup and **Undo changes** |
-| Existing mods | Drop the folder (read-only) | Pick the folder |
-| Update or repair later | Drop the folder again | **Manage an existing project** |
-| Your API key | Kept in the tab's memory only | Kept in the OS credential store |
-| Claude / ChatGPT account sign-in | No | Yes |
-| HOI4 Agent Tools install and checks, Git, 3D workflow, live testing | No | Yes |
+| Install | Windows, macOS, Linux | None |
+| Writes to your mod | Yes, after review, with backup and **Undo changes** | No: you download a ZIP |
+| Existing mods | Pick the folder | Drop the folder (read-only) |
+| Update or repair later | **Manage an existing project** | Drop the folder again |
+| Your API key | OS credential store | The tab's memory only |
+| Claude / ChatGPT account sign-in | Yes | No |
+| HOI4 Agent Tools install and checks, Git, 3D workflow, live testing | Yes | No |
 
 ## Using an existing mod
 
@@ -61,16 +78,6 @@ first, shows every change before it writes, and can undo it.
   as it was. A full install takes several minutes, so keep the app open.
 
 More in the [user guide](docs/USER_GUIDE.md#existing-mods-import-reimport-update).
-
-## Download
-
-- Windows: [`.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe)
-- Mac, Apple silicon: [`.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-arm64.dmg) · Intel: [`.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-x64.dmg)
-- Linux x86-64: [AppImage](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.AppImage) or [Debian package](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.deb) ([Linux guide](docs/LINUX.md))
-
-The app updates itself. Signing details for each download are in the
-[release notes](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest).
-Watch the [video walkthrough](https://www.youtube.com/watch?v=qdFbLO92dQI).
 
 ## Learn more
 
