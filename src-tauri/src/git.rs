@@ -801,7 +801,7 @@ pub fn plan_git(
         GitMode::Initialize => {
             if existing.repository_present {
                 return Err(AppError::InvalidInput(
-                    "initialize selected but a Git repository already controls the project".into(),
+                    "this mod already has a Git repository. Go back to Choose Git setup and choose Preserve the existing repository, or Skip Git setup".into(),
                 ));
             }
             actions.push("create .git metadata during apply".into());

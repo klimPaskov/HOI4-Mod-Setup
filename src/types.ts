@@ -641,6 +641,15 @@ export interface InstallationExternalAction {
   required_tool_names?: string[];
 }
 
+/** A tool the reviewed plan needs on this computer, checked before any file changes. */
+export interface SetupRequirement {
+  id: string;
+  label: string;
+  status: "ready" | "missing";
+  /** What was found and, when missing, the safe next step. */
+  detail: string;
+}
+
 export interface InstallationPlan {
   schema_version: string;
   plan_id: string;
@@ -820,6 +829,8 @@ export interface WizardState {
   conflictChoice?: ConflictChoice;
   recoveryChoice: RecoveryChoice;
   transactionError?: string;
+  /** Tools the prepared plan needs; cleared to check again. */
+  setupRequirements?: { planId: string; items: SetupRequirement[] };
   readiness: ReadinessReport | null;
   codexAccount: CodexAccountStatus | null;
   codexLogin?: CodexLoginStart;

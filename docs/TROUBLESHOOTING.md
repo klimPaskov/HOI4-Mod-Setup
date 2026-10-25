@@ -157,6 +157,18 @@ selected manifest files pass their size and SHA-256 checks.
 **Fix:** Retry the assistant review.
 If it keeps failing, review the selected assistant and model settings before trying again.
 
+## Python for HOI4 Agent Tools is missing
+
+> Python for HOI4 Agent Tools is missing. See Before setup for the next step.
+
+**Cause:** HOI4 Agent Tools installs with a Python script, and no python.org Python was found on this computer (the Microsoft Store stub and other builds do not count).
+The app checks this on **Review changes**, before it writes any file.
+
+**Fix:** Install Python 3.9 or newer from python.org and tick **Add python.exe to PATH**, then choose **Check again**.
+HOI4 Agent Tools is installed with every coding client on Windows and Linux and has no separate switch yet, so Python is required to finish setup there.
+
+If an older version of this app already stopped after writing files, the recovery screen shows **What stopped setup**; choose **Undo changes**, install Python, and set up again.
+
 ## Installation was interrupted
 
 > Installation was interrupted

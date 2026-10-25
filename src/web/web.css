@@ -96,3 +96,24 @@
 }
 .web-error-row { max-width: 920px; margin: 20px auto 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .web-error-row .web-error { margin: 0; }
+
+/* Progress and errors stay in view: on the start screen they follow a long
+ * form, so a rejected folder would otherwise show nothing without scrolling. */
+.web-progress, .web-error-row { position: sticky; bottom: 0; z-index: 2; padding: 12px 0; background: var(--canvas); border-top: 1px solid var(--line); }
+
+/* Narrow screens: the shared rules stack the heading in a column, where its
+ * 20rem flex-basis became a 320px height, and put the network list beside the
+ * steps in a single scrolling row, which clipped both. */
+@media (max-width: 900px) {
+  .web-shell .screen-heading > div:first-child { flex: 1 1 auto; }
+  .web-shell .workspace { grid-template-columns: minmax(0, 1fr); }
+  .web-shell .phase-rail, .web-shell .main-viewport { min-width: 0; }
+  .web-shell .phase-rail { flex-direction: column; align-items: stretch; gap: 6px; overflow: visible; }
+  .web-shell .web-steps { max-width: 100%; }
+  .web-shell .phase-item { white-space: nowrap; }
+  .web-shell .web-network { margin-top: 0; padding: 6px 0 0; border-top: 0; }
+}
+
+/* The file inputs inside these buttons are visually hidden, so the button
+ * itself shows the keyboard focus. */
+.web-shell label.button:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }

@@ -141,28 +141,110 @@ pub fn three_way_merge(base: &str, local: &str, incoming: &str) -> Result<String
     let base_lines: Vec<&str> = base.lines().collect();
     let local_lines: Vec<&str> = local.lines().collect();
     let incoming_lines: Vec<&str> = incoming.lines().collect();
-    if base_lines.len() == local_lines.len() && base_lines.len() == incoming_lines.len() {
-        let mut merged = Vec::with_capacity(base_lines.len());
-        for index in 0..base_lines.len() {
-            let base_line = base_lines[index];
-            let local_line = local_lines[index];
-            let incoming_line = incoming_lines[index];
-            if local_line == base_line {
-                merged.push(incoming_line);
-            } else if incoming_line == base_line || local_line == incoming_line {
-                merged.push(local_line);
-            } else {
-                return Err(AppError::Merge(format!(
-                    "overlapping edit at line {}",
-                    index + 1
-                )));
-            }
-        }
-        return Ok(merged.join("\n"));
+    let merged = diff3_lines(&base_lines, &local_lines, &incoming_lines)?;
+    // Keep the local file's line ending and its final newline.
+    let ending = if local.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut text = merged.join(ending);
+    if local.ends_with('\n') || (local.is_empty() && incoming.ends_with('\n')) {
+        text.push_str(ending);
     }
-    Err(AppError::Merge(
-        "non-overlapping line merge could not be proven safe".into(),
-    ))
+    Ok(text)
+}
+
+/// Longest matching lines of two sequences, as `(left, right)` index pairs in
+/// order. Bounded so a huge file is refused instead of stalling the app.
+fn matching_lines(left: &[&str], right: &[&str]) -> Result<Vec<(usize, usize)>, AppError> {
+    const MAX_CELLS: usize = 40_000_000;
+    // Trim the shared start and end first: edits are usually local.
+    let prefix = left.iter().zip(right).take_while(|(a, b)| a == b).count();
+    let suffix = left[prefix..]
+        .iter()
+        .rev()
+        .zip(right[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let left_core = &left[prefix..left.len() - suffix];
+    let right_core = &right[prefix..right.len() - suffix];
+    if left_core.len().saturating_mul(right_core.len()) > MAX_CELLS {
+        return Err(AppError::Merge(
+            "the file is too different to merge line by line".into(),
+        ));
+    }
+    let width = right_core.len() + 1;
+    let mut table = vec![0_u32; (left_core.len() + 1) * width];
+    for row in (0..left_core.len()).rev() {
+        for column in (0..right_core.len()).rev() {
+            table[row * width + column] = if left_core[row] == right_core[column] {
+                table[(row + 1) * width + column + 1] + 1
+            } else {
+                table[(row + 1) * width + column].max(table[row * width + column + 1])
+            };
+        }
+    }
+    let mut pairs: Vec<(usize, usize)> = (0..prefix).map(|index| (index, index)).collect();
+    let (mut row, mut column) = (0, 0);
+    while row < left_core.len() && column < right_core.len() {
+        if left_core[row] == right_core[column] {
+            pairs.push((prefix + row, prefix + column));
+            row += 1;
+            column += 1;
+        } else if table[(row + 1) * width + column] >= table[row * width + column + 1] {
+            row += 1;
+        } else {
+            column += 1;
+        }
+    }
+    pairs.extend(
+        (0..suffix).map(|offset| (left.len() - suffix + offset, right.len() - suffix + offset)),
+    );
+    Ok(pairs)
+}
+
+/// Line-based three-way merge. Lines both sides kept from the base anchor the
+/// merge; between anchors, a side that did not change takes the other side's
+/// lines, identical changes are taken once, and two different changes to the
+/// same region are an overlapping edit that the user must resolve.
+fn diff3_lines<'a>(
+    base: &[&'a str],
+    local: &[&'a str],
+    incoming: &[&'a str],
+) -> Result<Vec<&'a str>, AppError> {
+    let mut local_of = vec![None; base.len()];
+    for (base_index, local_index) in matching_lines(base, local)? {
+        local_of[base_index] = Some(local_index);
+    }
+    let mut incoming_of = vec![None; base.len()];
+    for (base_index, incoming_index) in matching_lines(base, incoming)? {
+        incoming_of[base_index] = Some(incoming_index);
+    }
+    let mut merged = Vec::with_capacity(base.len().max(local.len()).max(incoming.len()));
+    let (mut base_at, mut local_at, mut incoming_at) = (0, 0, 0);
+    // A final sentinel anchor closes the last region.
+    let anchors = (0..base.len())
+        .filter_map(|index| Some((index, local_of[index]?, incoming_of[index]?)))
+        .chain(std::iter::once((base.len(), local.len(), incoming.len())));
+    for (base_anchor, local_anchor, incoming_anchor) in anchors {
+        let base_region = &base[base_at..base_anchor];
+        let local_region = &local[local_at..local_anchor];
+        let incoming_region = &incoming[incoming_at..incoming_anchor];
+        if local_region == base_region {
+            merged.extend_from_slice(incoming_region);
+        } else if incoming_region == base_region || local_region == incoming_region {
+            merged.extend_from_slice(local_region);
+        } else {
+            return Err(AppError::Merge(format!(
+                "overlapping edit near line {}",
+                local_at + 1
+            )));
+        }
+        if base_anchor < base.len() {
+            merged.push(base[base_anchor]);
+        }
+        base_at = base_anchor + 1;
+        local_at = local_anchor + 1;
+        incoming_at = incoming_anchor + 1;
+    }
+    Ok(merged)
 }
 
 pub fn structured_toml_merge(base: &str, local: &str, incoming: &str) -> Result<String, AppError> {
@@ -367,6 +449,40 @@ mod tests {
             three_way_merge("a\nb\n", "a\nb\n", "a\nc\n").unwrap(),
             "a\nc\n"
         );
+    }
+
+    #[test]
+    fn line_merge_combines_added_and_removed_lines_in_different_places() {
+        let base = "# Title\n\nintro\n\n## One\nbody one\n\n## Two\nbody two\n";
+        // The user appended a line at the end; the source reworded the intro and
+        // added a section in the middle.
+        let local = "# Title\n\nintro\n\n## One\nbody one\n\n## Two\nbody two\n- my note\n";
+        let incoming = "# Title\n\nintro, reworded\n\n## One\nbody one\n\n## New\nnew body\n\n## Two\nbody two\n";
+        let merged = three_way_merge(base, local, incoming).unwrap();
+        assert_eq!(
+            merged,
+            "# Title\n\nintro, reworded\n\n## One\nbody one\n\n## New\nnew body\n\n## Two\nbody two\n- my note\n"
+        );
+        // The same edit from both sides is taken once; a deletion survives.
+        assert_eq!(
+            three_way_merge("a\nb\nc\n", "a\nc\n", "a\nc\n").unwrap(),
+            "a\nc\n"
+        );
+        assert_eq!(
+            three_way_merge("a\nb\nc\nd\n", "a\nc\nd\n", "a\nb\nc\nd\ne\n").unwrap(),
+            "a\nc\nd\ne\n"
+        );
+    }
+
+    #[test]
+    fn line_merge_refuses_overlapping_edits_and_keeps_windows_line_endings() {
+        let base = "a\nb\nc\n";
+        assert!(three_way_merge(base, "a\nlocal\nc\n", "a\nincoming\nc\n").is_err());
+        // One side deletes the line the other edits.
+        assert!(three_way_merge(base, "a\nc\n", "a\nedited\nc\n").is_err());
+        let merged =
+            three_way_merge("a\r\nb\r\nc\r\n", "a\r\nb\r\nc\r\nmine\r\n", "A\nb\nc\n").unwrap();
+        assert_eq!(merged, "A\r\nb\r\nc\r\nmine\r\n");
     }
 
     #[test]

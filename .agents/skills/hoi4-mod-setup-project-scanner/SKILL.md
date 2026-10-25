@@ -258,6 +258,8 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
   (`.tools/`, `.tmp/`, and `paradox_wiki/`) during the recursive walk. Detect
   the exact `paradox_wiki/` root entry separately for component inventory and
   report links without following them.
+- Retain every file a detector parses. `scan_content_policy` must set `retain` for a path class before a detector validates its bytes; a class that is observed but not retained validates as empty and reports every installed file as malformed (native client subagent Markdown did, giving a freshly installed project 19 blocking subagent conflicts). Add a scan test for each new detector with real installed bytes.
+- Leave files an earlier setup installed, still matching the lock byte for byte, out of the project profile (`unmodified_managed_visible_files` in the scanner feeds `Profiler::skip_managed_files`). A lock that cannot be read means no exclusion, never a failed scan.
 - Support cancellation and partial result reporting.
 - Stream progress through an opaque request ID with stage, relative path, file count, directory count, and bytes read. Do not emit or render a percentage when a total is unknown.
 - Cancellation is cooperative, returns explicit `partial` and `cancelled` metadata, emits a terminal cancellation event, and clears the approved-evidence binding before any Codex analysis can use it. Any non-cancelled partial result also clears that binding and blocks semantic analysis until a complete scan is available.

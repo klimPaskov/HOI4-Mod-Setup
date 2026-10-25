@@ -296,10 +296,18 @@ fn an_import_never_overwrites_a_user_file_without_a_decision() {
             "docs/linux.md"
         ]
     );
-    assert!(plan
-        .conflicts
-        .iter()
-        .all(|conflict| conflict.selected.is_none()));
+    // The mod's own valid descriptor and README start as an explicit keep,
+    // which is still a no-op the user can change; every other file waits for
+    // a decision.
+    for conflict in &plan.conflicts {
+        let kept_by_default = matches!(conflict.path.as_str(), "descriptor.mod" | "README.md");
+        assert_eq!(
+            conflict.selected.as_deref(),
+            kept_by_default.then_some("keep"),
+            "{}",
+            conflict.path
+        );
+    }
     for conflict in &plan.conflicts {
         let operation = plan
             .operations

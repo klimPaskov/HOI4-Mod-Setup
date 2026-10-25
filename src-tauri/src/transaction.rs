@@ -1707,6 +1707,7 @@ pub fn run_transaction(
                 "imagegen.gptimage",
             ]
             .into_iter()
+            .filter(|component_id| !removal || *component_id == "imagegen.gptimage")
             .filter(|component_id| {
                 // A manifest that predates the HOI4 Live Tools bootstrap
                 // declares no action; the skill-only workflow has nothing to run.
@@ -3115,6 +3116,7 @@ fn flatten_input_uses_incoming(operation: &PlanOperation) -> bool {
                 | "reverse_merge_required"
                 | "user_owned_review"
                 | "keep_user_modification"
+                | "keep_reviewed_edit"
                 | "obsolete_review"
         )
     ) {
@@ -3157,7 +3159,7 @@ pub(crate) fn validate_flatten_transaction_inputs(
         };
         let kept_local = matches!(
             operation.resolution.as_deref(),
-            Some("keep" | "keep_user_modification")
+            Some("keep" | "keep_user_modification" | "keep_reviewed_edit")
         );
         let normalized = file.destination.replace('\\', "/");
         let eligible = crate::flatten::FLATTEN_SOURCE_PREFIXES
@@ -3804,6 +3806,35 @@ fn apply_profile_directories_rooted(
                 )));
             }
             missing.insert(current.clone());
+        }
+    }
+    // Folders that only exist because a new file needs a parent (for example
+    // `.claude/skills/<skill>/`) are recorded too, so Undo changes removes them
+    // once the files are gone and leaves the mod's folders as they were.
+    for operation in plan.operations.iter().filter(|operation| {
+        !operation.external
+            && matches!(
+                operation.action,
+                OperationAction::Create | OperationAction::Generate | OperationAction::Rename
+            )
+    }) {
+        let mut current = String::new();
+        let mut components = Path::new(&operation.destination).components().peekable();
+        while let Some(component) = components.next() {
+            // The last component is the file itself.
+            if components.peek().is_none() {
+                break;
+            }
+            let Component::Normal(component) = component else {
+                break;
+            };
+            if !current.is_empty() {
+                current.push('/');
+            }
+            current.push_str(&component.to_string_lossy());
+            if !root.exists(&current)? {
+                missing.insert(current.clone());
+            }
         }
     }
     journal.created_directories = missing.into_iter().collect();
@@ -6015,6 +6046,15 @@ fn build_lock(
                 } else {
                     None
                 };
+                // A merge of the user's edit into a verbatim managed file is
+                // their content on top of the source, not the source itself.
+                // Keep the source as the installed baseline and record the
+                // merged bytes as a kept edit, so the next update sees an edit
+                // to keep instead of an unmodified file to replace.
+                let merged_over_source = operation.action == OperationAction::Merge
+                    && ownership == Ownership::Managed
+                    && !operation.external
+                    && prepared.expected_sha256 != source_sha256;
                 let locked_file = LockedFile {
                     path: operation.destination.clone(),
                     location_scope: Some(if operation.external {
@@ -6030,11 +6070,19 @@ fn build_lock(
                         .clone()
                         .unwrap_or_else(|| operation.destination.clone()),
                     source_revision: plan.source.resolved_revision.clone(),
-                    source_sha256,
+                    source_sha256: source_sha256.clone(),
                     source_size: operation.source_size.or(Some(prepared.bytes.len() as u64)),
                     base_sha256: operation.base_sha256.clone(),
-                    installed_sha256: prepared.expected_sha256.clone(),
-                    installed_size: Some(prepared.bytes.len() as u64),
+                    installed_sha256: if merged_over_source {
+                        source_sha256.clone()
+                    } else {
+                        prepared.expected_sha256.clone()
+                    },
+                    installed_size: if merged_over_source {
+                        operation.source_size
+                    } else {
+                        Some(prepared.bytes.len() as u64)
+                    },
                     ownership,
                     preserved_local: false,
                     external: operation.external,
@@ -6051,6 +6099,14 @@ fn build_lock(
                 };
                 files.insert(key, locked_file);
                 remove_local_modification(&mut local_modifications, &operation.destination);
+                if merged_over_source {
+                    local_modifications.push(LocalModification {
+                        path: operation.destination.clone(),
+                        installed_sha256: source_sha256.clone(),
+                        current_sha256: prepared.expected_sha256.clone(),
+                        detected_at: Utc::now().to_rfc3339(),
+                    });
+                }
             }
         }
     }
@@ -7896,6 +7952,21 @@ fn cleanup_created_profile_directories_rooted(
     directories.sort_by_key(|path| std::cmp::Reverse(Path::new(path).components().count()));
     for directory in directories {
         if let Err(error) = root.remove_dir_if_empty(&directory) {
+            // An interrupted apply recorded this folder before the file that
+            // needs it was written, so it, or a parent, may never have existed.
+            let never_created = matches!(
+                &error,
+                AppError::Io(io) if matches!(
+                    io.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                )
+            ) || {
+                let text = error.to_string();
+                text.contains("os error 2") || text.contains("os error 3")
+            };
+            if never_created {
+                continue;
+            }
             return Err(AppError::Transaction(format!(
                 "could not remove empty profile directory {directory}: {error}"
             )));
@@ -8773,6 +8844,16 @@ pub fn repair_operations(
         } else {
             RollbackAction::RestoreBackup
         };
+        // An edit the user already kept in a reviewed run, still holding the
+        // bytes they kept, is their decision: repair does not ask again.
+        let kept_edit = local_state == LocalState::Modified
+            && !file.preserved_local
+            && file.ownership != Ownership::External
+            && current.as_deref().is_some_and(|hash| {
+                lock.local_modifications.iter().any(|modification| {
+                    modification.path == file.path && modification.current_sha256 == hash
+                })
+            });
         operations.push(PlanOperation {
             id: format!("repair-{index:05}"),
             component_id: file.component_id.clone(),
@@ -8793,6 +8874,8 @@ pub fn repair_operations(
                 Some("preserved_local_review".into())
             } else if file.ownership == Ownership::External {
                 Some("user_owned_review".into())
+            } else if kept_edit {
+                Some("keep_reviewed_edit".into())
             } else if action == OperationAction::Skip {
                 // A healthy file is skipped without any decision; only local
                 // edits need the user's review.
@@ -8843,8 +8926,9 @@ fn prune_emptied_directories(root: &RootedDir, plan: &InstallationPlan) {
 /// routes (see [`installer_mcp_server_ids`]) from a native client MCP file the
 /// installer merged, keeping every other server and key.
 pub const MCP_ROUTE_REMOVAL: &str = "mcp_route_removal";
-/// Resolution of an unchanged native client MCP file that has no shared route
-/// left to remove: nothing is written and the file leaves management.
+/// Resolution of an unchanged file that has nothing left to remove (a native
+/// client MCP file with no shared route, or a file of the mod itself): nothing
+/// is written and the file leaves management.
 pub const MCP_ROUTE_RELEASE: &str = "mcp_route_release";
 
 /// How an unchanged native client MCP file leaves management.
@@ -9053,6 +9137,19 @@ fn operation_releases_mcp_file(operation: &PlanOperation) -> bool {
     )
 }
 
+/// Files of the mod itself that the setup wrote or the user added through it.
+fn removal_keeps_mod_file(component_id: &str) -> bool {
+    matches!(
+        component_id,
+        "project.descriptor"
+            | "project.launcher_descriptor"
+            | "project.thumbnail"
+            | "project.readme"
+            | "project.context_reference"
+            | "project.visual_direction"
+    )
+}
+
 pub fn managed_removal_operations(
     lock: &InstallationLock,
     project_root: &Path,
@@ -9086,6 +9183,37 @@ pub fn managed_removal_operations(
             }
         }
         let unchanged = current.as_deref() == Some(file.installed_sha256.as_str());
+        // The descriptors, thumbnail, README, and documents the user added are
+        // the mod itself, not development setup: removing the setup leaves
+        // them on disk and only stops managing them.
+        if removal_keeps_mod_file(&file.component_id) && current.is_some() {
+            operations.push(PlanOperation {
+                id,
+                component_id: file.component_id.clone(),
+                ownership: Some(file.ownership),
+                location_scope: Some(location_scope_for_file(file)),
+                action: OperationAction::Skip,
+                source_path: None,
+                destination: file.path.clone(),
+                source_sha256: None,
+                source_size: file.source_size,
+                platform: file.platform,
+                executable: file.executable,
+                result_sha256: None,
+                base_sha256: file.base_sha256.clone(),
+                local_sha256: current,
+                local_state: if unchanged {
+                    LocalState::Unmodified
+                } else {
+                    LocalState::Modified
+                },
+                resolution: Some(MCP_ROUTE_RELEASE.into()),
+                external: file.external,
+                rollback: RollbackAction::RestoreBackup,
+                external_parent_identity: None,
+            });
+            continue;
+        }
         let reversible = !file.preserved_local
             && !matches!(file.ownership, Ownership::Merged | Ownership::External);
         operations.push(PlanOperation {
@@ -9223,14 +9351,35 @@ pub fn update_operations(
                 (Some(hash), _) if hash == file.installed_sha256 => LocalState::Unmodified,
                 (Some(_), _) => LocalState::Modified,
             };
-            let merged_base_required = previous_file.is_some_and(|current| {
-                current.ownership == Ownership::Merged || current.preserved_local
-            });
-            let action = match (merged_base_required, local_state) {
-                (true, _) => OperationAction::Skip,
-                (false, LocalState::Absent) => OperationAction::Create,
-                (false, LocalState::Unmodified) => OperationAction::Replace,
-                (false, LocalState::Modified | LocalState::Unknown) => OperationAction::Skip,
+            // A file that already holds the incoming bytes has nothing to
+            // update, review, or rewrite. Without this, every merged file
+            // (project instructions, client MCP files, .gitignore) asked for
+            // a review on every update, and unchanged managed files were
+            // replaced with their own bytes.
+            let already_current = previous_file.is_some()
+                && local_sha256.as_deref() == Some(file.installed_sha256.as_str());
+            // The source has nothing new for this file and the user changed
+            // it: their edit is the only change, so keep it without asking
+            // again at every update.
+            let user_edit_only = !already_current
+                && local_state == LocalState::Modified
+                && !previous_file.is_some_and(|current| current.preserved_local)
+                && previous.is_some_and(|previous| previous == file.installed_sha256.as_str());
+            let merged_base_required = !already_current
+                && !user_edit_only
+                && previous_file.is_some_and(|current| {
+                    current.ownership == Ownership::Merged || current.preserved_local
+                });
+            let action = match (
+                already_current || user_edit_only,
+                merged_base_required,
+                local_state,
+            ) {
+                (true, _, _) => OperationAction::Skip,
+                (_, true, _) => OperationAction::Skip,
+                (_, false, LocalState::Absent) => OperationAction::Create,
+                (_, false, LocalState::Unmodified) => OperationAction::Replace,
+                (_, false, LocalState::Modified | LocalState::Unknown) => OperationAction::Skip,
             };
             Ok(PlanOperation {
                 id: format!("update-{index:05}"),
@@ -9248,14 +9397,20 @@ pub fn update_operations(
                 base_sha256: previous.map(ToOwned::to_owned),
                 local_sha256,
                 local_state,
-                resolution: (action == OperationAction::Skip).then(|| {
-                    if merged_base_required {
-                        "merged_base_required"
-                    } else {
-                        "review_required"
-                    }
-                    .into()
-                }),
+                resolution: if already_current {
+                    None
+                } else if user_edit_only {
+                    Some("keep_reviewed_edit".into())
+                } else {
+                    (action == OperationAction::Skip).then(|| {
+                        if merged_base_required {
+                            "merged_base_required"
+                        } else {
+                            "review_required"
+                        }
+                        .into()
+                    })
+                },
                 external: file.external,
                 rollback: if local_state == LocalState::Absent {
                     RollbackAction::RemoveCreated
@@ -9323,11 +9478,16 @@ pub fn update_operations(
             } else {
                 LocalState::Modified
             },
-            resolution: Some(if unchanged && removable {
-                "obsolete_managed_remove".into()
+            // A merged file (for example .gitignore) that still holds exactly
+            // what the setup wrote is simply kept; only a file the user
+            // changed needs a decision.
+            resolution: if unchanged && removable {
+                Some("obsolete_managed_remove".into())
+            } else if unchanged {
+                None
             } else {
-                "obsolete_review".into()
-            }),
+                Some("obsolete_review".into())
+            },
             external: file.external,
             rollback: RollbackAction::RestoreBackup,
             external_parent_identity: None,
@@ -9557,6 +9717,164 @@ mod tests {
             fs::write(path, "# Test wiki page\n").unwrap();
         }
         plan
+    }
+
+    #[test]
+    fn an_update_does_not_review_or_rewrite_files_that_already_hold_the_incoming_bytes() {
+        let project = tempdir().unwrap();
+        let template: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let locked = |path: &str, ownership: Ownership, bytes: &[u8]| {
+            let mut file = template.files[0].clone();
+            file.path = path.into();
+            file.external = false;
+            file.preserved_local = false;
+            file.ownership = ownership;
+            file.source_path = path.into();
+            file.source_sha256 = sha256_bytes(bytes);
+            file.installed_sha256 = sha256_bytes(bytes);
+            file.installed_size = Some(bytes.len() as u64);
+            file.source_size = Some(bytes.len() as u64);
+            file
+        };
+        fs::write(project.path().join("CLAUDE.md"), b"adapted instructions").unwrap();
+        fs::create_dir_all(project.path().join("docs")).unwrap();
+        fs::write(project.path().join("docs/guide.md"), b"guide").unwrap();
+        fs::write(project.path().join("AGENTS.md"), b"user edited").unwrap();
+        fs::write(project.path().join(".gitignore"), b"managed rules").unwrap();
+        fs::write(project.path().join("docs/notes.md"), b"my notes").unwrap();
+
+        let claude = locked("CLAUDE.md", Ownership::Merged, b"adapted instructions");
+        let guide = locked("docs/guide.md", Ownership::Managed, b"guide");
+        let agents_before = locked("AGENTS.md", Ownership::Merged, b"as installed");
+        let gitignore = locked(".gitignore", Ownership::Merged, b"managed rules");
+        // Installed as "original notes", edited by the user since; the source
+        // still ships "original notes".
+        let notes = locked("docs/notes.md", Ownership::Managed, b"original notes");
+        let mut current_lock = template.clone();
+        current_lock.files = vec![
+            claude.clone(),
+            guide.clone(),
+            agents_before,
+            gitignore,
+            notes.clone(),
+        ];
+        // The new source ships the same instructions and guide; AGENTS.md
+        // differs from both the lock and the file on disk. The .gitignore is
+        // not shipped by the source (the app generates it).
+        let incoming = vec![
+            claude,
+            guide,
+            locked("AGENTS.md", Ownership::Merged, b"new adapted"),
+            notes,
+        ];
+        let operations = update_operations(&current_lock, &incoming, project.path()).unwrap();
+        let find = |path: &str| {
+            operations
+                .iter()
+                .find(|operation| operation.destination == path)
+                .unwrap_or_else(|| panic!("missing operation for {path}"))
+        };
+        for path in ["CLAUDE.md", "docs/guide.md", ".gitignore"] {
+            let operation = find(path);
+            assert_eq!(operation.action, OperationAction::Skip, "{path}");
+            assert_eq!(
+                operation.resolution, None,
+                "{path} must not ask for a review"
+            );
+            assert_eq!(operation.local_state, LocalState::Unmodified, "{path}");
+        }
+        // The user's edit is all that differs: kept without a conflict.
+        let notes = find("docs/notes.md");
+        assert_eq!(notes.action, OperationAction::Skip);
+        assert_eq!(notes.resolution.as_deref(), Some("keep_reviewed_edit"));
+        assert_eq!(notes.local_state, LocalState::Modified);
+        let agents = find("AGENTS.md");
+        assert_eq!(agents.action, OperationAction::Skip);
+        assert_eq!(agents.resolution.as_deref(), Some("merged_base_required"));
+        assert_eq!(agents.local_state, LocalState::Modified);
+    }
+
+    #[test]
+    fn a_merge_keeps_the_source_as_baseline_and_records_the_users_edit() {
+        let project = tempdir().unwrap();
+        let predecessor: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let source = b"skill from source
+";
+        let merged = b"skill from source
+my tweak
+";
+        let mut plan = plan();
+        plan.maintenance_mode = Some("update".into());
+        plan.operations = vec![PlanOperation {
+            id: "update-skill".into(),
+            component_id: "core.skills".into(),
+            ownership: Some(Ownership::Managed),
+            location_scope: Some("project".into()),
+            action: OperationAction::Merge,
+            source_path: Some("skills/SKILL.md".into()),
+            destination: "skills/SKILL.md".into(),
+            source_sha256: Some(sha256_bytes(source)),
+            source_size: Some(source.len() as u64),
+            platform: Some(ManifestPlatform::All),
+            executable: false,
+            result_sha256: Some(sha256_bytes(merged)),
+            base_sha256: None,
+            local_sha256: Some(sha256_bytes(merged)),
+            local_state: LocalState::Modified,
+            resolution: Some("merge".into()),
+            external: false,
+            rollback: RollbackAction::RestoreBackup,
+            external_parent_identity: None,
+        }];
+        let prepared = vec![PreparedFile {
+            operation_id: "update-skill".into(),
+            destination: "skills/SKILL.md".into(),
+            bytes: merged.to_vec(),
+            expected_sha256: sha256_bytes(merged),
+        }];
+        let journal = new_journal(&plan, &plan.project_id, project.path());
+        let project_directory = RootedDir::open_read(project.path()).unwrap();
+        let mut lock = build_lock(
+            &plan,
+            &prepared,
+            &journal,
+            Some(&predecessor),
+            project.path(),
+            &project_directory,
+        )
+        .unwrap();
+        // The example lock names Windows launcher paths, which are not
+        // absolute on other platforms and are not what this test is about.
+        lock.files.retain(|file| !file.external);
+        let locked = lock
+            .files
+            .iter()
+            .find(|file| file.path == "skills/SKILL.md")
+            .unwrap();
+        assert_eq!(locked.installed_sha256, sha256_bytes(source));
+        let edit = lock
+            .local_modifications
+            .iter()
+            .find(|modification| modification.path == "skills/SKILL.md")
+            .expect("the merged edit is recorded");
+        assert_eq!(edit.current_sha256, sha256_bytes(merged));
+
+        // The next update, with the same source, keeps the edit.
+        fs::create_dir_all(project.path().join("skills")).unwrap();
+        fs::write(project.path().join("skills/SKILL.md"), merged).unwrap();
+        let operations = update_operations(&lock, &[locked.clone()], project.path()).unwrap();
+        let operation = operations
+            .iter()
+            .find(|operation| operation.destination == "skills/SKILL.md")
+            .unwrap();
+        assert_eq!(operation.action, OperationAction::Skip);
+        assert_eq!(operation.resolution.as_deref(), Some("keep_reviewed_edit"));
     }
 
     #[test]
@@ -12588,6 +12906,62 @@ description: Example skill.
     }
 
     #[test]
+    fn managed_removal_keeps_the_mods_own_files_and_stops_managing_them() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let mut initial_plan = ready_plan(project.path());
+        let mut readme = initial_plan.operations[0].clone();
+        readme.id = "op-readme".into();
+        readme.destination = "README.md".into();
+        readme.component_id = "project.readme".into();
+        initial_plan.operations.push(readme);
+        let initial_prepared = ["AGENTS.md", "README.md"]
+            .into_iter()
+            .zip(["op-1", "op-readme"])
+            .map(|(destination, operation_id)| PreparedFile {
+                operation_id: operation_id.into(),
+                destination: destination.into(),
+                bytes: b"safe".to_vec(),
+                expected_sha256: sha256_bytes(b"safe"),
+            })
+            .collect::<Vec<_>>();
+        let (_, installed_lock) = run_test_transaction(
+            project.path(),
+            &initial_plan,
+            &initial_prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let mut removal_plan = ready_plan(project.path());
+        removal_plan.maintenance_mode = Some("remove".into());
+        removal_plan.plan_id = Uuid::new_v4();
+        removal_plan.codex_analysis = None;
+        removal_plan.generated_artifacts.clear();
+        removal_plan.external_actions.clear();
+        removal_plan.git_setup = None;
+        removal_plan.optional_workflows.clear();
+        removal_plan.operations =
+            managed_removal_operations(&installed_lock, project.path()).unwrap();
+        let (_, removal_lock) = run_test_transaction(
+            project.path(),
+            &removal_plan,
+            &[],
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!project.path().join("AGENTS.md").exists());
+        assert_eq!(fs::read(project.path().join("README.md")).unwrap(), b"safe");
+        assert!(removal_lock.files.is_empty());
+    }
+
+    #[test]
     fn managed_removal_prunes_emptied_folders_and_rollback_restores_them() {
         let project = tempdir().unwrap();
         let app = tempdir().unwrap();
@@ -12736,6 +13110,14 @@ description: Example skill.
         removal_plan
             .optional_workflows
             .insert("imagegen.gptimage".into(), "not_selected".into());
+        // Components that stay installed keep their state; a removal never
+        // runs their setup, so they need no reviewed action of their own.
+        removal_plan
+            .optional_workflows
+            .insert(crate::mcp::COMPONENT_ID.into(), "ready".into());
+        removal_plan
+            .optional_workflows
+            .insert("workflow.3d".into(), "ready".into());
         removal_plan.external_actions = vec![ExternalAction {
             id: "external.imagegen.gptimage.cleanup".into(),
             component_id: "imagegen.gptimage".into(),
@@ -13319,6 +13701,29 @@ description: Example skill.
             agents.resolution.is_some(),
             "a local edit still needs review"
         );
+
+        // Once the user has kept that edit in a reviewed run, repair leaves it alone.
+        let mut kept = lock.clone();
+        kept.local_modifications.push(LocalModification {
+            path: "AGENTS.md".into(),
+            installed_sha256: sha256_bytes(b"safe"),
+            current_sha256: sha256_bytes(b"edited locally"),
+            detected_at: "2026-10-24T00:00:00Z".into(),
+        });
+        let operations = repair_operations(&kept, project.path()).unwrap();
+        let agents = operations
+            .iter()
+            .find(|operation| operation.destination == "AGENTS.md")
+            .unwrap();
+        assert_eq!(agents.resolution.as_deref(), Some("keep_reviewed_edit"));
+        // Edited again after it was kept: review is needed once more.
+        fs::write(project.path().join("AGENTS.md"), b"edited a second time").unwrap();
+        let operations = repair_operations(&kept, project.path()).unwrap();
+        let agents = operations
+            .iter()
+            .find(|operation| operation.destination == "AGENTS.md")
+            .unwrap();
+        assert_ne!(agents.resolution.as_deref(), Some("keep_reviewed_edit"));
     }
 
     fn workshop_import_fixture(
@@ -14206,6 +14611,64 @@ description: Example skill.
         )
         .unwrap();
         assert_eq!(journal.state, "interrupted");
+    }
+
+    #[test]
+    fn undo_removes_folders_that_only_existed_for_new_files_and_keeps_the_rest() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        // The mod already has a skills folder of its own with a file in it.
+        fs::create_dir_all(project.path().join(".claude/skills/mine")).unwrap();
+        fs::write(project.path().join(".claude/skills/mine/NOTES.md"), b"mine").unwrap();
+        let mut plan = ready_plan(project.path());
+        plan.operations[0].destination = ".claude/skills/demo/references/SKILL.md".into();
+        // A second new file in a folder tree the interrupted apply never
+        // reached: Undo must not fail on folders that were never created.
+        let mut unreached = plan.operations[0].clone();
+        unreached.id = "op-2".into();
+        unreached.destination = ".claude/skills/unreached/deep/FILE.md".into();
+        plan.operations.push(unreached);
+        let prepared = vec![
+            PreparedFile {
+                operation_id: "op-1".into(),
+                destination: ".claude/skills/demo/references/SKILL.md".into(),
+                bytes: b"safe".to_vec(),
+                expected_sha256: sha256_bytes(b"safe"),
+            },
+            PreparedFile {
+                operation_id: "op-2".into(),
+                destination: ".claude/skills/unreached/deep/FILE.md".into(),
+                bytes: b"safe".to_vec(),
+                expected_sha256: sha256_bytes(b"safe"),
+            },
+        ];
+        let result = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                fail_after_operation: Some(0),
+                ..Default::default()
+            },
+        );
+        assert!(result.is_err());
+        let journal_path = app
+            .path()
+            .join("transactions")
+            .join(plan.plan_id.to_string())
+            .join("journal.json");
+        let mut journal = read_journal(&journal_path).unwrap();
+        assert!(project
+            .path()
+            .join(".claude/skills/demo/references/SKILL.md")
+            .exists());
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert!(!project.path().join(".claude/skills/demo").exists());
+        assert_eq!(
+            fs::read(project.path().join(".claude/skills/mine/NOTES.md")).unwrap(),
+            b"mine"
+        );
     }
 
     #[test]

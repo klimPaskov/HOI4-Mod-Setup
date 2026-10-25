@@ -670,6 +670,10 @@ fn planning_user_message(error: AppError) -> String {
         AppError::Credential(message) if message.starts_with("sign in with ChatGPT") => {
             "Sign in with ChatGPT before continuing.".into()
         }
+        AppError::Credential(message) if message.contains("different provider endpoint") => {
+            "This project was set up with a different assistant address than the one connected now. Connect the same address on the first screen, run the review again, and confirm it. Nothing was changed."
+                .into()
+        }
         // Confirmation and session-binding checks share the credential
         // category with real sign-in failures, but the user fixes them by
         // reviewing again, not by reconnecting.
@@ -919,6 +923,7 @@ pub fn run() {
             git_online_prepare,
             git_online_action,
             approve_installation,
+            check_installation_requirements,
             resolve_installation_conflict,
             apply_installation,
             rollback_installation,
@@ -2434,7 +2439,15 @@ fn run_reviewed_post_install_actions(
     plan: &InstallationPlan,
     component_id: &str,
 ) -> Result<PostInstallActionOutcome, AppError> {
-    if plan.maintenance_mode.as_deref() == Some("remove") {
+    // A removal sets nothing up. Its only reviewed action is the cleanup of
+    // the GPTImage dependency tree that Setup itself installed.
+    if plan.maintenance_mode.as_deref() == Some("remove")
+        && !(component_id == IMAGEGEN_GPTIMAGE_COMPONENT_ID
+            && plan
+                .external_actions
+                .iter()
+                .any(|action| action.id == "external.imagegen.gptimage.cleanup"))
+    {
         return Err(AppError::Transaction(
             "managed removal cannot run a post-install action".into(),
         ));
@@ -2640,6 +2653,17 @@ fn image_provider_selected(selection: Option<&ImageGenerationSelection>, id: &st
                 .iter()
                 .any(|candidate| candidate == id)
     })
+}
+
+/// Whether a plan installs this image provider. Removal only reverses what is
+/// installed, so it never plans a provider bootstrap; a removal that carried
+/// one would stop being a pure removal and wrongly ask for a provider analysis.
+fn provider_bootstrap_selected(
+    mode: &str,
+    selection: Option<&ImageGenerationSelection>,
+    id: &str,
+) -> bool {
+    mode != "remove" && image_provider_selected(selection, id)
 }
 
 fn reviewed_gptimage_cleanup_action() -> ExternalAction {
@@ -3069,6 +3093,109 @@ fn run_reviewed_gptimage_cleanup(
     }
 }
 
+/// Why the MCP bootstrap cannot use a Python on this computer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpPython {
+    Missing,
+    PublisherNotVerified,
+}
+
+/// The Python the source-declared MCP bootstrap runs with. The bootstrap and
+/// the requirement check before installation share this lookup so a check that
+/// passes means the bootstrap finds the same interpreter.
+fn mcp_bootstrap_python() -> Result<PathBuf, McpPython> {
+    let python = crate::process::find_path_executable(&["python3", "python.exe", "python"])
+        .map_err(|_| McpPython::Missing)?;
+    crate::process::validate_executable_publisher(&python, "Python Software Foundation")
+        .map_err(|_| McpPython::PublisherNotVerified)?;
+    Ok(python)
+}
+
+/// A tool the reviewed plan needs on this computer. It is checked before any
+/// project file changes, so a missing tool is fixed on the review screen
+/// instead of stopping the installation after files were written.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+struct SetupRequirement {
+    id: String,
+    label: String,
+    /// `ready` or `missing`.
+    status: String,
+    /// What was found and, when missing, the safe next step.
+    detail: String,
+}
+
+const PYTHON_REQUIREMENT_ID: &str = "python.agent_tools_bootstrap";
+
+fn python_requirement(check: Result<PathBuf, McpPython>) -> SetupRequirement {
+    let (status, detail) = match check {
+        Ok(_) => ("ready", "Python from python.org was found.".to_string()),
+        Err(McpPython::Missing) => (
+            "missing",
+            "Python 3.9 or newer was not found. Install it from python.org and tick \u{201c}Add python.exe to PATH\u{201d}, then choose Check again.".to_string(),
+        ),
+        Err(McpPython::PublisherNotVerified) => (
+            "missing",
+            "The Python on this computer is not the python.org build, which HOI4 Agent Tools requires. Install Python from python.org, then choose Check again.".to_string(),
+        ),
+    };
+    SetupRequirement {
+        id: PYTHON_REQUIREMENT_ID.into(),
+        label: "Python for HOI4 Agent Tools".into(),
+        status: status.into(),
+        detail,
+    }
+}
+
+/// Tools the plan's post-install setup runs need. Nothing here changes the
+/// project; it only reports what the installation would fail on.
+fn setup_requirements(plan: &InstallationPlan) -> Vec<SetupRequirement> {
+    let mut requirements = Vec::new();
+    let mcp_runs = plan.maintenance_mode.as_deref() != Some("remove")
+        && matches!(Platform::current(), Platform::Windows | Platform::Linux)
+        && plan
+            .external_actions
+            .iter()
+            .any(|action| action.component_id == "mcp.hoi4_agent_tools.bootstrap")
+        && plan
+            .optional_workflows
+            .get(crate::mcp::COMPONENT_ID)
+            .is_some_and(|state| {
+                matches!(state.as_str(), "selected_pending" | "incomplete" | "ready")
+            });
+    if mcp_runs {
+        requirements.push(python_requirement(mcp_bootstrap_python()));
+    }
+    requirements
+}
+
+fn ensure_setup_requirements_met(plan: &InstallationPlan) -> Result<(), String> {
+    let missing = setup_requirements(plan)
+        .into_iter()
+        .filter(|requirement| requirement.status != "ready")
+        .map(|requirement| format!("{}: {}", requirement.label, requirement.detail))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Setup needs something that is missing on this computer. {} Nothing was changed.",
+            missing.join(" ")
+        ))
+    }
+}
+
+#[tauri::command(async)]
+fn check_installation_requirements(plan_id: String) -> Result<Vec<SetupRequirement>, String> {
+    let id = Uuid::parse_str(&plan_id).map_err(|_| "invalid installation plan ID".to_string())?;
+    let plan = prepared_plans()
+        .lock()
+        .map_err(|_| "prepared plan store is unavailable".to_string())?
+        .get(&id)
+        .map(|prepared| prepared.plan.clone())
+        .ok_or_else(|| "installation plan is not available in the core session".to_string())?;
+    Ok(setup_requirements(&plan))
+}
+
 fn run_reviewed_mcp_bootstrap(
     root: &Path,
     plan: &InstallationPlan,
@@ -3139,24 +3266,23 @@ fn run_reviewed_mcp_bootstrap(
             "the reviewed MCP bootstrap changed before execution".into(),
         ));
     }
-    let python = match crate::process::find_path_executable(&["python3", "python.exe", "python"]) {
+    let python = match mcp_bootstrap_python() {
         Ok(python) => python,
-        Err(_) => {
+        Err(McpPython::Missing) => {
             return Ok(PostInstallActionOutcome {
                 component_id: crate::mcp::COMPONENT_ID.into(),
                 state: "incomplete".into(),
                 evidence: "Python is unavailable for the source-declared MCP bootstrap".into(),
             });
         }
+        Err(McpPython::PublisherNotVerified) => {
+            return Ok(PostInstallActionOutcome {
+                component_id: crate::mcp::COMPONENT_ID.into(),
+                state: "incomplete".into(),
+                evidence: "Python publisher validation did not pass for the MCP bootstrap".into(),
+            });
+        }
     };
-    if crate::process::validate_executable_publisher(&python, "Python Software Foundation").is_err()
-    {
-        return Ok(PostInstallActionOutcome {
-            component_id: crate::mcp::COMPONENT_ID.into(),
-            state: "incomplete".into(),
-            evidence: "Python publisher validation did not pass for the MCP bootstrap".into(),
-        });
-    }
     let private_script = create_private_verified_script(&script_bytes)?;
     let spec = crate::process::ProcessSpec {
         executable: python.clone(),
@@ -5023,16 +5149,19 @@ fn maintenance_conflicts(
     operations
         .iter()
         .filter(|operation| {
-            operation.local_state == LocalState::Modified
-                || matches!(
-                    operation.resolution.as_deref(),
-                    Some(
-                        "review_required"
-                            | "merged_base_required"
-                            | "reverse_merge_required"
-                            | "obsolete_review"
-                    )
-                )
+            // An edit the user already made, with nothing new from the
+            // source, is kept without asking again.
+            operation.resolution.as_deref() != Some("keep_reviewed_edit")
+                && (operation.local_state == LocalState::Modified
+                    || matches!(
+                        operation.resolution.as_deref(),
+                        Some(
+                            "review_required"
+                                | "merged_base_required"
+                                | "reverse_merge_required"
+                                | "obsolete_review"
+                        )
+                    ))
         })
         .map(|operation| {
             let no_incoming = !prepared
@@ -6724,7 +6853,8 @@ fn build_maintenance_plan_blocking(
     } else {
         Vec::new()
     };
-    let gptimage_selected = image_provider_selected(selected_image_generation.as_ref(), "gptimage");
+    let gptimage_selected =
+        provider_bootstrap_selected(&mode, selected_image_generation.as_ref(), "gptimage");
     if gptimage_selected
         && !external_actions
             .iter()
@@ -6943,6 +7073,9 @@ fn apply_installation(plan_id: String, project_root: String) -> Result<Transacti
     // An MCP client may have started after the review; refuse before any
     // project file changes rather than failing at readiness.
     ensure_mcp_package_replaceable(&approved_plan).map_err(planning_command_error)?;
+    // A missing tool the setup checks run is reported while nothing has been
+    // written, so a first install never needs an undo for a missing prerequisite.
+    ensure_setup_requirements_met(&approved_plan)?;
     let (journal, _) = run_transaction(
         &root,
         &approved_plan,
@@ -7290,6 +7423,7 @@ mod lifecycle_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::plans::existing_project_file_is_kept_by_default;
     use std::cell::Cell;
     use std::sync::MutexGuard;
     use tempfile::tempdir;
@@ -7329,6 +7463,194 @@ mod tests {
             conflict_preview_kind("thumbnail.png", FileKind::Binary),
             FileKind::Binary
         ));
+    }
+
+    fn bootstrap_action(component_id: &str) -> ExternalAction {
+        serde_json::from_value(serde_json::json!({
+            "id": format!("external.{component_id}"),
+            "component_id": component_id,
+            "platform": Platform::current().manifest_name(),
+            "command_source": "repository_script",
+            "risk": "medium",
+            "requires_approval": true,
+        }))
+        .unwrap()
+    }
+
+    fn requirement_plan(mcp_state: Option<&str>, bootstrap: bool) -> InstallationPlan {
+        let mut plan: InstallationPlan = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-plan.example.json"
+        ))
+        .unwrap();
+        plan.maintenance_mode = None;
+        plan.external_actions = if bootstrap {
+            vec![bootstrap_action("mcp.hoi4_agent_tools.bootstrap")]
+        } else {
+            Vec::new()
+        };
+        plan.optional_workflows.clear();
+        if let Some(state) = mcp_state {
+            plan.optional_workflows
+                .insert(crate::mcp::COMPONENT_ID.into(), state.into());
+        }
+        plan
+    }
+
+    #[test]
+    fn an_existing_mods_own_project_files_are_kept_by_default() {
+        let dir = tempdir().unwrap();
+        // A real Workshop descriptor: no picture line, extra Workshop fields.
+        let descriptor = dir.path().join("descriptor.mod");
+        std::fs::write(
+            &descriptor,
+            "version=\"1.2\"\ntags={\n\t\"Military\"\n}\nname=\"Great War Redux\"\nsupported_version=\"1.12.*\"\nremote_file_id=\"2924972770\"\n",
+        )
+        .unwrap();
+        assert!(existing_project_file_is_kept_by_default(
+            "project.descriptor",
+            &descriptor,
+            false
+        ));
+        // A descriptor without a name is not the mod's own usable file.
+        std::fs::write(&descriptor, "version=\"1.2\"\n").unwrap();
+        assert!(!existing_project_file_is_kept_by_default(
+            "project.descriptor",
+            &descriptor,
+            false
+        ));
+        // A valid thumbnail is kept unless the user chose a new one in the app.
+        let thumbnail = dir.path().join("thumbnail.png");
+        std::fs::write(
+            &thumbnail,
+            crate::descriptors::placeholder_thumbnail_png().unwrap(),
+        )
+        .unwrap();
+        assert!(existing_project_file_is_kept_by_default(
+            "project.thumbnail",
+            &thumbnail,
+            false
+        ));
+        assert!(!existing_project_file_is_kept_by_default(
+            "project.thumbnail",
+            &thumbnail,
+            true
+        ));
+        std::fs::write(&thumbnail, b"not a png").unwrap();
+        assert!(!existing_project_file_is_kept_by_default(
+            "project.thumbnail",
+            &thumbnail,
+            false
+        ));
+        // A README is kept; other generated files are never kept this way.
+        let readme = dir.path().join("README.md");
+        std::fs::write(&readme, "# My mod\n").unwrap();
+        assert!(existing_project_file_is_kept_by_default(
+            "project.readme",
+            &readme,
+            false
+        ));
+        assert!(!existing_project_file_is_kept_by_default(
+            "git.ignore",
+            &readme,
+            false
+        ));
+    }
+
+    #[test]
+    #[ignore = "timing probe: set HOI4_TIME_PROJECT to an installed project (and APPDATA to its profile)"]
+    fn time_installed_readiness() {
+        let Some(root) = std::env::var_os("HOI4_TIME_PROJECT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let started = std::time::Instant::now();
+        let mut detected = crate::readiness::project_input(&root, "probe").unwrap();
+        eprintln!("project_input: {:?}", started.elapsed());
+        let started = std::time::Instant::now();
+        refresh_installed_mcp_readiness(&root, &mut detected).unwrap();
+        eprintln!(
+            "mcp refresh: {:?} -> {}",
+            started.elapsed(),
+            detected.mcp_status
+        );
+        let started = std::time::Instant::now();
+        let report = crate::readiness::evaluate(&detected);
+        eprintln!(
+            "evaluate: {:?} core_ready={}",
+            started.elapsed(),
+            report.core_ready
+        );
+    }
+
+    #[test]
+    fn a_changed_assistant_address_is_named_in_the_planning_message() {
+        let message = planning_user_message(AppError::Credential(
+            "update reanalysis was confirmed against a different provider endpoint".into(),
+        ));
+        assert!(message.contains("different assistant address"));
+        assert!(message.contains("Nothing was changed."));
+    }
+
+    #[test]
+    fn a_missing_python_is_reported_with_the_safe_next_step_before_install() {
+        let missing = python_requirement(Err(McpPython::Missing));
+        assert_eq!(missing.status, "missing");
+        assert!(missing.detail.contains("python.org"));
+        assert!(missing.detail.contains("Check again"));
+        let unverified = python_requirement(Err(McpPython::PublisherNotVerified));
+        assert_eq!(unverified.status, "missing");
+        assert!(unverified.detail.contains("python.org build"));
+        let found = python_requirement(Ok(PathBuf::from("python.exe")));
+        assert_eq!(found.status, "ready");
+        assert_eq!(found.id, PYTHON_REQUIREMENT_ID);
+    }
+
+    #[test]
+    fn setup_requirements_cover_only_plans_that_run_the_mcp_bootstrap() {
+        if !matches!(Platform::current(), Platform::Windows | Platform::Linux) {
+            return;
+        }
+        // The bootstrap runs for a selected, pending MCP route.
+        for state in ["selected_pending", "incomplete", "ready"] {
+            let plan = requirement_plan(Some(state), true);
+            assert_eq!(
+                setup_requirements(&plan)
+                    .iter()
+                    .map(|requirement| requirement.id.as_str())
+                    .collect::<Vec<_>>(),
+                vec![PYTHON_REQUIREMENT_ID],
+                "{state}"
+            );
+        }
+        // No bootstrap action, an unselected route, or a removal needs no Python.
+        assert!(setup_requirements(&requirement_plan(Some("selected_pending"), false)).is_empty());
+        assert!(setup_requirements(&requirement_plan(Some("not_selected"), true)).is_empty());
+        assert!(setup_requirements(&requirement_plan(None, true)).is_empty());
+        let mut removal = requirement_plan(Some("selected_pending"), true);
+        removal.maintenance_mode = Some("remove".into());
+        assert!(setup_requirements(&removal).is_empty());
+    }
+
+    #[test]
+    fn installing_without_a_required_tool_stops_before_any_change() {
+        if !matches!(Platform::current(), Platform::Windows | Platform::Linux) {
+            return;
+        }
+        let plan = requirement_plan(Some("selected_pending"), true);
+        let outcome = ensure_setup_requirements_met(&plan);
+        // Whether this computer has python.org Python decides the outcome; the
+        // message, when it fails, names the fix and states nothing changed.
+        match (mcp_bootstrap_python(), outcome) {
+            (Ok(_), Ok(())) => {}
+            (Err(_), Err(message)) => {
+                assert!(message.contains("Python for HOI4 Agent Tools"));
+                assert!(message.contains("Check again"));
+                assert!(message.ends_with("Nothing was changed."));
+            }
+            (found, outcome) => panic!(
+                "requirement check disagrees with the bootstrap lookup: {found:?} {outcome:?}"
+            ),
+        }
     }
 
     pub(super) fn test_state_guard() -> MutexGuard<'static, ()> {
@@ -8687,6 +9009,25 @@ mod tests {
     }
 
     #[test]
+    fn removal_never_plans_a_provider_bootstrap() {
+        let selection = ImageGenerationSelection {
+            primary_provider: "gptimage".into(),
+            ..Default::default()
+        };
+        assert!(provider_bootstrap_selected(
+            "repair",
+            Some(&selection),
+            "gptimage"
+        ));
+        assert!(!provider_bootstrap_selected(
+            "remove",
+            Some(&selection),
+            "gptimage"
+        ));
+        assert!(!provider_bootstrap_selected("update", None, "gptimage"));
+    }
+
+    #[test]
     fn managed_removal_never_restarts_the_three_d_bootstrap() {
         let project = tempdir().unwrap();
         let mut plan: InstallationPlan = serde_json::from_str(include_str!(
@@ -8701,6 +9042,36 @@ mod tests {
         let error =
             run_reviewed_post_install_actions(project.path(), &plan, "workflow.3d").unwrap_err();
         assert!(error.to_string().contains("managed removal"));
+    }
+
+    #[test]
+    fn managed_removal_may_only_run_the_reviewed_image_cleanup() {
+        let project = tempdir().unwrap();
+        let mut plan: InstallationPlan = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-plan.example.json"
+        ))
+        .unwrap();
+        plan.maintenance_mode = Some("remove".into());
+        plan.external_actions = vec![reviewed_gptimage_cleanup_action()];
+        for component in [
+            crate::mcp::COMPONENT_ID,
+            LIVE_TOOLS_COMPONENT_ID,
+            "workflow.3d",
+        ] {
+            let error =
+                run_reviewed_post_install_actions(project.path(), &plan, component).unwrap_err();
+            assert!(error.to_string().contains("managed removal"), "{component}");
+        }
+        // The cleanup itself is allowed to start; with no installed tree it
+        // fails later for its own reason, never for being a removal.
+        let outcome = run_reviewed_post_install_actions(
+            project.path(),
+            &plan,
+            IMAGEGEN_GPTIMAGE_COMPONENT_ID,
+        );
+        if let Err(error) = outcome {
+            assert!(!error.to_string().contains("managed removal cannot run"));
+        }
     }
 
     #[test]

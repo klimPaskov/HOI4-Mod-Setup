@@ -2,14 +2,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { CopyDiagnosticsButton, analysisBrief, CodingEnvironments, Components, ContextAttachments, contextEvidence, Conflict, DryRun, Findings, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, integrationReviewNeeded, maintenanceReviewScreen, nextScreen, previousScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, draftModDescription, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickContextDocuments, pickContextImages, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult, readDiagnostics } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, checkInstallationRequirements, confirmCodexAnalysis, draftModDescription, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickContextDocuments, pickContextImages, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult, readDiagnostics } from "./lib/tauri";
 import type { AiAccountStatus, AiProviderId, CodexAnalysisResult, ContextDocument, ContextImage, FolderSelection, InstallationPlan, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { renderCoverPng, renderReferenceJpeg } from "./lib/images";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), buildMaintenancePlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), draftModDescription: vi.fn(), findInterruptedTransaction: vi.fn(), forgetContextAttachment: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickContextDocuments: vi.fn(), pickContextImages: vi.fn(), pickProjectFolder: vi.fn(), readDiagnostics: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), buildMaintenancePlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), checkInstallationRequirements: vi.fn(), confirmCodexAnalysis: vi.fn(), draftModDescription: vi.fn(), findInterruptedTransaction: vi.fn(), forgetContextAttachment: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickContextDocuments: vi.fn(), pickContextImages: vi.fn(), pickProjectFolder: vi.fn(), readDiagnostics: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
 });
 
 // jsdom has no canvas; the context image rendering is exercised in images.test.ts.
@@ -56,6 +56,7 @@ beforeEach(() => {
   vi.mocked(installAppUpdate).mockResolvedValue({ value: undefined });
   vi.mocked(findInterruptedTransaction).mockResolvedValue(null);
   vi.mocked(approveInstallation).mockResolvedValue(true);
+  vi.mocked(checkInstallationRequirements).mockResolvedValue([]);
   vi.mocked(applyInstallationResult).mockResolvedValue({ value: null });
 });
 
@@ -435,7 +436,7 @@ describe("HOI4 Mod Setup wizard", () => {
     const startedAt = Date.parse("2026-08-02T12:00:00Z");
     expect(estimatePlanPreparationProgress(startedAt, startedAt)).toEqual({ percent: 4, remaining: "About 30 seconds remaining" });
     expect(estimatePlanPreparationProgress(startedAt, startedAt + 15_000)).toEqual({ percent: 50, remaining: "About 15 seconds remaining" });
-    expect(estimatePlanPreparationProgress(startedAt, startedAt + 60_000).percent).toBe(96);
+    expect(estimatePlanPreparationProgress(startedAt, startedAt + 60_000)).toEqual({ percent: 96, remaining: "a first install can take a few minutes", overdue: true });
   });
 
   it("lets the returned update reanalysis be confirmed from the Update screen", async () => {
@@ -2308,6 +2309,11 @@ describe("HOI4 Mod Setup wizard", () => {
 
     expect(await screen.findByText("Some project files were already changed, so continuing automatically is unavailable.")).toBeInTheDocument();
     expect(screen.getByText("Undo the partial setup before installing again.")).toBeInTheDocument();
+    // With no recorded error (the app was closed mid-install) the screen still
+    // says what happened and what Undo changes does, in plain words.
+    expect(screen.getByText("What happened")).toBeInTheDocument();
+    expect(screen.getByText(/app was closed or the computer went to sleep/)).toBeInTheDocument();
+    expect(screen.getByText(/keep the app open until it says it is done/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /continue setup/i })).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /undo changes/i }).find((button) => button.classList.contains("recovery-card"))).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: /discard prepared files/i })).not.toBeInTheDocument();
@@ -2355,7 +2361,7 @@ describe("HOI4 Mod Setup wizard", () => {
     vi.mocked(findInterruptedTransaction).mockResolvedValue(null);
     await act(async () => finishRollback?.({ value: { transaction_id: "partial-transaction", state: "rolled_back" } as never }));
     expect(await screen.findByRole("heading", { name: "Start a mod project" })).toBeInTheDocument();
-    expect(screen.getByText("The partial setup was undone. You can start again.")).toBeInTheDocument();
+    expect(screen.getByText("The partial setup was undone and your mod is as it was. You can start again.")).toBeInTheDocument();
   });
 
   it("redacts raw rollback command errors before displaying them", async () => {
@@ -2387,6 +2393,62 @@ describe("HOI4 Mod Setup wizard", () => {
     const error = await screen.findByText(/Undo could not continue:/);
     expect(error).toHaveTextContent("[REDACTED]");
     expect(screen.queryByText(secretValue)).not.toBeInTheDocument();
+  });
+
+  it("explains a failed tool setup in plain words and names the safe next step", async () => {
+    vi.mocked(findInterruptedTransaction).mockResolvedValue({
+      transaction_id: "tools-transaction",
+      state: "interrupted",
+      last_checkpoint: "readiness-report",
+      recovery: {
+        resume_allowed: false,
+        rollback_allowed: true,
+        discard_staging_allowed: false,
+        project_apply_started: true,
+        recommended_action: "rollback",
+      },
+      error: {
+        code: "TRANSACTION_FAILED",
+        message: "readiness is blocked; success lock was not written: mcp.hoi4: Python is unavailable for the source-declared MCP bootstrap",
+        stage: "readiness-report",
+      },
+    } as never);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /manage an existing project/i }));
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\mods\no-python" } });
+
+    expect(await screen.findByText("What stopped setup")).toBeInTheDocument();
+    expect(screen.getAllByText(/Python is unavailable for the source-declared MCP bootstrap/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/install Python from python.org .*HOI4 Agent Tools needs it/)).toBeInTheDocument();
+  });
+
+  it("does not blame Python when the failure names the tools component but not Python", async () => {
+    vi.mocked(findInterruptedTransaction).mockResolvedValue({
+      transaction_id: "removal-transaction",
+      state: "interrupted",
+      last_checkpoint: "post-install-verified",
+      recovery: {
+        resume_allowed: false,
+        rollback_allowed: true,
+        discard_staging_allowed: false,
+        project_apply_started: true,
+        recommended_action: "rollback",
+      },
+      error: {
+        code: "TRANSACTION_FAILED",
+        message: "transaction error: the reviewed post-install component has no action evidence: mcp.hoi4_agent_tools",
+        stage: "post-install checks",
+      },
+    } as never);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /manage an existing project/i }));
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\mods\removal" } });
+
+    expect(await screen.findByText("What stopped setup")).toBeInTheDocument();
+    expect(screen.queryByText(/install Python from python.org/)).not.toBeInTheDocument();
+    expect(screen.getByText(/try again\. If it stops at the same point/)).toBeInTheDocument();
   });
 
   it("shows only Discard when setup stopped before changing project files", async () => {
@@ -2460,7 +2522,12 @@ describe("HOI4 Mod Setup wizard", () => {
 
     fireEvent.click(screen.getByText("Details", { selector: "summary" }));
     expect(screen.getByText("Check the prepared files", { selector: "strong" })).toBeInTheDocument();
-    const failureMessage = screen.getByText(/Launcher descriptor path did not match the selected project root/);
+    // The cause is also shown outside Details, with a next step, so a person
+    // who never opens Details still learns why setup stopped.
+    expect(screen.getByText("What stopped setup")).toBeInTheDocument();
+    const failureMessages = screen.getAllByText(/Launcher descriptor path did not match the selected project root/);
+    expect(failureMessages).toHaveLength(2);
+    const failureMessage = failureMessages[failureMessages.length - 1];
     expect(failureMessage).toHaveTextContent("[REDACTED]");
     expect(new TextEncoder().encode(failureMessage.textContent ?? "").length).toBeLessThanOrEqual(2048);
     expect(screen.queryByText(recoverySecret)).not.toBeInTheDocument();
@@ -2622,6 +2689,33 @@ describe("HOI4 Mod Setup wizard", () => {
 
     await act(async () => finishPlan?.({ value: { operations: [], conflicts: [], generated_artifacts: [], external_actions: [] } }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
+  });
+
+  it("blocks installation until a missing tool is found, then lets the user check again", async () => {
+    enableTauriRuntime();
+    vi.mocked(checkInstallationRequirements).mockResolvedValueOnce([
+      { id: "python.agent_tools_bootstrap", label: "Python for HOI4 Agent Tools", status: "missing", detail: "Python 3.9 or newer was not found. Install it from python.org, then choose Check again." },
+    ]);
+    window.__HOI4_DOCUMENTATION_STATE__ = {
+      ...initialState,
+      screen: "dry-run",
+      aiProvider: "codex",
+      plan: { plan_id: "tools-plan", operations: [], conflicts: [], generated_artifacts: [], external_actions: [], transaction: { directories: [] } } as never,
+    };
+    render(<App />);
+
+    expect(await screen.findByText(/Python 3.9 or newer was not found/)).toBeInTheDocument();
+    expect(screen.getByText("Missing")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /start installation/i })).toBeDisabled();
+    expect(screen.getByText("Python for HOI4 Agent Tools is missing. See Before setup for the next step.")).toBeInTheDocument();
+
+    vi.mocked(checkInstallationRequirements).mockResolvedValue([
+      { id: "python.agent_tools_bootstrap", label: "Python for HOI4 Agent Tools", status: "ready", detail: "Python from python.org was found." },
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
+    expect(screen.getByText("Found")).toBeInTheDocument();
+    expect(checkInstallationRequirements).toHaveBeenCalledTimes(2);
   });
 
   it("opens recovery instead of starting a second transaction for the same project", async () => {

@@ -392,6 +392,9 @@ pub struct Profiler {
     groups: BTreeMap<String, Group>,
     roots: BTreeMap<String, u32>,
     naming: BTreeMap<String, u32>,
+    /// Files the setup itself installed and the user has not changed. They
+    /// describe the setup, not the mod, so the profile leaves them out.
+    managed_skipped: BTreeSet<String>,
 }
 
 impl Default for Profiler {
@@ -407,7 +410,14 @@ impl Profiler {
             groups: BTreeMap::new(),
             roots: BTreeMap::new(),
             naming: BTreeMap::new(),
+            managed_skipped: BTreeSet::new(),
         }
+    }
+
+    /// Leave these project-relative files out of the profile, counting them
+    /// as excluded. Used for unmodified files an earlier setup installed.
+    pub fn skip_managed_files(&mut self, paths: BTreeSet<String>) {
+        self.managed_skipped = paths;
     }
 
     pub fn problem(&mut self, code: &'static str) {
@@ -460,6 +470,11 @@ impl Profiler {
     }
 
     pub fn record_file(&mut self, relative: &str, name: &str, size: u64) -> FileRecord {
+        if self.managed_skipped.contains(relative) {
+            self.result.stats.excluded_entries =
+                self.result.stats.excluded_entries.saturating_add(1);
+            return FileRecord::Recorded(false);
+        }
         if self.result.stats.files_indexed >= MAX_FILES {
             self.result.problems.insert("file_limit");
             return FileRecord::Limit;
@@ -859,6 +874,47 @@ mod tests {
         fs.add_file("node_modules/pkg/index.js", b"x".to_vec())
             .unwrap();
         fs
+    }
+
+    #[test]
+    fn files_an_earlier_setup_installed_are_left_out_of_the_profile() {
+        let mut fs = sample_mod();
+        fs.add_file(
+            "docs/runtimes.md",
+            b"# Agent runtimes
+How clients read skills.
+"
+            .to_vec(),
+        )
+        .unwrap();
+        let documents = |skipped: &[&str]| {
+            let mut profiler = Profiler::new();
+            profiler.skip_managed_files(skipped.iter().map(|path| path.to_string()).collect());
+            walk(&fs, &mut profiler, "", 0, &|| false, &mut |_, _| {});
+            let excluded = profiler.result.stats.excluded_entries;
+            let result = profiler
+                .analyze(
+                    &mut |path| fs.read_prefix(path, PREFIX_BYTES),
+                    &|| false,
+                    &mut |_, _| {},
+                )
+                .unwrap();
+            let finding = result
+                .findings
+                .iter()
+                .find(|finding| finding.id == "profile.documentation")
+                .unwrap()
+                .value
+                .to_string();
+            (finding, excluded)
+        };
+        let (with_setup_docs, excluded) = documents(&[]);
+        assert!(with_setup_docs.contains("docs/runtimes.md"));
+        assert_eq!(excluded, 2);
+        let (without, excluded) = documents(&["docs/runtimes.md"]);
+        assert!(!without.contains("docs/runtimes.md"), "{without}");
+        assert!(without.contains("README.md"), "the mod's own README stays");
+        assert_eq!(excluded, 3, "the skipped file is counted as excluded");
     }
 
     #[test]

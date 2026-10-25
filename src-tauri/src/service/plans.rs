@@ -54,6 +54,36 @@ pub(crate) fn merge_bytes(context: &MergeContext, path: &str) -> Result<Vec<u8>,
     Ok(bytes)
 }
 
+/// The descriptor, thumbnail and README an existing mod already has are the
+/// mod's own files, not setup output. A valid one is kept by default so the
+/// first import of a real mod does not ask the user to compare their own
+/// descriptor with a generated one. An invalid file, or a thumbnail the user
+/// chose in the app, still goes through the normal conflict review.
+pub(crate) fn existing_project_file_is_kept_by_default(
+    component_id: &str,
+    path: &Path,
+    thumbnail_chosen_by_user: bool,
+) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    match component_id {
+        "project.descriptor" => crate::descriptors::parse_descriptor(&bytes)
+            .ok()
+            .is_some_and(|descriptor| {
+                descriptor
+                    .fields
+                    .get("name")
+                    .is_some_and(|name| !name.trim().is_empty())
+            }),
+        "project.thumbnail" => {
+            !thumbnail_chosen_by_user && crate::descriptors::validate_thumbnail_png(&bytes).is_ok()
+        }
+        "project.readme" => !bytes.is_empty(),
+        _ => false,
+    }
+}
+
 pub(crate) fn renamed_destination(
     root: &Path,
     original: &str,
@@ -125,6 +155,7 @@ pub(crate) fn flatten_operation_uses_incoming(operation: &PlanOperation) -> bool
                 | "reverse_merge_required"
                 | "user_owned_review"
                 | "keep_user_modification"
+                | "keep_reviewed_edit"
                 | "obsolete_review"
         )
     ) {
@@ -155,7 +186,7 @@ pub(crate) fn accepted_flatten_prepared_files(
         };
         let kept_local = matches!(
             operation.resolution.as_deref(),
-            Some("keep" | "keep_user_modification")
+            Some("keep" | "keep_user_modification" | "keep_reviewed_edit")
         );
         let normalized_destination = file.destination.replace('\\', "/");
         let eligible = crate::flatten::FLATTEN_SOURCE_PREFIXES

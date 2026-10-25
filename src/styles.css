@@ -478,3 +478,9 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .context-image { min-width: 0; display: grid; align-content: start; gap: 8px; padding: 10px; border: 1px solid #344864; border-radius: 10px; background: #0a111c; }
 .context-image > img { display: block; width: 100%; height: auto; max-height: 140px; aspect-ratio: 4 / 3; border-radius: 7px; object-fit: cover; background: #101827; }
 .context-image > .text-button { justify-self: start; }
+
+.requirement-row { padding-bottom: 4px; }
+.requirement-row > p, .requirement-row > .button { margin: 4px 18px 12px; }
+.requirement-row > p { line-height: 1.5; }
+.recovery-cause p { margin: 6px 0 0; }
+.recovery-cause strong { display: block; }

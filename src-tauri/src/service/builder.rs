@@ -30,7 +30,7 @@ use crate::service::evidence::{
     ai_endpoint_from_state, ai_model_from_state, ai_provider_from_state,
     ai_reasoning_effort_from_state, string_field,
 };
-use crate::service::plans::renamed_destination;
+use crate::service::plans::{existing_project_file_is_kept_by_default, renamed_destination};
 use crate::service::runtime::mcp_client_launch;
 use crate::source::{
     expand_components, resolve_source, select_manifest_files, verify_download, HttpSourceClient,
@@ -427,7 +427,9 @@ pub(crate) fn build_plan_with(
     // review operation for each one; an existing descriptor is not evidence
     // that the other two routes are valid.
     let mut generated = render_generated_artifacts(&identity)?;
+    let mut thumbnail_chosen_by_user = false;
     if let Some(thumbnail) = host.context_thumbnail(state)? {
+        thumbnail_chosen_by_user = true;
         if let Some(artifact) = generated
             .iter_mut()
             .find(|artifact| artifact.component_id == "project.thumbnail")
@@ -598,8 +600,17 @@ pub(crate) fn build_plan_with(
                 path_file_kind(&artifact.destination),
                 crate::merge::MergeClassification::UserOwnedConflict,
             );
+            let default_keep = (mode == "existing"
+                && !artifact.external
+                && existing_project_file_is_kept_by_default(
+                    &artifact.component_id,
+                    &destination_path,
+                    thumbnail_chosen_by_user,
+                ))
+            .then(|| "keep".to_string());
             if let Some(choice) = choice_from_state(state)
                 .filter(|value| options.iter().any(|option| option == value))
+                .or(default_keep)
             {
                 action = match choice.as_str() {
                     "keep" | "skip" => OperationAction::Skip,

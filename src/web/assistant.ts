@@ -48,7 +48,7 @@ export const BROWSER_PROVIDERS: BrowserProvider[] = [
   { id: "grok", label: "Grok API key", protocol: "openai_responses", endpoint: "https://api.x.ai/v1/responses", defaultModel: "grok-4.7", efforts: ["low", "medium", "high"], defaultEffort: "high", optimizationProfile: "Grok setup analysis", keyUrl: "https://console.x.ai" },
   { id: "deepseek", label: "DeepSeek", protocol: "openai_compatible", endpoint: "https://api.deepseek.com/chat/completions", defaultModel: "deepseek-flash", efforts: ["low", "high", "max"], defaultEffort: "high", optimizationProfile: "DeepSeek setup analysis", keyUrl: "https://platform.deepseek.com/api_keys" },
   { id: "glm", label: "GLM", protocol: "openai_compatible", endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", defaultModel: "glm-5.2", efforts: [], defaultEffort: "none", optimizationProfile: "GLM setup analysis", keyUrl: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys" },
-  { id: "local", label: "Local model", protocol: "openai_compatible", endpoint: "http://127.0.0.1:11434/v1/chat/completions", defaultModel: "", efforts: [], defaultEffort: "none", optimizationProfile: "Local setup analysis", keyUrl: "https://github.com/ollama/ollama/blob/main/docs/openai.md", local: true },
+  { id: "local", label: "Local model", protocol: "openai_compatible", endpoint: "http://127.0.0.1:11434/v1/chat/completions", defaultModel: "", efforts: [], defaultEffort: "none", optimizationProfile: "Local setup analysis", keyUrl: "https://docs.ollama.com/api/openai-compatibility", local: true },
 ];
 
 /** An OpenAI-compatible endpoint on this computer, without credentials. */

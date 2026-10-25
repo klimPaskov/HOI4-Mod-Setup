@@ -188,7 +188,7 @@ fn default_version() -> String {
 }
 
 fn default_game_version() -> String {
-    "1.17.*".into()
+    "1.19.*".into()
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -336,6 +336,49 @@ fn persisted_conventions(state: Option<&Value>) -> ProjectConventions {
         localisation_convention: field("localisation_convention"),
         documentation_convention: field("documentation_convention"),
     }
+}
+
+/// The conventions a setup recorded in `AGENTS.md`, for a folder whose
+/// `.hoi4-mod-setup/state.json` is missing (ZIPs written before the web
+/// edition recorded the state of an existing mod). Without them an update
+/// would adapt `AGENTS.md` and `CLAUDE.md` without the conventions section
+/// and report the unchanged installed files as conflicts.
+fn conventions_from_agents(project: &Project) -> ProjectConventions {
+    let mut conventions = ProjectConventions::default();
+    let Some(text) = project
+        .fs
+        .read("AGENTS.md", MAX_EXPORT_FILE_BYTES)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+    else {
+        return conventions;
+    };
+    let Some(start) = text.find("\n## Confirmed project conventions\n") else {
+        return conventions;
+    };
+    for line in text[start..].lines().skip(3) {
+        if line.starts_with('#') {
+            break;
+        }
+        let Some((label, value)) = line
+            .strip_prefix("- ")
+            .and_then(|rest| rest.split_once(": `"))
+        else {
+            continue;
+        };
+        let Some(value) = value.strip_suffix('`') else {
+            continue;
+        };
+        // `escape_markdown_code_span` escaped backslashes and backticks.
+        let value = value.replace("\\`", "`").replace("\\\\", "\\");
+        match label {
+            "Agent guidance profile" => conventions.agents_profile = value,
+            "Localisation convention" => conventions.localisation_convention = value,
+            "Documentation convention" => conventions.documentation_convention = value,
+            _ => {}
+        }
+    }
+    conventions
 }
 
 /// Generated project files a maintenance run keeps from the lock, so a
@@ -486,11 +529,15 @@ pub(crate) fn prepare(
         }
     }
     let (identity, conventions, provenance) = match (maintenance, lock.as_ref(), project.as_ref()) {
-        (Some(_), Some(lock), Some(project)) => (
-            maintenance_identity(lock, project),
-            persisted_conventions(project.state.as_ref()),
-            None,
-        ),
+        (Some(_), Some(lock), Some(project)) => {
+            let recorded = persisted_conventions(project.state.as_ref());
+            let conventions = if recorded == ProjectConventions::default() {
+                conventions_from_agents(project)
+            } else {
+                recorded
+            };
+            (maintenance_identity(lock, project), conventions, None)
+        }
         _ => {
             let input = options
                 .identity
@@ -628,7 +675,10 @@ pub(crate) fn prepare(
                 merge_gitignore(existing_gitignore.as_deref()).into_bytes(),
                 Ownership::Generated,
             ));
-            if local.is_none() {
+            // An existing mod gets the project state too, unless it already
+            // has one, so a later update adapts the instructions with the
+            // same conventions instead of reporting them as changed.
+            if read_local(local, STATE_PATH).is_none() {
                 incoming.push(generated(
                     STATE_PATH,
                     "project.state",
@@ -1447,6 +1497,55 @@ mod tests {
             .unwrap()
             .iter()
             .all(|entry| entry.path != LOCK_PATH));
+    }
+
+    #[test]
+    fn conventions_are_read_back_from_the_installed_instructions() {
+        let mut project = Project::new();
+        project
+            .add_file(
+                "AGENTS.md",
+                b"# Guide\n\n## Confirmed project conventions\n\n- Agent guidance profile: `default`\n- Localisation convention: `english; UTF-8 with BOM; key:0`\n- Documentation convention: `a \\`b\\` \\\\ c`\n\n## Next section\n\n- Documentation convention: `ignored`\n",
+            )
+            .unwrap();
+        let conventions = conventions_from_agents(&project);
+        assert_eq!(conventions.agents_profile, "default");
+        assert_eq!(
+            conventions.localisation_convention,
+            "english; UTF-8 with BOM; key:0"
+        );
+        assert_eq!(conventions.documentation_convention, "a `b` \\ c");
+        assert_eq!(
+            conventions_from_agents(&Project::new()),
+            ProjectConventions::default()
+        );
+    }
+
+    #[test]
+    fn an_existing_mod_gets_project_state_unless_it_already_has_one() {
+        let source = source_with(selection());
+        let mut project = Project::new();
+        project
+            .add_file(
+                "descriptor.mod",
+                b"name=\"Mine\"\nsupported_version=\"1.12.*\"\n",
+            )
+            .unwrap();
+        let export = prepare(
+            &source,
+            &setup_request().to_string(),
+            Some(project.snapshot()),
+        )
+        .unwrap();
+        assert!(export.incoming.iter().any(|file| file.path == STATE_PATH));
+        project.add_file(STATE_PATH, b"{}").unwrap();
+        let export = prepare(
+            &source,
+            &setup_request().to_string(),
+            Some(project.snapshot()),
+        )
+        .unwrap();
+        assert!(export.incoming.iter().all(|file| file.path != STATE_PATH));
     }
 
     /// Install a new mod, then load the exported folder as a dropped project,
