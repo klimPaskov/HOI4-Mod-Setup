@@ -37,7 +37,8 @@ test("forwards the reviewed shape with the secret key and the configured model o
   assert.equal(calls[0].init.headers.authorization, `Bearer ${KEY}`);
   assert.equal(calls[0].init.redirect, "manual");
   const sent = JSON.parse(calls[0].init.body);
-  assert.deepEqual(Object.keys(sent).sort(), ["max_tokens", "messages", "model", "provider", "response_format"]);
+  assert.deepEqual(Object.keys(sent).sort(), ["max_tokens", "messages", "model", "provider", "reasoning", "response_format"]);
+  assert.deepEqual(sent.reasoning, { effort: "low" });
   assert.equal(sent.model, MODEL);
   assert.equal(sent.max_tokens, 32768);
 });

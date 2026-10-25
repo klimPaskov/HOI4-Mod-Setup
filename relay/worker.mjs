@@ -68,6 +68,9 @@ export async function handle(request, env, upstreamFetch) {
     ...(fallbacks.length > 0 ? { models: [env.MODEL, ...fallbacks] } : { model: env.MODEL }),
     messages: body.messages.map(({ role, content }) => ({ role, content })),
     max_tokens: MAX_TOKENS,
+    // Setup analysis is extraction, not puzzle solving: less thinking means a
+    // faster, more reliable answer inside the budget.
+    reasoning: { effort: "low" },
     provider: { require_parameters: true },
   };
   if (body.response_format) upstreamBody.response_format = body.response_format;
