@@ -206,7 +206,9 @@ await writeFile(resolve(inputRoot, "THIRD_PARTY_NOTICES.md"), mergeThirdPartyNot
 const downloadBase = previewTag
   ? `https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/${encodeURIComponent(previewTag)}`
   : null;
-const downloadBullets = summaries.map((summary) => {
+// Public install order: Windows first, then macOS (Apple silicon, Intel), then Linux (AppImage, Debian).
+const installRank = (summary) => (summary.platform === "windows" ? 0 : summary.platform === "macos" ? (summary.architecture === "ARM64" ? 1 : 2) : summary.package.endsWith(".deb") ? 4 : 3);
+const downloadBullets = [...summaries].sort((left, right) => installRank(left) - installRank(right)).map((summary) => {
   const label = summary.platform === "windows"
     ? "Windows"
     : summary.platform === "linux" ? (summary.package.endsWith(".deb") ? "Linux x64 (Debian/Ubuntu)" : "Linux x64 (AppImage)")

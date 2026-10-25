@@ -236,7 +236,9 @@ await writeFile(resolve(outputRoot, "latest.json"), JSON.stringify({
   notes: "A newer version of HOI4 Mod Setup is available.",
   platforms: updaterPlatforms,
 }, null, 2) + "\n", "utf8");
-const downloadBullets = platformSummaries.map((summary) => {
+// Public install order: Windows first, then macOS (Apple silicon, Intel), then Linux (AppImage, Debian).
+const installRank = (summary) => (summary.platform === "windows" ? 0 : summary.platform === "macos" ? (summary.architecture === "ARM64" ? 1 : 2) : summary.package.endsWith(".deb") ? 4 : 3);
+const downloadBullets = [...platformSummaries].sort((left, right) => installRank(left) - installRank(right)).map((summary) => {
   const label = summary.platform === "windows"
     ? "Windows"
     : summary.platform === "linux" ? (summary.package.endsWith(".deb") ? "Linux x64 (Debian/Ubuntu)" : "Linux x64 (AppImage)")
