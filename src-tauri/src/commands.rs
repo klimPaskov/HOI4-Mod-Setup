@@ -6418,49 +6418,114 @@ fn build_maintenance_plan_blocking(
             .source_path
             .as_deref()
             .is_some_and(|path| path.starts_with("generated:"));
-        let bytes = if generated_source && operation.component_id != "core.agents" {
-            source_bytes.clone()
-        } else {
-            adapt_selected_source(
-                &operation.component_id,
-                &operation.destination,
-                &source_bytes,
-                &maintenance_identity(&lock, &root),
-                &conventions,
-                &lock.ai_provider,
-                &lock.ai_model,
-                &lock.ai_reasoning_effort,
-                maintenance_components
-                    .iter()
-                    .any(|id| id == "workflow.super_events"),
-                mcp_selected,
-                maintenance_components.iter().any(|id| id == "workflow.3d"),
-                &portrait_pipeline,
-                &maintenance_components,
-            )?
+        // The same adaptation runs on the new source and, when an update must
+        // rebuild the previously installed text, on the old one.
+        let adapt_for_operation = |source: &[u8]| -> Result<Vec<u8>, AppError> {
+            let bytes = if generated_source && operation.component_id != "core.agents" {
+                source.to_vec()
+            } else {
+                adapt_selected_source(
+                    &operation.component_id,
+                    &operation.destination,
+                    source,
+                    &maintenance_identity(&lock, &root),
+                    &conventions,
+                    &lock.ai_provider,
+                    &lock.ai_model,
+                    &lock.ai_reasoning_effort,
+                    maintenance_components
+                        .iter()
+                        .any(|id| id == "workflow.super_events"),
+                    mcp_selected,
+                    maintenance_components.iter().any(|id| id == "workflow.3d"),
+                    &portrait_pipeline,
+                    &maintenance_components,
+                )?
+            };
+            let bytes = if is_image_generation_client_config_path(&operation.destination) {
+                merge_existing_image_client_config(&root, &operation.destination, &bytes)?
+            } else {
+                bytes
+            };
+            if let (Some(manifest), Some(selection)) = (
+                image_generation_manifest.as_ref(),
+                selected_image_generation.as_ref(),
+            ) {
+                let guided = adapt_image_generation_guidance(&bytes, manifest, selection)?;
+                adapt_image_generation_client_config(
+                    &guided,
+                    &operation.destination,
+                    manifest,
+                    selection,
+                    &coding_environment_selection,
+                    &root,
+                    selected_live_testing.as_ref().unwrap(),
+                )
+            } else {
+                Ok(bytes)
+            }
         };
-        let bytes = if is_image_generation_client_config_path(&operation.destination) {
-            merge_existing_image_client_config(&root, &operation.destination, &bytes)?
-        } else {
-            bytes
-        };
-        let bytes = if let (Some(manifest), Some(selection)) = (
-            image_generation_manifest.as_ref(),
-            selected_image_generation.as_ref(),
-        ) {
-            let guided = adapt_image_generation_guidance(&bytes, manifest, selection)?;
-            adapt_image_generation_client_config(
-                &guided,
-                &operation.destination,
-                manifest,
-                selection,
-                &coding_environment_selection,
-                &root,
-                selected_live_testing.as_ref().unwrap(),
-            )?
-        } else {
-            bytes
-        };
+        let mut bytes = adapt_for_operation(&source_bytes)?;
+        // An instruction file the setup adapted: rebuild what the old source
+        // adapted to (from the exact revision and hash the lock recorded), so
+        // the update can tell the user's content from the template's changes.
+        let mut merged_update_base = None;
+        if operation.resolution.as_deref() == Some("merged_base_required")
+            && !source_is_generated
+            && path_file_kind(&operation.destination) == FileKind::Text
+        {
+            if let Some(current_file) = lock.files.iter().find(|file| {
+                file.path == operation.destination
+                    && file.external == operation.external
+                    && file.ownership == Ownership::Merged
+            }) {
+                if let Ok(old_source) = client.fetch_verified_file(
+                    &current_file.source_revision,
+                    &current_file.source_path,
+                    &current_file.source_sha256,
+                    None,
+                ) {
+                    merged_update_base = Some(adapt_for_operation(&old_source)?);
+                }
+            }
+        }
+        if let Some(base) = merged_update_base.take() {
+            let local = std::fs::read(safe_join(&root, &operation.destination)?)?;
+            let local_modified = operation.local_state == LocalState::Modified;
+            match crate::service::plans::reconcile_merged_update(
+                &base,
+                &local,
+                &bytes,
+                local_modified,
+            ) {
+                crate::service::plans::MergedUpdate::Replace => {
+                    operation.action = OperationAction::Replace;
+                    operation.resolution = None;
+                    operation.rollback = RollbackAction::RestoreBackup;
+                }
+                crate::service::plans::MergedUpdate::Merged(merged) => {
+                    operation.action = OperationAction::Merge;
+                    operation.resolution = Some("merge".into());
+                    operation.rollback = RollbackAction::RestoreBackup;
+                    bytes = merged;
+                }
+                crate::service::plans::MergedUpdate::NeedsReview => {
+                    // An edited file can still be merged by hand from the
+                    // review; the user chooses, nothing is applied silently.
+                    if local_modified {
+                        merge_contexts.insert(
+                            operation.id.clone(),
+                            MergeContext {
+                                kind: FileKind::Text,
+                                base,
+                                local,
+                                incoming: bytes.clone(),
+                            },
+                        );
+                    }
+                }
+            }
+        }
         let actual = sha256_bytes(&bytes);
         if generated_source {
             validate_generated_maintenance_content(
