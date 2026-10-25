@@ -49,8 +49,10 @@ test("existing-project management remains available while signed out", async ({ 
   await expect(page.getByRole("button", { name: "Browse project folder", exact: true })).toBeEnabled();
 });
 
-test("Claude offers the verified catalog with Haiku 5.5 as the default", async ({ page }) => {
+test("Claude offers the verified catalog with Haiku 5.5 as its default model", async ({ page }) => {
   await page.goto("/?screenshot=welcome");
+  // The free model is the default assistant once its relay is deployed.
+  await page.getByLabel("AI provider").selectOption("claude_account");
   await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveValue("claude-haiku-5-5");
   await expect(page.getByRole("combobox", { name: "Model", exact: true }).locator("option")).toHaveCount(14);
   await page.getByRole("combobox", { name: "Model", exact: true }).selectOption("claude-sonnet-5-5");
