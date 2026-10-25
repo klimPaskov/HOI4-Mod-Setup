@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Prepare the package's development tools automatically. When an install, update, or repair leaves `.tools/check.py` in the project, the review lists one more setup check and, after the files are applied, the app runs the package's own `python -B .tools/check.py setup --save-game-dir <your game folder>`: it installs the Python packages the checks need, records the game folder in a gitignored settings file, makes sure the ignore entries exist, regenerates the agent projections, and checks the project. A fresh install no longer fails the `generators` check because of a stale agent map. The step never fails the installation: the Ready screen shows a **Development tools** line and the tool's own message when something is missing (for example Python), and **Repair** runs it again.
+
 - Let a hosted setup analysis take up to five minutes instead of two. The free model reasons before it answers and needs longer than two minutes on a large installed project, which showed as "The selected provider is temporarily unavailable" on every attempt of an update or repair review.
 
 ## 0.7.1 - 2026-10-25

@@ -4,6 +4,7 @@
 //! It never receives filesystem or credential authority directly.
 
 pub mod account_cli;
+pub mod agent_setup;
 pub mod ai;
 pub mod claude_code;
 pub mod codex;

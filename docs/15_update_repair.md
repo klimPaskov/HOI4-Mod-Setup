@@ -100,6 +100,37 @@ Re-fetch selected components at the same or chosen revision. Preserve local modi
 
 Select a rollback record and preview source revision, restored or removed files, structured configuration, Git impact, optional states, and lock state. The current implementation performs a journaled, root-bound reversal using the transaction's verified backups and predecessor lock. Before restoration it creates a separate rollback transaction journal, links it from the parent journal, and backs up the live post-transaction bytes so the reversal has its own durable audit boundary. It records the reversal and refuses to remove explicit skips, merged content, or later user edits. When that child journal completes, the Ready screen exposes a confirmed “Restore rolled-back state” action that reuses the same guarded rollback path to restore the managed files and lock state recorded before rollback. It does not recreate Git or other external side effects; those remain an explicit review boundary.
 
+## Development tools step
+
+The package's `runtime.agent_sync` component installs `.tools/check.py`. A plan
+that leaves it in the project (install, update, repair, reinstall; never a
+removal) carries one more reviewed action, shown with the setup checks. After
+the transaction has applied and written the lock, the desktop runs
+
+```
+python -B .tools/check.py setup --save-game-dir "<game folder>"
+```
+
+from the project root, with the Python found on `PATH` (not the Microsoft Store
+launcher stub), a 20-minute limit, no credentials, and the entry point's hash
+checked against the reviewed plan immediately before it runs. The command is the
+package's: it installs the check dependencies (into a project virtual
+environment when the system Python is externally managed), records the game
+folder in the gitignored `.tools/local_settings.json`, adds the ignore entries,
+runs the synchronizers, adopts the quality baseline, and prints its `doctor`
+report.
+
+It regenerates a few files the lock already tracks. The app hashes every tracked
+file before and after: a change to the agent map, the agent projection folders,
+`.gitignore`, `AGENTS.md`, or the quality baseline is recorded as the new
+installed hash in the lock; a change to any other tracked file (canonical
+instructions, skills, subagents, source files) is refused and reported. The step
+never fails the installation. Its state is stored in the lock as
+`optional_workflows["runtime.agent_sync"]` and shown on the Ready screen as a
+non-blocking **Development tools** line; a missing Python or a failed command
+shows the tool's own message, and Repair runs it again. Installed Python
+packages live outside the project and are reported, not removed.
+
 ## Removal
 
 Use reverse dependencies. Default to deleting unmodified managed files, removing managed structured contributions, preserving modified or merged files, preserving local additions, keeping the mod's own files (descriptors, launcher descriptor, thumbnail, README, and documents added through the app, which leave management but stay on disk), keeping global tools, and removing only project credential references. Deleting the OS credential is a separate explicit vault action and requires the opaque Meshy reference; managed removal never performs it implicitly. The final removal report records transaction completion without claiming that the now-unconfigured project is AI-ready; the lock remains available for audit and rollback.

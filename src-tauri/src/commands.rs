@@ -530,11 +530,18 @@ fn validate_codex_planning_account(status: &CodexAccountStatus) -> Result<(), Ap
 }
 
 fn store_prepared_plan(
-    plan: InstallationPlan,
+    mut plan: InstallationPlan,
     prepared_files: Vec<crate::models::PreparedFile>,
     merge_contexts: HashMap<String, MergeContext>,
     canonical_root: PathBuf,
 ) -> Result<InstallationPlan, AppError> {
+    // A plan that installs the package's check tooling also carries the
+    // reviewed step that prepares it (the desktop runs it after the apply).
+    let install = crate::paths::game_install();
+    crate::agent_setup::add_to_plan(
+        &mut plan,
+        install.detected.then_some(install.game_dir.as_str()),
+    );
     let mut plans = prepared_plans()
         .lock()
         .map_err(|_| AppError::Transaction("prepared plan store is unavailable".into()))?;
@@ -932,6 +939,7 @@ pub fn run() {
             check_installation_requirements,
             resolve_installation_conflict,
             apply_installation,
+            run_agent_setup,
             rollback_installation,
             read_transaction_journal,
             find_interrupted_transaction,
@@ -7053,6 +7061,133 @@ fn resolve_installation_conflict(
         .get_mut(&id)
         .ok_or_else(|| "installation plan is not available in the core session".to_string())?;
     resolve_conflict(prepared, &path, &choice)
+}
+
+/// What the development tools step did, for the Ready screen.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+struct AgentSetupResult {
+    /// `ready`, `incomplete`, or `not_needed`.
+    state: String,
+    detail: String,
+}
+
+fn bounded_tool_output(result: &crate::process::ProcessResult) -> String {
+    let mut text = String::new();
+    text.push_str(result.stdout.trim());
+    if !result.stderr.trim().is_empty() {
+        text.push('\n');
+        text.push_str(result.stderr.trim());
+    }
+    let redacted = redact_secrets(&text, &[]);
+    let tail: String = redacted
+        .chars()
+        .rev()
+        .take(1200)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    tail.trim().to_string()
+}
+
+/// Run the package's `check.py setup` once, after an apply, as the reviewed
+/// plan describes it, and record its effect in the lock. Never fails the
+/// installation: the project is usable without it, and the Ready screen shows
+/// what is left.
+fn run_agent_setup_blocking(
+    plan: &InstallationPlan,
+    root: &Path,
+) -> Result<AgentSetupResult, AppError> {
+    let Some(action) = crate::agent_setup::reviewed_action(plan)? else {
+        return Ok(AgentSetupResult {
+            state: "not_needed".into(),
+            detail: String::new(),
+        });
+    };
+    crate::agent_setup::verify_script(root, plan)?;
+    let lock = read_project_lock(root)?;
+    let record = |changes: &crate::agent_setup::Changes, state: &str, detail: &str| {
+        crate::agent_setup::amend_lock(
+            root,
+            changes,
+            state,
+            (!detail.is_empty()).then(|| detail.to_string()),
+        )
+    };
+    // The Microsoft Store's python.exe is a launcher stub, not an interpreter.
+    let python = crate::process::find_path_executable(&["python3", "python.exe", "python"])
+        .ok()
+        .filter(|path| !path.to_string_lossy().contains("WindowsApps"));
+    let Some(python) = python else {
+        let detail = "Python 3.9 or newer was not found, so the development tools were not prepared. Install it from python.org, then run Repair.";
+        record(&Default::default(), "incomplete", detail)?;
+        return Ok(AgentSetupResult {
+            state: "incomplete".into(),
+            detail: detail.into(),
+        });
+    };
+    let before = crate::agent_setup::snapshot(root, &lock)?;
+    let mut args = vec!["-B".to_string()];
+    args.extend(action.arguments.iter().cloned());
+    let spec = crate::process::ProcessSpec {
+        executable: python.clone(),
+        executable_sha256: Some(sha256_file(&python)?),
+        args,
+        cwd: Some(root.to_path_buf()),
+        platform: Platform::current(),
+        environment_names: vec![],
+        timeout_seconds: 20 * 60,
+        max_output_bytes: 2 * 1024 * 1024,
+    };
+    let run = spec.run(&[python], None);
+    let changes = crate::agent_setup::changes_since(root, &before)?;
+    let (state, detail) = match &run {
+        _ if !changes.unexpected.is_empty() => (
+            "incomplete",
+            format!(
+                "The setup command changed files it must not: {}.",
+                changes.unexpected.join(", ")
+            ),
+        ),
+        Ok(result) if result.status_code == Some(0) && !result.timed_out => {
+            ("ready", String::new())
+        }
+        Ok(result) if result.timed_out => (
+            "incomplete",
+            "The setup command took too long and was stopped; run Repair to try again.".into(),
+        ),
+        Ok(result) => ("incomplete", bounded_tool_output(result)),
+        Err(error) => (
+            "incomplete",
+            redact_secrets(&format!("The setup command could not run: {error}"), &[]),
+        ),
+    };
+    record(&changes, state, &detail)?;
+    Ok(AgentSetupResult {
+        state: state.into(),
+        detail,
+    })
+}
+
+#[tauri::command(async)]
+fn run_agent_setup(plan_id: String, project_root: String) -> Result<AgentSetupResult, String> {
+    let id = Uuid::parse_str(&plan_id).map_err(|_| "invalid installation plan ID".to_string())?;
+    let root = validate_project_root_or_destination(Path::new(&project_root))
+        .map(|(root, _)| root)
+        .map_err(command_error)?;
+    let plan = {
+        let plans = prepared_plans()
+            .lock()
+            .map_err(|_| "prepared plan store is unavailable".to_string())?;
+        let prepared = plans
+            .get(&id)
+            .ok_or_else(|| "installation plan is not available in the core session".to_string())?;
+        if prepared.canonical_root != root {
+            return Err("installation root changed after review".into());
+        }
+        prepared.plan.clone()
+    };
+    run_agent_setup_blocking(&plan, &root).map_err(command_error)
 }
 
 #[tauri::command(async)]
