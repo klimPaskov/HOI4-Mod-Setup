@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Say why a pinned setup version is refused when its files disagree with its published manifest (a commit made before the source's manifest refresh), instead of asking the user to check their connection. Pinning **Specific commit** and **Release** was checked live on a release build: both resolve to the exact full revision and record it in the plan.
+
 ## 0.7.0 - 2026-10-25
 
 - Fix first installs that kept asking to undo changes: when HOI4 Agent Tools is selected but no python.org Python is on the computer, Review changes now shows the missing requirement and how to fix it, with a **Check again** button, and blocks **Start installation** before any file is written. Previously the bootstrap failed after the files were applied, readiness blocked the lock, and the only recovery was **Undo changes**, which returned on every retry.

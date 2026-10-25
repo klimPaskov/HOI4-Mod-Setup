@@ -220,7 +220,7 @@ from the documentation fixture and covered by unit tests, not driven live.
 - The assistants are a loopback fixture; real provider quality, sign-in, usage limits, and Claude Code / Codex account flows are untested.
 - Verifying HOI4 Agent Tools still copies the 283 MB package into a private folder each time (read, write, re-read). The read is now parallel; the write was left sequential because a parallel write measured no better. Caching the verified copy would remove most of the remaining time but changes a security boundary, so it was not done here.
 - Undo is slow on a large install: about 850 files took roughly 12 minutes, because the undo first backs up the live state so it can itself be reversed.
-- Source pinning (**Specific commit**, **Release**) was not exercised live.
+- Source pinning was exercised live after the main review (release build, no apply): **Specific commit** and **Release** each produced an update plan recording `pinned_commit` / `pinned_release` and the same exact revision. A commit made before the source's manifest refresh was refused for a file larger than its manifest declares, with a misleading "check your connection" message, since corrected.
 - A mod root longer than about 90 characters can exceed the 260-character Windows path limit once the setup's longest paths are added.
 - The local model address must be the one recorded in the lock for **Check for updates** to accept a reanalysis; the message for a different address ("the confirmed review no longer matches this session") does not say that.
 - HOI4 Agent Tools has no switch to leave it out, so Python is required to finish a Windows or Linux install.
