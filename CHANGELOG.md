@@ -5,6 +5,7 @@ HOI4 Mod Setup follows semantic versioning.
 ## Unreleased
 
 - Update `CLAUDE.md` and `AGENTS.md` without asking when you never edited them, and merge the new template into them when you added your own rules. An update used to ask about both files every time the instruction template changed, offering only Keep, Replace, Rename, or Skip, so a mod with custom rules could not take a new section without losing them. The update now rebuilds what the old template adapted to and merges three ways; an edited file is still a reviewed conflict and now offers **Merge**.
+- Let a hosted setup analysis take up to five minutes instead of two. The free model reasons before it answers and needs longer than two minutes on a large installed project, which showed as "The selected provider is temporarily unavailable" on every attempt of an update or repair review.
 
 ## 0.7.1 - 2026-10-25
 
