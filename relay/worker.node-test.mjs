@@ -39,7 +39,7 @@ test("forwards the reviewed shape with the secret key and the configured model o
   const sent = JSON.parse(calls[0].init.body);
   assert.deepEqual(Object.keys(sent).sort(), ["max_tokens", "messages", "model", "provider", "response_format"]);
   assert.equal(sent.model, MODEL);
-  assert.equal(sent.max_tokens, 8192);
+  assert.equal(sent.max_tokens, 32768);
 });
 
 test("the upstream call uses only fetch options the Workers runtime accepts", async () => {
