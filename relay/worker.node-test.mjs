@@ -37,7 +37,8 @@ test("forwards the reviewed shape with the secret key and the configured model o
   assert.equal(calls[0].init.headers.authorization, `Bearer ${KEY}`);
   assert.equal(calls[0].init.redirect, "manual");
   const sent = JSON.parse(calls[0].init.body);
-  assert.deepEqual(Object.keys(sent).sort(), ["max_tokens", "messages", "model", "provider", "response_format"]);
+  assert.deepEqual(Object.keys(sent).sort(), ["max_tokens", "messages", "model", "provider", "reasoning", "response_format"]);
+  assert.deepEqual(sent.reasoning, { effort: "low" });
   assert.equal(sent.model, MODEL);
   assert.equal(sent.max_tokens, 32768);
 });
@@ -55,6 +56,14 @@ test("a refusal from the model provider carries its short reason", async () => {
   assert.match(await response.text(), /HTTP 404: No endpoints found matching your data policy/);
   const plain = await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(500, "not json", []));
   assert.match(await plain.text(), /HTTP 500\./);
+});
+
+test("a refused key says why without exposing it", async () => {
+  const response = await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(403, '{"error":{"message":"Key limit exceeded"}}', []));
+  assert.equal(response.status, 503);
+  const text = await response.text();
+  assert.match(text, /not available right now: Key limit exceeded\./);
+  assert.ok(!text.includes(KEY));
 });
 
 test("a redirect from the model provider is refused, not followed", async () => {
