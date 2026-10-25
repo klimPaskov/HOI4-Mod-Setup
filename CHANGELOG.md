@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.7.0 - 2026-10-25
+
 - Update `rustls-webpki`, `webpki-roots`, and `webpki-root-certs` (distrusted emSign intermediates) and `vite` 6.4.4 (`launch-editor` path check bypass on Windows), so `cargo audit` and `pnpm audit` pass again.
 - Fix first installs that kept asking to undo changes: when HOI4 Agent Tools is selected but no python.org Python is on the computer, Review changes now shows the missing requirement and how to fix it, with a **Check again** button, and blocks **Start installation** before any file is written. Previously the bootstrap failed after the files were applied, readiness blocked the lock, and the only recovery was **Undo changes**, which returned on every retry.
 - Explain an interrupted installation on the recovery screen: **What stopped setup** and the next step are visible without opening Details, and the message after **Undo changes** says the mod is as it was and what to change before trying again.
