@@ -1403,7 +1403,7 @@ mod tests {
         // OpenRouter keys go only to OpenRouter.
         let mut request = setup_request();
         request["assistant"]["provider"] = json!("openrouter");
-        request["assistant"]["model"] = json!("nvidia/nemotron-3-super-120b-a12b:free");
+        request["assistant"]["model"] = json!("nvidia/nemotron-3.5-super-vl:free");
         request["assistant"]["endpoint"] =
             json!("https://openrouter.example/api/v1/chat/completions");
         assert!(prepare(&source, &request.to_string(), None).is_err());

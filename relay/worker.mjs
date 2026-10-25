@@ -60,8 +60,10 @@ export async function handle(request, env, upstreamFetch) {
   const problem = checkBody(body, env.MODEL);
   if (problem) return reply(400, problem, cors);
 
+  const fallbacks = String(env.FALLBACK_MODELS ?? "").split(",").map((id) => id.trim()).filter(Boolean);
   const upstreamBody = {
-    model: env.MODEL,
+    // OpenRouter tries these in order; a single model is sent as `model`.
+    ...(fallbacks.length > 0 ? { models: [env.MODEL, ...fallbacks] } : { model: env.MODEL }),
     messages: body.messages.map(({ role, content }) => ({ role, content })),
     max_tokens: MAX_TOKENS,
     provider: { require_parameters: true },
@@ -80,9 +82,14 @@ export async function handle(request, env, upstreamFetch) {
         "x-title": "HOI4 Mod Setup",
       },
       body: JSON.stringify(upstreamBody),
-      redirect: "error",
+      // Workers accept only "follow" or "manual" here ("error" throws), so a
+      // redirect is held back and refused below instead of followed.
+      redirect: "manual",
     });
   } catch {
+    return reply(502, "The free assistant could not reach its model.", cors);
+  }
+  if (upstream.status >= 300 && upstream.status < 400) {
     return reply(502, "The free assistant could not reach its model.", cors);
   }
   if (upstream.status === 429 || upstream.status === 402) {
@@ -94,7 +101,7 @@ export async function handle(request, env, upstreamFetch) {
   }
   const replyText = await upstream.text();
   if (new TextEncoder().encode(replyText).length > MAX_REPLY_BYTES) return reply(502, "The model's reply was too large.", cors);
-  if (!upstream.ok) return reply(502, `The model returned HTTP ${upstream.status}.`, cors);
+  if (!upstream.ok) return reply(502, `The model returned HTTP ${upstream.status}${upstreamReason(replyText)}.`, cors);
   return new Response(replyText, {
     status: 200,
     headers: { "content-type": "application/json", "cache-control": "no-store", ...corsHeaders(cors, false) },
@@ -121,6 +128,17 @@ export function checkBody(body, model) {
     if (JSON.stringify(format).length > MAX_SCHEMA_BYTES) return "The response schema is too large.";
   }
   return null;
+}
+
+/** OpenRouter's own short reason for a refusal (never the request or any key), so a setup problem is diagnosable. */
+export function upstreamReason(text) {
+  try {
+    const message = JSON.parse(text)?.error?.message;
+    if (typeof message === "string" && message.trim()) return `: ${message.replace(/\s+/g, " ").trim().slice(0, 240)}`;
+  } catch {
+    // not JSON
+  }
+  return "";
 }
 
 function allowedOrigins(env) {
