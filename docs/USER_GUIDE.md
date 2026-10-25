@@ -2,77 +2,10 @@
 
 The full walkthrough of HOI4 Mod Setup, moved here from the README. For a short
 start, use the [README](../README.md) or the [quick start](QUICKSTART.md); for
-fixes, see [Troubleshooting](TROUBLESHOOTING.md).
+fixes, see [Troubleshooting](TROUBLESHOOTING.md). The desktop app is the recommended,
+full setup; the web edition is a lighter, faster way to get the basics.
 
-## Web edition in detail
-
-The [web edition](https://klimpaskov.github.io/HOI4-Mod-Setup/app/) needs no
-install. Choose a setup assistant: the free model, which needs no account
-when it is offered, **Sign in with OpenRouter** (free models included), or
-Claude, Gemini, Grok, DeepSeek, or GLM with your API key. Then start a new mod
-from a short description or drop your mod folder on the page. The assistant fills in the mod's details and recommends
-components; you review everything and download a ZIP to unpack yourself. Your
-files stay in the browser tab: any key stays in the tab's memory, the
-provider sees only your description or a scan summary, and the page downloads
-only the selected modding files from GitHub at one exact commit and checks each
-against its published SHA-256 hash.
-
-It covers most of the desktop app: documents and images as optional context,
-coding clients, components, image providers, the portrait workflow, Clausewitz
-MCP live testing, a review of every changed file with keep, replace, merge,
-rename, or skip, and the same readiness checks. A folder that already has a
-setup can be updated, repaired, changed, or have its setup removed. A local
-model on your computer can also be the setup assistant.
-
-The web edition does not change files in place, so it has no backup or undo
-step; unpack the ZIP over a copy or a Git checkout of your mod. Account
-sign-in for Claude and Codex, installing and checking the HOI4 Agent Tools
-server, saving image-provider keys in your credential store, Git, HOI4 Live
-Tools, and the 3D models workflow need the desktop app.
-
-On Windows, run the downloaded setup file. On Mac, open the disk image and
-move HOI4 Mod Setup to Applications. Community Windows builds are signed by
-ChaosX; community Mac builds use ad-hoc signing. See the
-[release notes](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
-for your download's signing details.
-
-
-## Existing mods: import, reimport, update
-
-These are the rules the app follows with a mod that already exists. They were
-checked on disposable copies of real Workshop mods (see
-[the review record](development/2026-10-24-app-review.md)).
-
-- **Import** reads the folder and writes nothing. The assistant fills in the
-  details, you confirm them, and installation then adds the setup on top of
-  the mod: instructions, skills, subagents, tools, the offline wiki, Git rules,
-  and `.hoi4-mod-setup/install.lock.json`, which records what the app owns.
-- **Your own files stay yours.** A valid `descriptor.mod`, `thumbnail.png`, and
-  `README.md` are kept as they are on the first import; the app never
-  rewrites your `version`, `supported_version`, or Workshop fields, and your
-  mod content (`common/`, `events/`, `gfx/`, `localisation/`, …) is never touched.
-- **Reimport** the same folder any time. The app recognises its setup
-  (**Existing setup found**) and offers **Repair or add workflows** instead of
-  starting again.
-- **Update** (desktop: **Manage an existing project → Update and repair → Check
-  for updates**; web: drop the folder again and choose **Update**) compares the
-  folder with the newest setup source. Unchanged setup files are replaced,
-  files you edited are never overwritten silently, and files you added,
-  renamed, or deleted in your own mod are left alone. A file you edited that
-  the source also changed is shown for review: **Keep current**, **Use new**,
-  **Merge** (line by line, refused when both sides changed the same lines),
-  **Keep both**, or **Skip**. An edit you already kept is not asked about again
-  while the source has nothing new for that file.
-- **Repeating an update** with nothing new produces a review with no conflicts.
-- **If installation is interrupted** (the app was closed or the computer
-  slept), reopening the folder shows **Installation was interrupted**. **Undo
-  changes** returns the mod to how it was, including removing the folders the
-  setup created; then run setup again and keep the app open until it finishes.
-- **Web edition**: nothing is written in place. The ZIP is the result; unpack it
-  over a copy or a Git checkout of the mod, and drop that folder again later to
-  update.
-
-## Using the desktop app
+## Using the desktop app (recommended)
 
 ### Choose a project and setup assistant
 
@@ -251,3 +184,69 @@ left as they are and no longer managed. Removal needs no AI assistant.
 The app checks for updates when it opens and installs a newer signed version
 automatically. If an update fails, you can keep using the app and retry.
 
+## Existing mods: import, reimport, update
+
+These are the rules the app follows with a mod that already exists. They were
+checked on disposable copies of real Workshop mods (see
+[the review record](development/2026-10-24-app-review.md)).
+
+- **Import** reads the folder and writes nothing. The assistant fills in the
+  details, you confirm them, and installation then adds the setup on top of
+  the mod: instructions, skills, subagents, tools, the offline wiki, Git rules,
+  and `.hoi4-mod-setup/install.lock.json`, which records what the app owns.
+- **Your own files stay yours.** A valid `descriptor.mod`, `thumbnail.png`, and
+  `README.md` are kept as they are on the first import; the app never
+  rewrites your `version`, `supported_version`, or Workshop fields, and your
+  mod content (`common/`, `events/`, `gfx/`, `localisation/`, …) is never touched.
+- **Reimport** the same folder any time. The app recognises its setup
+  (**Existing setup found**) and offers **Repair or add workflows** instead of
+  starting again.
+- **Update** (desktop: **Manage an existing project → Update and repair → Check
+  for updates**; web: drop the folder again and choose **Update**) compares the
+  folder with the newest setup source. Unchanged setup files are replaced,
+  files you edited are never overwritten silently, and files you added,
+  renamed, or deleted in your own mod are left alone. A file you edited that
+  the source also changed is shown for review: **Keep current**, **Use new**,
+  **Merge** (line by line, refused when both sides changed the same lines),
+  **Keep both**, or **Skip**. An edit you already kept is not asked about again
+  while the source has nothing new for that file.
+- **Repeating an update** with nothing new produces a review with no conflicts.
+- **If installation is interrupted** (the app was closed or the computer
+  slept), reopening the folder shows **Installation was interrupted**. **Undo
+  changes** returns the mod to how it was, including removing the folders the
+  setup created; then run setup again and keep the app open until it finishes.
+- **Web edition**: nothing is written in place. The ZIP is the result; unpack it
+  over a copy or a Git checkout of the mod, and drop that folder again later to
+  update.
+
+## The web edition (lightweight option) in detail
+
+The [web edition](https://klimpaskov.github.io/HOI4-Mod-Setup/app/) needs no
+install. Choose a setup assistant: the free model, which needs no account
+when it is offered, **Sign in with OpenRouter** (free models included), or
+Claude, Gemini, Grok, DeepSeek, or GLM with your API key. Then start a new mod
+from a short description or drop your mod folder on the page. The assistant fills in the mod's details and recommends
+components; you review everything and download a ZIP to unpack yourself. Your
+files stay in the browser tab: any key stays in the tab's memory, the
+provider sees only your description or a scan summary, and the page downloads
+only the selected modding files from GitHub at one exact commit and checks each
+against its published SHA-256 hash.
+
+It covers most of the desktop app: documents and images as optional context,
+coding clients, components, image providers, the portrait workflow, Clausewitz
+MCP live testing, a review of every changed file with keep, replace, merge,
+rename, or skip, and the same readiness checks. A folder that already has a
+setup can be updated, repaired, changed, or have its setup removed. A local
+model on your computer can also be the setup assistant.
+
+The web edition does not change files in place, so it has no backup or undo
+step; unpack the ZIP over a copy or a Git checkout of your mod. Account
+sign-in for Claude and Codex, installing and checking the HOI4 Agent Tools
+server, saving image-provider keys in your credential store, Git, HOI4 Live
+Tools, and the 3D models workflow need the desktop app.
+
+On Windows, run the downloaded setup file. On Mac, open the disk image and
+move HOI4 Mod Setup to Applications. Community Windows builds are signed by
+ChaosX; community Mac builds use ad-hoc signing. See the
+[release notes](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
+for your download's signing details.
