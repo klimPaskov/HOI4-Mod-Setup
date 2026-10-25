@@ -19,6 +19,7 @@
     "test:offline": "node scripts/run_offline_acceptance.mjs",
     "test:manifest": "node scripts/run_python.mjs -m unittest scripts/test_generate_manifest_evidence.py scripts/test_validate_repository.py scripts/test_linux_release_gates.py scripts/test_linux_secret_service.py",
     "test:relay": "node --test relay/worker.node-test.mjs",
+    "setup:free-assistant": "node scripts/setup_free_assistant.mjs",
     "test:release-assets": "node --test scripts/prepare_release_assets.node-test.mjs scripts/windows_installer_registry.node-test.mjs scripts/linux_packages.node-test.mjs scripts/mcp_package_integrity.node-test.mjs",
     "test:workflows": "node scripts/run_python.mjs scripts/check_workflow_security.py",
     "test:a11y": "node scripts/check_accessibility.mjs",
