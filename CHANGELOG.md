@@ -4,6 +4,9 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Find Python the way people install it. The setup looked only at PATH and rejected every shortcut, so Python 3.14 from the Python install manager (which puts only shortcuts on PATH) was reported as "Python 3.9 or newer was not found" although it was installed. It now also searches the install manager's, the classic installers', Program Files, framework and Homebrew folders, tries each candidate until one is python.org's and 3.9 or newer, and names what it skipped and why. The development-tools step uses the same search.
+- A missing Python no longer blocks **Start installation**. The review shows it as a warning, setup finishes, HOI4 Agent Tools stays incomplete, and Repair completes it once Python is installed.
+
 ## 0.8.0 - 2026-10-25
 
 - Fill the per-mod settings of the package's asset and gfx tools from the mod's name and script prefix: `project_label` and `id_prefix` in `hoi4-feature-assets/tools/project_settings.json`, and `shared_registry_prefix` in `.tools/gfx/settings.json`, instead of leaving the source's generic "HOI4" values. The files keep their layout; a missing prefix leaves its value alone. The web edition gets the same adaptation.

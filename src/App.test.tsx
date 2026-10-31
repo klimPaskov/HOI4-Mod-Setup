@@ -2694,7 +2694,7 @@ describe("HOI4 Mod Setup wizard", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
   });
 
-  it("blocks installation until a missing tool is found, then lets the user check again", async () => {
+  it("reports a missing tool without blocking installation, and lets the user check again", async () => {
     enableTauriRuntime();
     vi.mocked(checkInstallationRequirements).mockResolvedValueOnce([
       { id: "python.agent_tools_bootstrap", label: "Python for HOI4 Agent Tools", status: "missing", detail: "Python 3.9 or newer was not found. Install it from python.org, then choose Check again." },
@@ -2709,8 +2709,8 @@ describe("HOI4 Mod Setup wizard", () => {
 
     expect(await screen.findByText(/Python 3.9 or newer was not found/)).toBeInTheDocument();
     expect(screen.getByText("Missing")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /start installation/i })).toBeDisabled();
-    expect(screen.getByText("Python for HOI4 Agent Tools is missing. See Before setup for the next step.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled();
+    expect(screen.getByText("Python for HOI4 Agent Tools is missing. You can install now and finish it later with Repair.")).toBeInTheDocument();
 
     vi.mocked(checkInstallationRequirements).mockResolvedValue([
       { id: "python.agent_tools_bootstrap", label: "Python for HOI4 Agent Tools", status: "ready", detail: "Python from python.org was found." },

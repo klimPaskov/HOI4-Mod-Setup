@@ -28,6 +28,7 @@ pub mod paths;
 pub mod portraits;
 pub mod process;
 mod project_profile;
+pub mod python_lookup;
 pub mod readiness;
 mod safe_fs;
 pub mod scanner;
