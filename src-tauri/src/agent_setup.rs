@@ -313,6 +313,32 @@ mod tests {
         }
     }
 
+    /// `check.py setup` runs every generator in the package's `.tools/sync/generators.json`, so each
+    /// output an installed mod can have must stay rewritable. The fixture is a copy of that registry;
+    /// refresh it from the package whenever a generator is added, and the package's own test checks
+    /// its outputs against this allowlist from the other side.
+    #[test]
+    fn package_generator_outputs_stay_rewritable() {
+        let registry: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/kit-generators.json")).unwrap();
+        let generators = registry["generators"].as_array().expect("generators list");
+        assert!(!generators.is_empty());
+        let mut checked = 0;
+        for entry in generators {
+            for output in entry["outputs"].as_array().into_iter().flatten() {
+                let pattern = output.as_str().expect("output pattern");
+                // The source package's templates are never installed under these names.
+                if pattern.ends_with("_template.md") {
+                    continue;
+                }
+                let literal = pattern.split(['*', '?', '{']).next().unwrap_or(pattern);
+                assert!(rewritable(literal), "{} writes {pattern}", entry["id"]);
+                checked += 1;
+            }
+        }
+        assert!(checked > 0);
+    }
+
     #[test]
     fn the_action_carries_the_game_folder_and_is_validated() {
         let mut plan: InstallationPlan = serde_json::from_str(include_str!(
