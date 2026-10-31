@@ -1068,7 +1068,9 @@ fn private_credential_command(
     pinned_environment: &[(&str, &str)],
 ) -> Result<Command, AppError> {
     let invalid_pin = pinned_environment.iter().any(|(name, value)| {
-        validate_env_name(name).is_err()
+        // The two slicer-detection names are mixed case (one has
+        // parentheses); the Meshy runtime reads them by these exact spellings.
+        (!matches!(*name, "ProgramFiles" | "ProgramFiles(x86)") && validate_env_name(name).is_err())
             || name.eq_ignore_ascii_case(environment_name)
             || value.is_empty()
             || value.contains('\0')
@@ -1273,7 +1275,8 @@ for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/)) {
   }
 }
 const names = ["TRANSPORT", "transport", "MESHY_API_HOST", "NO_PROXY", "no_proxy",
-  "NODE_TLS_REJECT_UNAUTHORIZED", "MESHY_API_KEY", "UNPINNED_PROJECT_VALUE"];
+  "NODE_TLS_REJECT_UNAUTHORIZED", "ProgramFiles", "ProgramFiles(x86)", "MESHY_API_KEY",
+  "UNPINNED_PROJECT_VALUE"];
 process.stdout.write(JSON.stringify(Object.fromEntries(names.map((name) => [name, process.env[name] ?? null]))));
 "#;
 
@@ -1285,13 +1288,18 @@ process.stdout.write(JSON.stringify(Object.fromEntries(names.map((name) => [name
         let script = tempfile::tempdir().unwrap();
         let entry = script.path().join("entry.cjs");
         std::fs::write(&entry, DOTENV_POPULATE_FIXTURE).unwrap();
+        let environment = crate::meshy::runtime_environment();
+        let pinned = environment
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect::<Vec<_>>();
         let mut command = private_credential_command(
             &node,
             &sha256,
             &[entry.display().to_string()],
             "MESHY_API_KEY",
             "app-owned-test-value",
-            &crate::meshy::PINNED_RUNTIME_ENVIRONMENT,
+            &pinned,
         )
         .unwrap();
         // Production inherits the coding client's project working directory.
@@ -1319,6 +1327,10 @@ process.stdout.write(JSON.stringify(Object.fromEntries(names.map((name) => [name
         assert_eq!(observed["MESHY_API_HOST"], "https://api.meshy.ai");
         assert_eq!(observed["NO_PROXY"], "*");
         assert_eq!(observed["NODE_TLS_REJECT_UNAUTHORIZED"], "1");
+        for name in ["ProgramFiles", "ProgramFiles(x86)"] {
+            let value = observed[name].as_str().unwrap();
+            assert!(!value.contains("planted"), "{name} = {value}");
+        }
         assert_eq!(observed["MESHY_API_KEY"], "app-owned-test-value");
         // The fixture genuinely loads the project file.
         assert_eq!(observed["UNPINNED_PROJECT_VALUE"], "loaded");
