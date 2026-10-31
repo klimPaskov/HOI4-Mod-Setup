@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Accept `.txt` files in the offline wiki snapshot. The package now ships `paradox_wiki/LICENSE.txt`, and the installation check rejected it ("offline wiki file type is not supported"), so every new install on the latest source stopped before applying any file.
+
 ## 0.8.1 - 2026-10-31
 
 - Find Python the way people install it. The setup looked only at PATH and rejected every shortcut, so Python 3.14 from the Python install manager (which puts only shortcuts on PATH) was reported as "Python 3.9 or newer was not found" although it was installed. It now also searches the install manager's, the classic installers', Program Files, framework and Homebrew folders, tries each candidate until one is python.org's and 3.9 or newer, and names what it skipped and why. The development-tools step uses the same search.
