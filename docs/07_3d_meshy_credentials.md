@@ -95,7 +95,11 @@ binding.
    `MESHY_API_HOST=https://api.meshy.ai`, `NO_PROXY=*`, and
    `NODE_TLS_REJECT_UNAUTHORIZED=1`. A project file therefore cannot start
    the HTTP listener, redirect or proxy authenticated requests, or disable TLS
-   verification. Meshy 0.6.7 also reads `MESHY_CLIENT`, which a project file
+   verification. Meshy 0.6.7 also reads `ProgramFiles` and `ProgramFiles(x86)`
+   after loading `.env` to detect a slicer, so the launcher always defines both
+   (the app's own values, or a fixed harmless path when it has none) and a
+   project file cannot point the detected slicer at its own program. Meshy
+   0.6.7 also reads `MESHY_CLIENT`, which a project file
    can set; it only names the host app in the User-Agent comment sent to the
    pinned API host, filtered to letters, digits, `.`, `_`, and `-`, so it stays
    unpinned. Each runtime bump must re-inventory the variables it reads at
