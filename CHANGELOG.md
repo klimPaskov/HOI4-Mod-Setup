@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Scan a mod folder that was just `git init`ed (no commit yet) as a complete inspection. The missing first commit was read as an error, so the scan showed "Scan incomplete" with the raw id `scan.git.limit`.
+
 ## 0.8.1 - 2026-10-31
 
 - Find Python the way people install it. The setup looked only at PATH and rejected every shortcut, so Python 3.14 from the Python install manager (which puts only shortcuts on PATH) was reported as "Python 3.9 or newer was not found" although it was installed. It now also searches the install manager's, the classic installers', Program Files, framework and Homebrew folders, tries each candidate until one is python.org's and 3.9 or newer, and names what it skipped and why. The development-tools step uses the same search.

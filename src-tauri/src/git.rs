@@ -2177,7 +2177,7 @@ fn inspect_read_only_bound_with_pathspecs(
         run_hardened_git_with_validated_config_and_check(
             &git_root,
             git_dir,
-            &["rev-parse", "--verify", "HEAD"],
+            &["rev-parse", "--verify", "--quiet", "HEAD"],
             &mut should_stop,
         )
     });
@@ -2195,6 +2195,14 @@ fn inspect_read_only_bound_with_pathspecs(
                 .find(|value| valid_commit_id(value))
                 .map(str::to_string);
         }
+        // A repository with no commit yet (a fresh `git init`) has no HEAD.
+        // `--quiet` makes that a silent exit 1, which is a complete answer.
+        Ok(Ok(result))
+            if result.status_code == Some(1)
+                && !result.timed_out
+                && result.stdout.trim().is_empty()
+                && !result.stdout_truncated
+                && !result.stderr_truncated => {}
         _ => complete = false,
     }
 
@@ -2609,6 +2617,22 @@ mod tests {
         assert!(inspection.commit.is_some());
         assert_eq!(inspection.status.branch.as_deref(), Some("main"));
         assert_eq!(inspection.status.dirty, Some(false));
+        assert!(inspection.tracked_path_scan_complete);
+    }
+
+    #[test]
+    fn a_repository_with_no_commit_yet_is_a_complete_inspection() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        fs::write(project.path().join("descriptor.mod"), "name=\"x\"
+").unwrap();
+
+        let inspection = inspect_read_only(project.path());
+
+        assert_eq!(inspection.status_probe, "complete", "{inspection:#?}");
+        assert!(inspection.commit.is_none());
+        assert_eq!(inspection.status.dirty, Some(true));
+        assert_eq!(inspection.untracked_files, 1);
         assert!(inspection.tracked_path_scan_complete);
     }
 
