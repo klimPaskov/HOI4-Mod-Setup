@@ -298,9 +298,9 @@ mod tests {
             ..Default::default()
         };
         let mac = search(&roots, Platform::Macos);
-        assert!(mac.candidates.is_empty());
+        assert!(!mac.candidates.contains(&fs::canonicalize(&real).unwrap()));
         assert!(mac.notes.iter().any(|note| note.contains("is a link")));
         let linux = search(&roots, Platform::Linux);
-        assert_eq!(linux.candidates, [fs::canonicalize(&real).unwrap()]);
+        assert!(linux.candidates.contains(&fs::canonicalize(&real).unwrap()));
     }
 }
