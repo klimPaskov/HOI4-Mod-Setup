@@ -3116,27 +3116,87 @@ fn run_reviewed_gptimage_cleanup(
     }
 }
 
-/// Why the MCP bootstrap cannot use a Python on this computer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why the MCP bootstrap cannot use a Python on this computer. Each carries what
+/// the search saw and skipped, so the message can name it.
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum McpPython {
-    Missing,
-    PublisherNotVerified,
+    Missing(Vec<String>),
+    PublisherNotVerified(Vec<String>),
+}
+
+/// Whether this interpreter is Python 3.9 or newer. Runs the candidate itself
+/// (after its publisher was verified), so a wrong guess from a folder name
+/// cannot pass.
+fn python_is_recent_enough(python: &Path) -> bool {
+    let Ok(hash) = sha256_file(python) else {
+        return false;
+    };
+    let spec = crate::process::ProcessSpec {
+        executable: python.to_path_buf(),
+        executable_sha256: Some(hash),
+        args: vec![
+            "-I".into(),
+            "-c".into(),
+            "import sys; sys.exit(0 if sys.version_info >= (3, 9) else 3)".into(),
+        ],
+        cwd: None,
+        platform: Platform::current(),
+        environment_names: vec![],
+        timeout_seconds: 20,
+        max_output_bytes: 4096,
+    };
+    spec.run(&[python.to_path_buf()], None)
+        .is_ok_and(|result| result.status_code == Some(0) && !result.timed_out)
 }
 
 /// The Python the source-declared MCP bootstrap runs with. The bootstrap and
 /// the requirement check before installation share this lookup so a check that
 /// passes means the bootstrap finds the same interpreter.
+///
+/// It looks at real interpreters on PATH and in the folders installers use (the
+/// Python install manager's, the classic installers', frameworks), tries each
+/// until one is the python.org build and 3.9 or newer, and keeps the reason for
+/// every one it passed over.
 fn mcp_bootstrap_python() -> Result<PathBuf, McpPython> {
-    let python = crate::process::find_path_executable(&["python3", "python.exe", "python"])
-        .map_err(|_| McpPython::Missing)?;
-    crate::process::validate_executable_publisher(&python, "Python Software Foundation")
-        .map_err(|_| McpPython::PublisherNotVerified)?;
-    Ok(python)
+    let search = crate::python_lookup::search(
+        &crate::python_lookup::Roots::from_environment(),
+        Platform::current(),
+    );
+    let mut notes = search.notes;
+    let mut not_python_org = false;
+    for candidate in search.candidates.into_iter().take(8) {
+        if crate::python_lookup::version_hint(&candidate).is_some_and(|version| version < (3, 9)) {
+            notes.push(format!("{} is older than Python 3.9.", candidate.display()));
+            continue;
+        }
+        if crate::process::validate_executable_publisher(&candidate, "Python Software Foundation")
+            .is_err()
+        {
+            not_python_org = true;
+            notes.push(format!(
+                "{} is not the python.org build.",
+                candidate.display()
+            ));
+            continue;
+        }
+        if python_is_recent_enough(&candidate) {
+            return Ok(candidate);
+        }
+        notes.push(format!(
+            "{} is older than Python 3.9 or could not be run.",
+            candidate.display()
+        ));
+    }
+    Err(if not_python_org {
+        McpPython::PublisherNotVerified(notes)
+    } else {
+        McpPython::Missing(notes)
+    })
 }
 
 /// A tool the reviewed plan needs on this computer. It is checked before any
-/// project file changes, so a missing tool is fixed on the review screen
-/// instead of stopping the installation after files were written.
+/// project file changes and shown on the review screen; a missing tool does not
+/// block installation, it leaves that step incomplete until Repair.
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 struct SetupRequirement {
     id: String,
@@ -3150,15 +3210,31 @@ struct SetupRequirement {
 const PYTHON_REQUIREMENT_ID: &str = "python.agent_tools_bootstrap";
 
 fn python_requirement(check: Result<PathBuf, McpPython>) -> SetupRequirement {
+    let seen = |notes: &[String]| {
+        if notes.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", notes.join(" "))
+        }
+    };
     let (status, detail) = match check {
-        Ok(_) => ("ready", "Python from python.org was found.".to_string()),
-        Err(McpPython::Missing) => (
-            "missing",
-            "Python 3.9 or newer was not found. Install it from python.org and tick \u{201c}Add python.exe to PATH\u{201d}, then choose Check again.".to_string(),
+        Ok(path) => (
+            "ready",
+            format!("Python from python.org was found ({}).", path.display()),
         ),
-        Err(McpPython::PublisherNotVerified) => (
+        Err(McpPython::Missing(notes)) => (
             "missing",
-            "The Python on this computer is not the python.org build, which HOI4 Agent Tools requires. Install Python from python.org, then choose Check again.".to_string(),
+            format!(
+                "Python 3.9 or newer was not found.{} Install it from python.org (the Python install manager or the classic installer both work), then choose Check again.",
+                seen(&notes)
+            ),
+        ),
+        Err(McpPython::PublisherNotVerified(notes)) => (
+            "missing",
+            format!(
+                "Python was found, but not the python.org build that HOI4 Agent Tools requires.{} Install Python from python.org, then choose Check again.",
+                seen(&notes)
+            ),
         ),
     };
     SetupRequirement {
@@ -3189,22 +3265,6 @@ fn setup_requirements(plan: &InstallationPlan) -> Vec<SetupRequirement> {
         requirements.push(python_requirement(mcp_bootstrap_python()));
     }
     requirements
-}
-
-fn ensure_setup_requirements_met(plan: &InstallationPlan) -> Result<(), String> {
-    let missing = setup_requirements(plan)
-        .into_iter()
-        .filter(|requirement| requirement.status != "ready")
-        .map(|requirement| format!("{}: {}", requirement.label, requirement.detail))
-        .collect::<Vec<_>>();
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "Setup needs something that is missing on this computer. {} Nothing was changed.",
-            missing.join(" ")
-        ))
-    }
 }
 
 #[tauri::command(async)]
@@ -3291,14 +3351,14 @@ fn run_reviewed_mcp_bootstrap(
     }
     let python = match mcp_bootstrap_python() {
         Ok(python) => python,
-        Err(McpPython::Missing) => {
+        Err(McpPython::Missing(_)) => {
             return Ok(PostInstallActionOutcome {
                 component_id: crate::mcp::COMPONENT_ID.into(),
                 state: "incomplete".into(),
                 evidence: "Python is unavailable for the source-declared MCP bootstrap".into(),
             });
         }
-        Err(McpPython::PublisherNotVerified) => {
+        Err(McpPython::PublisherNotVerified(_)) => {
             return Ok(PostInstallActionOutcome {
                 component_id: crate::mcp::COMPONENT_ID.into(),
                 state: "incomplete".into(),
@@ -7188,10 +7248,14 @@ fn run_agent_setup_blocking(
             (!detail.is_empty()).then(|| detail.to_string()),
         )
     };
-    // The Microsoft Store's python.exe is a launcher stub, not an interpreter.
-    let python = crate::process::find_path_executable(&["python3", "python.exe", "python"])
-        .ok()
-        .filter(|path| !path.to_string_lossy().contains("WindowsApps"));
+    // Real interpreters only: the search skips the Store's launcher stubs.
+    let python = crate::python_lookup::search(
+        &crate::python_lookup::Roots::from_environment(),
+        Platform::current(),
+    )
+    .candidates
+    .into_iter()
+    .find(|path| crate::python_lookup::version_hint(path).is_none_or(|version| version >= (3, 9)));
     let Some(python) = python else {
         let detail = "Python 3.9 or newer was not found, so the development tools were not prepared. Install it from python.org, then run Repair.";
         record(&Default::default(), "incomplete", detail)?;
@@ -7285,9 +7349,9 @@ fn apply_installation(plan_id: String, project_root: String) -> Result<Transacti
     // An MCP client may have started after the review; refuse before any
     // project file changes rather than failing at readiness.
     ensure_mcp_package_replaceable(&approved_plan).map_err(planning_command_error)?;
-    // A missing tool the setup checks run is reported while nothing has been
-    // written, so a first install never needs an undo for a missing prerequisite.
-    ensure_setup_requirements_met(&approved_plan)?;
+    // A missing tool is reported on the review screen (check_installation_requirements)
+    // but never blocks: the bootstrap records an incomplete state and Repair
+    // finishes it once the tool is installed.
     let (journal, _) = run_transaction(
         &root,
         &approved_plan,
@@ -7824,13 +7888,21 @@ mod tests {
 
     #[test]
     fn a_missing_python_is_reported_with_the_safe_next_step_before_install() {
-        let missing = python_requirement(Err(McpPython::Missing));
+        let missing = python_requirement(Err(McpPython::Missing(vec![
+            "C:\\Users\\x\\AppData\\Local\\Microsoft\\WindowsApps\\python.exe is a Windows app alias (a shortcut), not a Python installation.".into(),
+        ])));
         assert_eq!(missing.status, "missing");
         assert!(missing.detail.contains("python.org"));
         assert!(missing.detail.contains("Check again"));
-        let unverified = python_requirement(Err(McpPython::PublisherNotVerified));
+        // What the search skipped is named, so a user who has Python can see why.
+        assert!(missing.detail.contains("Windows app alias"));
+        assert!(missing.detail.contains("Python install manager"));
+        let unverified = python_requirement(Err(McpPython::PublisherNotVerified(vec![
+            "C:\\Anaconda\\python.exe is not the python.org build.".into(),
+        ])));
         assert_eq!(unverified.status, "missing");
         assert!(unverified.detail.contains("python.org build"));
+        assert!(unverified.detail.contains("Anaconda"));
         let found = python_requirement(Ok(PathBuf::from("python.exe")));
         assert_eq!(found.status, "ready");
         assert_eq!(found.id, PYTHON_REQUIREMENT_ID);
@@ -7860,28 +7932,6 @@ mod tests {
         let mut removal = requirement_plan(Some("selected_pending"), true);
         removal.maintenance_mode = Some("remove".into());
         assert!(setup_requirements(&removal).is_empty());
-    }
-
-    #[test]
-    fn installing_without_a_required_tool_stops_before_any_change() {
-        if !matches!(Platform::current(), Platform::Windows | Platform::Linux) {
-            return;
-        }
-        let plan = requirement_plan(Some("selected_pending"), true);
-        let outcome = ensure_setup_requirements_met(&plan);
-        // Whether this computer has python.org Python decides the outcome; the
-        // message, when it fails, names the fix and states nothing changed.
-        match (mcp_bootstrap_python(), outcome) {
-            (Ok(_), Ok(())) => {}
-            (Err(_), Err(message)) => {
-                assert!(message.contains("Python for HOI4 Agent Tools"));
-                assert!(message.contains("Check again"));
-                assert!(message.ends_with("Nothing was changed."));
-            }
-            (found, outcome) => panic!(
-                "requirement check disagrees with the bootstrap lookup: {found:?} {outcome:?}"
-            ),
-        }
     }
 
     pub(super) fn test_state_guard() -> MutexGuard<'static, ()> {
