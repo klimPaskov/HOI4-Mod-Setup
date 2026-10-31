@@ -11,13 +11,13 @@ use std::path::{Path, PathBuf};
 
 const CLI_MARKER: &str = "--run-verified-meshy-mcp";
 const PACKAGE_NAME: &str = "@meshy-ai/meshy-mcp-server";
-const PACKAGE_VERSION: &str = "0.6.2";
+const PACKAGE_VERSION: &str = "0.6.7";
 const RUNTIME_TREE_SHA256: &str =
-    "3ad84a9d8f6a1c4ccd97fe8cc15d710d9102911960664ece373d79f0b32430db";
-const RUNTIME_FILE_COUNT: u64 = 3952;
+    "dbd2ebfce197a18875c3d367ad4b5325a345b92ce54c2a33440f5490efe7f6b3";
+const RUNTIME_FILE_COUNT: u64 = 3954;
 const RUNTIME_ENTRY: &str = "@meshy-ai/meshy-mcp-server/dist/index.js";
 const MAX_NODE_BYTES: u64 = 128 * 1024 * 1024;
-/// Runtime-read variables pinned for the reviewed 0.6.2 runtime. It runs in
+/// Runtime-read variables pinned for the reviewed 0.6.7 runtime. It runs in
 /// the project folder (downloads default to `<cwd>/meshy_output`) and calls
 /// `dotenv.config()`, which adds a project `.env` to the environment but never
 /// overrides a variable that already exists. Without these pins, project
@@ -25,6 +25,11 @@ const MAX_NODE_BYTES: u64 = 128 * 1024 * 1024;
 /// authenticated requests through a proxy (`proxy-from-env` honors
 /// `NO_PROXY=*` before any proxy variable), or disable TLS verification.
 /// `MESHY_API_HOST` is read before `dotenv` runs and is pinned defensively.
+/// 0.6.7 also reads `MESHY_CLIENT` after `dotenv` runs. It only names the
+/// host application in the trailing comment of the User-Agent sent to the
+/// pinned API host, after a filter that keeps `A-Za-z0-9._-` and bounds the
+/// length, so project content cannot inject a header or change behavior with
+/// it. It is left unpinned on purpose.
 pub(crate) const PINNED_RUNTIME_ENVIRONMENT: [(&str, &str); 4] = [
     ("TRANSPORT", "stdio"),
     ("MESHY_API_HOST", "https://api.meshy.ai"),
