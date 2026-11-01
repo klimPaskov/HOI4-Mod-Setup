@@ -1100,6 +1100,12 @@ fn add_status_check(
     });
 }
 
+/// The kit's HOI4 wiki folder in an installed project: `hoi4_wiki`, or the
+/// `paradox_wiki` name earlier kit versions used when only that exists.
+pub(crate) fn wiki_folder(project_root: &Path) -> &'static str {
+    hoi4_setup_core::manifest::wiki_folder_in(|folder| project_root.join(folder).is_dir())
+}
+
 const MAX_WIKI_FILES: usize = 100_000;
 const MAX_WIKI_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -1107,9 +1113,10 @@ const MAX_WIKI_BYTES: u64 = 512 * 1024 * 1024;
 /// or links outside the installed offline wiki. The result is bounded so a
 /// malformed snapshot cannot turn readiness into an unbounded scan.
 pub(crate) fn wiki_link_integrity(project_root: &Path) -> Vec<String> {
-    let wiki_root = project_root.join("paradox_wiki");
+    let folder = wiki_folder(project_root);
+    let wiki_root = project_root.join(folder);
     if !wiki_root.is_dir() || path_has_link_component(&wiki_root) {
-        return vec!["paradox_wiki/".into()];
+        return vec![format!("{folder}/")];
     }
     let mut files = Vec::new();
     let mut broken = Vec::new();
@@ -1292,15 +1299,16 @@ fn add_wiki_check(checks: &mut Vec<ReadinessCheck>, input: &ReadinessInput) {
             "wiki",
             "not_selected",
             true,
-            "The offline wiki is not selected.",
-            "paradox_wiki/",
+            "The HOI4 wiki is not selected.",
+            "hoi4_wiki/",
         );
         return;
     }
     let root = Path::new(&input.project_root);
+    let folder = wiki_folder(root);
     let mut missing = Vec::new();
     for page in &input.wiki_required_pages {
-        if safe_join(root, &format!("paradox_wiki/{page}"))
+        if safe_join(root, &format!("{folder}/{page}"))
             .map(|path| !path.is_file())
             .unwrap_or(true)
         {
@@ -1335,7 +1343,7 @@ fn add_wiki_check(checks: &mut Vec<ReadinessCheck>, input: &ReadinessInput) {
         evidence: vec![ReadinessEvidence {
             kind: "required_pages".into(),
             value: json!({"required": input.wiki_required_pages.len(), "missing": missing, "broken_links": input.wiki_broken_links}),
-            path: Some("paradox_wiki/".into()),
+            path: Some(format!("{folder}/")),
         }],
     });
 }
@@ -1660,10 +1668,11 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         .as_ref()
         .map(|lock| lock.wiki_required_pages.clone())
         .unwrap_or_default();
-    let wiki_broken_links = if project_root.join("paradox_wiki").is_dir() {
+    let wiki_folder = wiki_folder(project_root);
+    let wiki_broken_links = if project_root.join(wiki_folder).is_dir() {
         wiki_link_integrity(project_root)
     } else {
-        vec!["paradox_wiki/".into()]
+        vec![format!("{wiki_folder}/")]
     };
     let wiki_metadata_valid = !wiki_selected
         || lock.as_ref().is_some_and(|lock| {
@@ -1686,11 +1695,11 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         .unwrap_or_else(|| "unknown".into());
     let wiki_status = if !wiki_selected {
         "not_selected".into()
-    } else if project_root.join("paradox_wiki").is_dir()
+    } else if project_root.join(wiki_folder).is_dir()
         && wiki_broken_links.is_empty()
         && wiki_metadata_valid
         && wiki_pages.iter().all(|page| {
-            safe_join(project_root, &format!("paradox_wiki/{page}"))
+            safe_join(project_root, &format!("{wiki_folder}/{page}"))
                 .map(|path| path.is_file())
                 .unwrap_or(false)
         })
@@ -2563,6 +2572,33 @@ my notes
             Some("block")
         );
         assert!(!report.open_in_codex.enabled);
+    }
+
+    #[test]
+    fn the_wiki_folder_is_hoi4_wiki_with_the_legacy_name_as_a_fallback() {
+        let project = tempfile::tempdir().unwrap();
+        assert_eq!(wiki_folder(project.path()), "hoi4_wiki");
+        fs::create_dir_all(project.path().join("paradox_wiki")).unwrap();
+        assert_eq!(wiki_folder(project.path()), "paradox_wiki");
+        fs::create_dir_all(project.path().join("hoi4_wiki")).unwrap();
+        assert_eq!(wiki_folder(project.path()), "hoi4_wiki");
+    }
+
+    #[test]
+    fn wiki_link_integrity_reads_either_wiki_folder() {
+        for folder in ["hoi4_wiki", "paradox_wiki"] {
+            let project = tempfile::tempdir().unwrap();
+            let wiki = project.path().join(folder);
+            fs::create_dir_all(&wiki).unwrap();
+            fs::write(wiki.join("index.md"), "[missing](missing.md)").unwrap();
+            assert_eq!(
+                wiki_link_integrity(project.path()),
+                vec!["index.md -> missing.md"],
+                "{folder}"
+            );
+        }
+        let project = tempfile::tempdir().unwrap();
+        assert_eq!(wiki_link_integrity(project.path()), vec!["hoi4_wiki/"]);
     }
 
     #[test]

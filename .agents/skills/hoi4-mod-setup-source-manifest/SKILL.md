@@ -120,7 +120,7 @@ repository still owns generation of every component's file evidence.
 
 ## Wiki rules
 
-Install the manifest-declared wiki tree at `<mod_project>/paradox_wiki/`. Validate required page coverage, hashes, path containment, case collisions, media policy, and update behavior. Report missing formal provenance or license data exactly as missing.
+Install the manifest-declared wiki tree at `<mod_project>/hoi4_wiki/` (`<mod_project>/paradox_wiki/` for kit manifests before the rename; an update migrates it). Validate required page coverage, hashes, path containment, case collisions, media policy, and update behavior. Report missing formal provenance or license data exactly as missing.
 
 ## MCP and external tools
 

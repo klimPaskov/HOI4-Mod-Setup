@@ -11,7 +11,7 @@ use crate::security::{
 use crate::AppError;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 #[cfg(test)]
 use std::fs::OpenOptions;
@@ -1327,6 +1327,50 @@ fn capture_previous_lock(
 }
 
 pub fn run_transaction(
+    project_root: &Path,
+    plan: &InstallationPlan,
+    prepared_files: &[PreparedFile],
+    options: &TransactionOptions,
+) -> Result<(TransactionJournal, InstallationLock), AppError> {
+    let result = run_transaction_inner(project_root, plan, prepared_files, options)?;
+    prune_empty_wiki_directories(project_root, plan);
+    Ok(result)
+}
+
+/// After a committed transaction, remove the wiki folders that a managed
+/// delete left empty (the kit renamed `paradox_wiki/` to `hoi4_wiki/`, so an
+/// update deletes every unedited page of the old folder). Only directories
+/// that are empty are removed, never a file, and a folder that still holds a
+/// page the user edited stays. The transaction has already committed, so a
+/// failure here changes nothing and is ignored.
+fn prune_empty_wiki_directories(project_root: &Path, plan: &InstallationPlan) {
+    let mut directories = BTreeSet::new();
+    for operation in &plan.operations {
+        if operation.external || operation.action != OperationAction::DeleteManaged {
+            continue;
+        }
+        let mut parent = Path::new(&operation.destination).parent();
+        while let Some(current) = parent {
+            let current_text = current.to_string_lossy().replace('\\', "/");
+            if current_text.is_empty()
+                || !hoi4_setup_core::manifest::is_wiki_path(&format!("{current_text}/"))
+            {
+                break;
+            }
+            directories.insert(current_text);
+            parent = current.parent();
+        }
+    }
+    let mut directories = directories.into_iter().collect::<Vec<_>>();
+    directories.sort_by_key(|path| std::cmp::Reverse(path.matches('/').count()));
+    for directory in directories {
+        if let Ok(path) = safe_join(project_root, &directory) {
+            let _ = remove_directory_path_if_empty(&path);
+        }
+    }
+}
+
+fn run_transaction_inner(
     project_root: &Path,
     plan: &InstallationPlan,
     prepared_files: &[PreparedFile],
@@ -3656,7 +3700,7 @@ fn validate_managed_bytes(
                 "AGENTS.md contains no usable rendered instructions".into(),
             ));
         }
-    } else if lower.starts_with("paradox_wiki/") {
+    } else if hoi4_setup_core::manifest::is_wiki_path(&lower) {
         if lower.ends_with(".md") || lower.ends_with(".svg") || lower.ends_with(".txt") {
             let text = std::str::from_utf8(bytes).map_err(|_| {
                 AppError::Transaction(format!("offline wiki text is not UTF-8: {destination}"))
@@ -3779,7 +3823,7 @@ fn apply_profile_directories_rooted(
     journal: &mut TransactionJournal,
     store: &TransactionStore,
 ) -> Result<(), AppError> {
-    let mut missing = std::collections::BTreeSet::new();
+    let mut missing = BTreeSet::new();
     for directory in &plan.transaction.directories {
         if crate::security::normalize_relative_path(directory)?.is_empty() {
             return Err(AppError::PathSecurity(
@@ -5540,22 +5584,23 @@ fn build_transaction_readiness(
                 .and_then(|text| text.parse::<toml::Value>().ok())
                 .is_some());
     let wiki_pages = plan.wiki_required_pages.clone();
+    let wiki_folder = crate::readiness::wiki_folder(project_root);
     let wiki_broken_links = if !has_component("wiki.snapshot") {
         Vec::new()
-    } else if project_root.join("paradox_wiki").is_dir() {
+    } else if project_root.join(wiki_folder).is_dir() {
         crate::readiness::wiki_link_integrity(project_root)
     } else {
-        vec!["paradox_wiki/".into()]
+        vec![format!("{wiki_folder}/")]
     };
     let wiki_metadata_valid = !has_component("wiki.snapshot")
         || (!plan.wiki_required_pages.is_empty() && plan.wiki_metadata.is_some());
     let wiki_status = if !has_component("wiki.snapshot") {
         "not_selected".to_string()
-    } else if project_root.join("paradox_wiki").is_dir()
+    } else if project_root.join(wiki_folder).is_dir()
         && wiki_broken_links.is_empty()
         && wiki_metadata_valid
         && wiki_pages.iter().all(|page| {
-            safe_join(project_root, &format!("paradox_wiki/{page}"))
+            safe_join(project_root, &format!("{wiki_folder}/{page}"))
                 .map(|path| path.is_file())
                 .unwrap_or(false)
         })
@@ -8024,7 +8069,7 @@ fn cleanup_created_project_root(
         return Ok(());
     }
     let root = validate_project_root(project_root)?;
-    let mut directories = std::collections::BTreeSet::new();
+    let mut directories = BTreeSet::new();
     directories.insert(root.join(".hoi4-mod-setup"));
     for operation in &journal.operations {
         if operation.external {
@@ -8905,7 +8950,7 @@ pub fn repair_operations(
 /// managed files, deepest first. This is best effort: a folder that still has
 /// any content stays, and a rollback recreates folders as it restores files.
 fn prune_emptied_directories(root: &RootedDir, plan: &InstallationPlan) {
-    let mut directories = std::collections::BTreeSet::new();
+    let mut directories = BTreeSet::new();
     for operation in plan
         .operations
         .iter()
@@ -9694,6 +9739,20 @@ mod tests {
     }
 
     fn ready_plan(project_root: &Path) -> InstallationPlan {
+        let plan = ready_plan_without_wiki_pages(project_root);
+        let wiki_root = project_root.join("paradox_wiki");
+        fs::create_dir_all(&wiki_root).unwrap();
+        for page in manifest_wiki_pages() {
+            let path = wiki_root.join(page.replace('/', std::path::MAIN_SEPARATOR_STR));
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, "# Test wiki page\n").unwrap();
+        }
+        plan
+    }
+
+    fn ready_plan_without_wiki_pages(project_root: &Path) -> InstallationPlan {
         let mut plan = plan();
         plan.selected_components = vec!["core.agents".into(), "wiki.snapshot".into()];
         plan.wiki_metadata = Some(WikiInstallMetadata {
@@ -9709,16 +9768,225 @@ mod tests {
             "name=\"Example\"\nversion=\"0.1.0\"\nsupported_version=\"1.17.*\"\npicture=\"thumbnail.png\"\n",
         )
         .unwrap();
-        let wiki_root = project_root.join("paradox_wiki");
-        fs::create_dir_all(&wiki_root).unwrap();
-        for page in manifest_wiki_pages() {
-            let path = wiki_root.join(page.replace('/', std::path::MAIN_SEPARATOR_STR));
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).unwrap();
-            }
-            fs::write(path, "# Test wiki page\n").unwrap();
-        }
         plan
+    }
+
+    const WIKI_PAGE_BYTES: &[u8] = b"# Test wiki page\n";
+
+    fn wiki_page_names() -> Vec<String> {
+        let mut pages = manifest_wiki_pages();
+        pages.push("extra/nested_page.md".into());
+        pages
+    }
+
+    /// Install the wiki under `folder` with a real transaction, the way an
+    /// older kit manifest did, and return the lock it wrote.
+    fn install_wiki_pages(project_root: &Path, app_root: &Path, folder: &str) -> InstallationLock {
+        let mut first = ready_plan_without_wiki_pages(project_root);
+        let template = first.operations[0].clone();
+        let mut prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        for (index, page) in wiki_page_names().iter().enumerate() {
+            let mut operation = template.clone();
+            operation.id = format!("wiki-{index}");
+            operation.component_id = "wiki.snapshot".into();
+            operation.destination = format!("{folder}/{page}");
+            operation.source_path = Some(format!("generated:wiki-{index}"));
+            operation.source_sha256 = Some(sha256_bytes(WIKI_PAGE_BYTES));
+            operation.source_size = Some(WIKI_PAGE_BYTES.len() as u64);
+            prepared.push(PreparedFile {
+                operation_id: operation.id.clone(),
+                destination: operation.destination.clone(),
+                bytes: WIKI_PAGE_BYTES.to_vec(),
+                expected_sha256: sha256_bytes(WIKI_PAGE_BYTES),
+            });
+            first.operations.push(operation);
+        }
+        let (_, lock) = run_test_transaction(
+            project_root,
+            &first,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app_root.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        lock
+    }
+
+    /// Update an installation whose lock holds `paradox_wiki/` pages against
+    /// a source that ships the same pages under `hoi4_wiki/`.
+    fn update_wiki_to_hoi4_folder(
+        project_root: &Path,
+        app_root: &Path,
+        installed: &InstallationLock,
+    ) -> (InstallationPlan, InstallationLock) {
+        let mut update = ready_plan_without_wiki_pages(project_root);
+        update.plan_id = Uuid::new_v4();
+        update.maintenance_mode = Some("update".into());
+        let incoming = installed
+            .files
+            .iter()
+            .cloned()
+            .map(|mut file| {
+                if let Some(rest) = file.path.strip_prefix("paradox_wiki/") {
+                    file.path = format!("hoi4_wiki/{rest}");
+                }
+                file
+            })
+            .collect::<Vec<_>>();
+        update.operations = update_operations(installed, &incoming, project_root).unwrap();
+        let prepared = update
+            .operations
+            .iter()
+            .filter(|operation| {
+                operation.action == OperationAction::Create || operation.destination == "AGENTS.md"
+            })
+            .map(|operation| {
+                let bytes: &[u8] = if operation.destination == "AGENTS.md" {
+                    b"safe"
+                } else {
+                    WIKI_PAGE_BYTES
+                };
+                PreparedFile {
+                    operation_id: operation.id.clone(),
+                    destination: operation.destination.clone(),
+                    bytes: bytes.to_vec(),
+                    expected_sha256: sha256_bytes(bytes),
+                }
+            })
+            .collect::<Vec<_>>();
+        let (_, lock) = run_test_transaction(
+            project_root,
+            &update,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app_root.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        (update, lock)
+    }
+
+    #[test]
+    fn updating_to_the_hoi4_wiki_folder_replaces_an_unedited_paradox_wiki_folder() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let installed = install_wiki_pages(project.path(), app.path(), "paradox_wiki");
+        assert!(project
+            .path()
+            .join("paradox_wiki/extra/nested_page.md")
+            .is_file());
+
+        let (update, lock) = update_wiki_to_hoi4_folder(project.path(), app.path(), &installed);
+
+        for page in wiki_page_names() {
+            assert_eq!(
+                fs::read(project.path().join("hoi4_wiki").join(&page)).unwrap(),
+                WIKI_PAGE_BYTES,
+                "{page} is installed in the new folder"
+            );
+            assert!(
+                lock.files
+                    .iter()
+                    .any(|file| file.path == format!("hoi4_wiki/{page}")),
+                "{page} is in the new lock"
+            );
+        }
+        // No doubled copies: the old folder and its subfolders are gone.
+        assert!(!project.path().join("paradox_wiki").exists());
+        assert!(!lock
+            .files
+            .iter()
+            .any(|file| file.path.starts_with("paradox_wiki/")));
+        assert!(update.operations.iter().any(|operation| {
+            operation.destination.starts_with("paradox_wiki/")
+                && operation.action == OperationAction::DeleteManaged
+        }));
+        // Other files are untouched.
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
+        assert_eq!(
+            crate::readiness::wiki_folder(project.path()),
+            "hoi4_wiki",
+            "readiness reads the new folder"
+        );
+    }
+
+    #[test]
+    fn updating_to_the_hoi4_wiki_folder_keeps_a_page_the_user_edited() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let installed = install_wiki_pages(project.path(), app.path(), "paradox_wiki");
+        let edited = project.path().join("paradox_wiki/extra/nested_page.md");
+        fs::write(&edited, b"my own notes\n").unwrap();
+
+        let (update, lock) = update_wiki_to_hoi4_folder(project.path(), app.path(), &installed);
+
+        // The edit is never deleted or overwritten, and it is flagged for review.
+        assert_eq!(fs::read(&edited).unwrap(), b"my own notes\n");
+        let review = update
+            .operations
+            .iter()
+            .find(|operation| operation.destination == "paradox_wiki/extra/nested_page.md")
+            .expect("the edited page has an operation");
+        assert_eq!(review.action, OperationAction::Skip);
+        assert_eq!(review.resolution.as_deref(), Some("obsolete_review"));
+        assert_eq!(review.local_state, LocalState::Modified);
+        // Every unedited old page is removed, and only the edited one remains.
+        let remaining = fs::read_dir(project.path().join("paradox_wiki"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(remaining, vec!["extra".to_string()]);
+        assert_eq!(
+            fs::read_dir(project.path().join("paradox_wiki/extra"))
+                .unwrap()
+                .count(),
+            1
+        );
+        // The new folder holds the complete set.
+        for page in wiki_page_names() {
+            assert!(project.path().join("hoi4_wiki").join(&page).is_file());
+        }
+        assert!(lock
+            .files
+            .iter()
+            .any(|file| file.path == "hoi4_wiki/extra/nested_page.md"));
+        // With both folders present, the new one is the wiki.
+        assert_eq!(crate::readiness::wiki_folder(project.path()), "hoi4_wiki");
+    }
+
+    #[test]
+    fn a_project_installed_with_the_hoi4_wiki_folder_passes_wiki_validation() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let lock = install_wiki_pages(project.path(), app.path(), "hoi4_wiki");
+        assert!(lock
+            .files
+            .iter()
+            .any(|file| file.path == "hoi4_wiki/extra/nested_page.md"));
+        assert!(crate::readiness::wiki_link_integrity(project.path()).is_empty());
+    }
+
+    #[test]
+    fn an_update_to_the_hoi4_wiki_folder_is_idempotent_for_an_already_migrated_project() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let installed = install_wiki_pages(project.path(), app.path(), "hoi4_wiki");
+        let mut update = ready_plan_without_wiki_pages(project.path());
+        update.plan_id = Uuid::new_v4();
+        update.maintenance_mode = Some("update".into());
+        update.operations =
+            update_operations(&installed, &installed.files.clone(), project.path()).unwrap();
+        assert!(update.operations.iter().all(|operation| {
+            operation.action == OperationAction::Skip && operation.resolution.is_none()
+        }));
     }
 
     #[test]
@@ -11399,6 +11667,22 @@ description: Example skill.
         let replayed = read_journal(&journal_path).unwrap();
         assert_eq!(replayed.operations[0].status, "verified");
         assert_eq!(replayed.last_checkpoint, "apply-op-1");
+    }
+
+    #[test]
+    fn hoi4_wiki_files_get_the_same_validation_as_the_legacy_paradox_wiki_folder() {
+        let project = tempdir().unwrap();
+        let mut operation = plan().operations[0].clone();
+        operation.component_id = "wiki.snapshot".into();
+        for folder in ["hoi4_wiki", "paradox_wiki", "HOI4_Wiki"] {
+            operation.destination = format!("{folder}/page.md");
+            validate_managed_bytes(project.path(), &operation, b"# Page\n").unwrap();
+            assert!(validate_managed_bytes(project.path(), &operation, b"  \n").is_err());
+            operation.destination = format!("{folder}/media/example.png");
+            assert!(validate_managed_bytes(project.path(), &operation, b"not a png").is_err());
+            operation.destination = format!("{folder}/archive.zip");
+            assert!(validate_managed_bytes(project.path(), &operation, b"PK").is_err());
+        }
     }
 
     #[test]

@@ -962,7 +962,8 @@ mod tests {
                 prepared("AGENTS.md", "adapted agents"),
                 prepared(".agents/skills/hoi4-events/SKILL.md", "events"),
                 prepared(".codex/agents/hoi4setup_worker.toml", "fork_context=false"),
-                prepared("paradox_wiki/AGENTS.md", "wiki instructions"),
+                prepared("hoi4_wiki/AGENTS.md", "wiki instructions"),
+                prepared("paradox_wiki/AGENTS.md", "legacy wiki instructions"),
             ],
             &[GeneratedArtifact {
                 component_id: "project.readme".into(),
@@ -983,6 +984,7 @@ mod tests {
         assert!(destinations.contains("chatgpt_project_sources/hoi4setup_worker.toml"));
         assert!(destinations.contains("chatgpt_project_sources/AGENTS.md"));
         assert!(destinations.contains("chatgpt_project_sources/README.md"));
+        assert!(!destinations.contains("chatgpt_project_sources/hoi4_wiki/AGENTS.md"));
         assert!(!destinations.contains("chatgpt_project_sources/paradox_wiki/AGENTS.md"));
         assert_eq!(
             output
@@ -997,7 +999,14 @@ mod tests {
     fn unrelated_selected_files_do_not_consume_the_flatten_file_limit() {
         let project = tempfile::tempdir().unwrap();
         let mut prepared_files = (0..600)
-            .map(|index| prepared(&format!("paradox_wiki/page-{index}.md"), "wiki"))
+            .map(|index| {
+                let folder = if index % 2 == 0 {
+                    "hoi4_wiki"
+                } else {
+                    "paradox_wiki"
+                };
+                prepared(&format!("{folder}/page-{index}.md"), "wiki")
+            })
             .collect::<Vec<_>>();
         prepared_files.push(prepared(".agents/skills/hoi4-events/SKILL.md", "events"));
         prepared_files.push(prepared(
@@ -1028,7 +1037,7 @@ mod tests {
         assert_eq!(output.len(), 4);
         assert!(output
             .iter()
-            .all(|artifact| !artifact.destination.contains("paradox_wiki")));
+            .all(|artifact| !artifact.destination.contains("_wiki")));
     }
 
     #[test]

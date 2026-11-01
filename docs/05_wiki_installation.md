@@ -2,8 +2,10 @@
 
 ## Verified distribution
 
-The live repository stores the offline Hearts of Iron IV Paradox wiki as a
-`paradox_wiki/` tree containing Markdown pages and a `media/` directory. The
+The live repository stores the kit's HOI4 wiki (pages derived from the Hearts
+of Iron IV Wiki's modding pages, plus the kit's own pages and corrections) as a
+`hoi4_wiki/` tree containing Markdown pages and a `media/` directory. Kit
+manifests before the rename declared the same tree as `paradox_wiki/`. The
 current published manifest declares `snapshot_marker: null`; do not require or
 invent a marker file.
 
@@ -12,14 +14,16 @@ No formal wiki source manifest or license file was verified at the inspected rev
 ## Destination
 
 ```text
-<mod_project>/paradox_wiki/
+<mod_project>/hoi4_wiki/
 ```
 
-The destination is the default because the project instructions and skills refer to it. The user can review the path, but moving it requires corresponding project-instruction adaptation.
+A manifest may declare `hoi4_wiki/` or, for older kit revisions, `paradox_wiki/`.
+No other destination is accepted, and the wiki component's destination must
+equal the manifest's `wiki.destination`. The destination is the default because the project instructions and skills refer to it. The user can review the path, but moving it requires corresponding project-instruction adaptation.
 
 ## Installation
 
-1. Expand only `paradox_wiki/` at the selected commit.
+1. Expand only the manifest's wiki folder (`hoi4_wiki/`) at the selected commit.
 2. Reject entries outside that subtree.
 3. Download Markdown and media files.
 4. Verify SHA-256 for every file.
@@ -73,7 +77,7 @@ For the current repository tree, `all_declared` is the safest first policy becau
 
 ## Link validation
 
-Check that relative links remain within `paradox_wiki/`, referenced media exists, path case matches, and no unresolved extraction path appears. Broken external links are warnings because the snapshot is intended to work offline.
+Check that relative links remain within the wiki folder, referenced media exists, path case matches, and no unresolved extraction path appears. Broken external links are warnings because the snapshot is intended to work offline.
 
 ## Provenance display
 
@@ -109,3 +113,23 @@ Use bounded downloads, streaming hashes, immutable cache reuse, same-volume stag
 ## Readiness
 
 The wiki is blocking when selected by the core profile. Missing required pages or failed hashes block Open in Codex. Unverified provenance or license metadata remains a visible warning rather than an integrity failure.
+
+## Folder rename migration
+
+The kit renamed `paradox_wiki/` to `hoi4_wiki/`. Setup reads both names
+everywhere (scan exclusions, readiness, classification, the managed
+`.gitignore` block). An update or repair against a manifest that declares
+`hoi4_wiki/` migrates a project that the lock records under `paradox_wiki/`
+with the ordinary obsolete-file rules, so no new mechanism is involved:
+
+- every page of the new folder is created;
+- every old page that still holds exactly the bytes the lock recorded is
+  removed (`obsolete_managed_remove`), and the old folder and its subfolders
+  are removed once they are empty;
+- an old page the user edited is never deleted or overwritten. It stays where
+  it is and the review lists it as a conflict (`obsolete_review`) for the user
+  to keep or discard;
+- readiness and the readiness report read `hoi4_wiki/` when it exists, and fall
+  back to `paradox_wiki/` for a project that has not been updated yet;
+- the managed `.gitignore` block lists both folders, and lines the user wrote
+  outside the block are unchanged.

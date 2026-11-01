@@ -215,7 +215,7 @@ exclude known tooling, build, and cache trees such as `.git`, `.hoi4-mod-setup`,
 `.venv`, `venv`, `env`, `__pycache__`, `.pytest_cache`, `.mypy_cache`,
    `.ruff_cache`, `.tox`, `.nox`, `.idea`, `.vscode`, `.vs`, `.cache`, `cache`,
    `coverage`, `htmlcov`, `node_modules`, `target`, `dist`, `build`, `out`,
-   `.tools`, `.tmp`, and `paradox_wiki`.
+   `.tools`, `.tmp`, `hoi4_wiki`, and `paradox_wiki`.
    The managed offline wiki is detected from its exact root entry but its pages
    are not part of the setup inventory or project-profile samples.
 Ignore common editor and generated artifact files such as `.DS_Store`,

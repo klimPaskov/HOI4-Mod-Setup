@@ -461,7 +461,7 @@ Starting an approved installation passes only the core-owned plan ID and project
 
 Folder proposals and final folder state share a core validator that rejects
 application-managed roots such as `.git`, `.codex`, `.agents`,
-`.hoi4-mod-setup`, `paradox_wiki`, and `chatgpt_project_sources`.
+`.hoi4-mod-setup`, `hoi4_wiki`, `paradox_wiki`, and `chatgpt_project_sources`.
 
 The UI shows a collapsed input preview before a turn, labels the result “Suggested
 by the selected setup assistant,” and requires an explicit confirmation action. Drafts and scan findings

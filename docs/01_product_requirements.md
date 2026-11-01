@@ -20,7 +20,7 @@ A successful core setup leaves the selected mod project with:
 - selected native development-client configuration
 - repository-declared MCP configuration
 - selected scripts, validators, templates, and documentation
-- an offline wiki under `<mod_project>/paradox_wiki/`
+- an offline wiki under `<mod_project>/hoi4_wiki/` (`paradox_wiki/` in kit versions before the rename)
 - optional Git initialization or preservation
 - a project installation lock
 - a readiness report
@@ -330,7 +330,7 @@ recomputed before dry-run approval.
 
 ### Offline wiki
 
-Install under `<mod_project>/paradox_wiki/`. Verify path containment, every declared hash, required page coverage, media policy, snapshot marker when declared, and link integrity. Show source and licensing evidence without invention.
+Install under `<mod_project>/hoi4_wiki/` (`paradox_wiki/` for older kit manifests). Verify path containment, every declared hash, required page coverage, media policy, snapshot marker when declared, and link integrity. Show source and licensing evidence without invention.
 
 ### Optional 3D workflow
 

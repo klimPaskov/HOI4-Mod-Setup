@@ -255,8 +255,8 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
   directory, depth, time, read, detector-byte, or retained-evidence limit is an
   honest partial result; never label skipped required evidence complete.
 - Skip app-managed tooling, temporary output, and offline-wiki trees
-  (`.tools/`, `.tmp/`, and `paradox_wiki/`) during the recursive walk. Detect
-  the exact `paradox_wiki/` root entry separately for component inventory and
+  (`.tools/`, `.tmp/`, and `hoi4_wiki/` or the older `paradox_wiki/`) during the recursive walk. Detect
+  the exact wiki root entry (`hoi4_wiki/` or `paradox_wiki/`) separately for component inventory and
   report links without following them.
 - Retain every file a detector parses. `scan_content_policy` must set `retain` for a path class before a detector validates its bytes; a class that is observed but not retained validates as empty and reports every installed file as malformed (native client subagent Markdown did, giving a freshly installed project 19 blocking subagent conflicts). Add a scan test for each new detector with real installed bytes.
 - Leave files an earlier setup installed, still matching the lock byte for byte, out of the project profile (`unmodified_managed_visible_files` in the scanner feeds `Profiler::skip_managed_files`). A lock that cannot be read means no exclusion, never a failed scan.
