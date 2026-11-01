@@ -1553,6 +1553,9 @@ export default function App() {
           ? managed.portraitPipeline.providerStatus === "ready" ? "ready" : "incomplete"
           : "not_selected",
         installedPortraitProvider: managed.portraitPipeline?.provider,
+        // The wizard's default live-testing provider is not what was installed;
+        // sending it would make a repair add a workflow nobody chose.
+        liveTesting: managed.liveTesting ?? state.liveTesting,
       };
       planningState = { ...state, ...scannedState };
       update(scannedState);
