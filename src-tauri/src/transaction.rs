@@ -127,6 +127,10 @@ pub struct PostInstallActionOutcome {
     pub evidence: String,
 }
 
+/// The retired GPTImage component. Only its recorded dependency tree can still
+/// be cleaned up; Setup never installs it.
+const LEGACY_GPTIMAGE_COMPONENT: &str = "imagegen.gptimage";
+
 pub type PostInstallActionRunner =
     fn(&Path, &InstallationPlan, &str) -> Result<PostInstallActionOutcome, AppError>;
 
@@ -238,8 +242,10 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
         && plan.operations.iter().all(is_removal_operation)
         && plan.generated_artifacts.is_empty()
         && plan.external_actions.iter().all(|action| {
-            action.id == "external.imagegen.gptimage.cleanup"
-                && action.component_id == "imagegen.gptimage"
+            (action.id == "external.imagegen.gptimage.cleanup"
+                && action.component_id == LEGACY_GPTIMAGE_COMPONENT)
+                || (action.id == crate::imagegen_actions::CLEANUP_ACTION_ID
+                    && action.component_id == hoi4_setup_core::release_binary::COMPONENT_ID)
         })
         && plan.git_setup.is_none();
     if let Some(codex_analysis) = plan.codex_analysis.as_ref() {
@@ -1687,15 +1693,16 @@ pub fn run_transaction(
         post_install_checks(&project_root, project_directory, plan, &mut journal, &store)?;
         project_directory.verify_bound_to_path()?;
         // A removal sets nothing up: it only deletes managed files, and any
-        // remaining component keeps the state it already had. GPTImage is the
-        // exception: its dependencies live outside the managed file list and
-        // have a separately reviewed, hash-bound cleanup action.
+        // remaining component keeps the state it already had. The image
+        // servers are the exception: hoi4-imagegen's release folder and an old
+        // GPTImage dependency tree live outside the managed file list and have
+        // a separately reviewed, hash-bound cleanup action.
         let removal = plan.maintenance_mode.as_deref() == Some("remove");
         let removal_has_image_cleanup = removal
-            && plan
-                .external_actions
-                .iter()
-                .any(|action| action.id == "external.imagegen.gptimage.cleanup");
+            && plan.external_actions.iter().any(|action| {
+                action.id == "external.imagegen.gptimage.cleanup"
+                    || action.id == crate::imagegen_actions::CLEANUP_ACTION_ID
+            });
         if let Some(runner) = options
             .post_install_action_runner
             .filter(|_| !removal || removal_has_image_cleanup)
@@ -1704,16 +1711,25 @@ pub fn run_transaction(
                 crate::mcp::COMPONENT_ID,
                 "workflow.3d",
                 crate::mcp::LIVE_TOOLS_COMPONENT_ID,
-                "imagegen.gptimage",
+                LEGACY_GPTIMAGE_COMPONENT,
+                hoi4_setup_core::release_binary::COMPONENT_ID,
             ]
             .into_iter()
-            .filter(|component_id| !removal || *component_id == "imagegen.gptimage")
+            .filter(|component_id| {
+                !removal
+                    || matches!(
+                        *component_id,
+                        LEGACY_GPTIMAGE_COMPONENT | hoi4_setup_core::release_binary::COMPONENT_ID
+                    )
+            })
             .filter(|component_id| {
                 // A manifest that predates the HOI4 Live Tools bootstrap
                 // declares no action; the skill-only workflow has nothing to run.
                 !matches!(
                     *component_id,
-                    crate::mcp::LIVE_TOOLS_COMPONENT_ID | "imagegen.gptimage"
+                    crate::mcp::LIVE_TOOLS_COMPONENT_ID
+                        | LEGACY_GPTIMAGE_COMPONENT
+                        | hoi4_setup_core::release_binary::COMPONENT_ID
                 ) || plan
                     .external_actions
                     .iter()
@@ -1725,10 +1741,16 @@ pub fn run_transaction(
                     .get(*component_id)
                     .is_some_and(|state| {
                         matches!(state.as_str(), "selected_pending" | "incomplete" | "ready")
-                            || (*component_id == "imagegen.gptimage"
-                                && state == "not_selected"
+                            || (matches!(
+                                *component_id,
+                                LEGACY_GPTIMAGE_COMPONENT
+                                    | hoi4_setup_core::release_binary::COMPONENT_ID
+                            ) && state == "not_selected"
                                 && plan.external_actions.iter().any(|action| {
-                                    action.id == "external.imagegen.gptimage.cleanup"
+                                    action.component_id == *component_id
+                                        && (action.id == "external.imagegen.gptimage.cleanup"
+                                            || action.id
+                                                == crate::imagegen_actions::CLEANUP_ACTION_ID)
                                 }))
                     })
             })
@@ -1782,7 +1804,17 @@ pub fn run_transaction(
                 effective_plan
                     .optional_workflows
                     .insert(outcome.component_id.clone(), outcome.state.clone());
-                if outcome.component_id == "imagegen.gptimage" {
+                if outcome.component_id == hoi4_setup_core::release_binary::COMPONENT_ID {
+                    if let Some((version, tree)) =
+                        crate::imagegen_actions::receipt_from_evidence(&outcome.evidence)?
+                    {
+                        if let Some(selection) = effective_plan.image_generation.as_mut() {
+                            selection.installed_release_version = version;
+                            selection.installed_release_tree_sha256 = tree;
+                        }
+                    }
+                }
+                if outcome.component_id == LEGACY_GPTIMAGE_COMPONENT {
                     if outcome.evidence == "package-tree-removed" {
                         if let Some(selection) = effective_plan.image_generation.as_mut() {
                             selection.installed_package_tree_sha256 = None;
@@ -8962,7 +8994,9 @@ pub fn installer_mcp_server_ids(lock: &InstallationLock) -> Vec<String> {
     if let Some(image) = &lock.image_generation {
         for provider in std::iter::once(&image.primary_provider).chain(&image.additional_providers)
         {
-            if provider != "none" {
+            if provider == hoi4_setup_core::release_binary::PROVIDER_ID {
+                ids.push(hoi4_setup_core::release_binary::SERVER_ID.to_string());
+            } else if provider != "none" {
                 ids.push(format!("hoi4_image_{provider}"));
             }
         }
@@ -10366,6 +10400,8 @@ my tweak
             credential_references: Default::default(),
             installed_package_tree_sha256: None,
             installed_package_lock_sha256: None,
+            installed_release_version: None,
+            installed_release_tree_sha256: None,
         });
         lock.live_testing = Some(LiveTestingSelection {
             provider: "clausewitz_mcp".into(),

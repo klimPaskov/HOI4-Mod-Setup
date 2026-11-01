@@ -623,6 +623,39 @@ impl ScopedSecretEnvironment {
         })
     }
 
+    /// The variables hoi4-imagegen reads, each from an image-provider
+    /// credential saved on this computer. Only the names in `allowed` are
+    /// accepted, so a manifest can never name another variable.
+    pub fn from_image_credentials<S: CredentialStore>(
+        store: &S,
+        entries: &[(CredentialReference, String)],
+        allowed: &[&str],
+    ) -> Result<Self, AppError> {
+        let mut values = BTreeMap::new();
+        let mut known_secrets = Vec::new();
+        for (reference, environment_name) in entries {
+            if !allowed.contains(&environment_name.as_str()) {
+                return Err(AppError::Credential(
+                    "that variable may not be passed to the image server".into(),
+                ));
+            }
+            validate_env_name(environment_name)?;
+            validate_image_generation_credential_reference(reference)?;
+            let value = store.read(reference)?;
+            if value.trim().is_empty() {
+                return Err(AppError::Credential(
+                    "credential store returned an empty value".into(),
+                ));
+            }
+            known_secrets.push(value.clone());
+            values.insert(environment_name.clone(), value);
+        }
+        Ok(Self {
+            values,
+            known_secrets,
+        })
+    }
+
     pub fn variable_names(&self) -> Vec<String> {
         self.values.keys().cloned().collect()
     }

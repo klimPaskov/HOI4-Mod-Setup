@@ -169,6 +169,77 @@ fn entry_path(value: &str, expected_name: &str) -> Result<String, AppError> {
     Ok(normalized)
 }
 
+/// Parse and validate one platform's declaration.
+pub fn parse_target(version: &str, triple: &str, value: &Value) -> Result<ReleaseTarget, AppError> {
+    if !strict_version(version) {
+        return Err(invalid("version must be a plain major.minor.patch"));
+    }
+    if !TARGETS.contains(&triple) {
+        return Err(invalid(format!("unsupported target {triple}")));
+    }
+    let archive = value
+        .get("archive")
+        .and_then(Value::as_str)
+        .and_then(ArchiveKind::parse)
+        .ok_or_else(|| invalid(format!("{triple}: archive must be zip or tar.gz")))?;
+    if (archive == ArchiveKind::Zip) != triple.contains("windows") {
+        return Err(invalid(format!(
+            "{triple}: Windows uses zip and every other platform uses tar.gz"
+        )));
+    }
+    let url = value
+        .get("url")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid(format!("{triple}: url is missing")))?;
+    if url != expected_url(version, triple, archive) {
+        return Err(invalid(format!(
+            "{triple}: url must be the {RELEASE_REPOSITORY} release download for v{version}"
+        )));
+    }
+    let sha256 = value
+        .get("sha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid(format!("{triple}: sha256 is missing")))?;
+    crate::manifest::validate_sha256(sha256)?;
+    let size = value
+        .get("size")
+        .and_then(Value::as_u64)
+        .filter(|size| (1..=MAX_ARCHIVE_BYTES).contains(size))
+        .ok_or_else(|| invalid(format!("{triple}: size is missing or too large")))?;
+    let suffix = if triple.contains("windows") {
+        ".exe"
+    } else {
+        ""
+    };
+    let entries = value
+        .get("entries")
+        .and_then(Value::as_object)
+        .ok_or_else(|| invalid(format!("{triple}: entries are missing")))?;
+    if entries.len() != 2 {
+        return Err(invalid(format!("{triple}: declare exactly mcp and cli")));
+    }
+    let mcp_entry = entry_path(
+        entries.get("mcp").and_then(Value::as_str).unwrap_or(""),
+        &format!("{MCP_BINARY}{suffix}"),
+    )?;
+    let cli_entry = entry_path(
+        entries.get("cli").and_then(Value::as_str).unwrap_or(""),
+        &format!("{CLI_BINARY}{suffix}"),
+    )?;
+    if mcp_entry == cli_entry {
+        return Err(invalid(format!("{triple}: the entries must differ")));
+    }
+    Ok(ReleaseTarget {
+        triple: triple.to_owned(),
+        url: url.to_owned(),
+        sha256: sha256.to_owned(),
+        size,
+        archive,
+        mcp_entry,
+        cli_entry,
+    })
+}
+
 impl ReleaseBinaryRoute {
     /// Parse and validate `route.release_binary` of an image provider row.
     pub fn from_provider(provider: &Value) -> Result<Self, AppError> {
@@ -200,69 +271,7 @@ impl ReleaseBinaryRoute {
             .ok_or_else(|| invalid("no platform targets are declared"))?;
         let mut targets = BTreeMap::new();
         for (triple, value) in declared_targets {
-            if !TARGETS.contains(&triple.as_str()) {
-                return Err(invalid(format!("unsupported target {triple}")));
-            }
-            let archive = value
-                .get("archive")
-                .and_then(Value::as_str)
-                .and_then(ArchiveKind::parse)
-                .ok_or_else(|| invalid(format!("{triple}: archive must be zip or tar.gz")))?;
-            if (archive == ArchiveKind::Zip) != triple.contains("windows") {
-                return Err(invalid(format!(
-                    "{triple}: Windows uses zip and every other platform uses tar.gz"
-                )));
-            }
-            let url = value
-                .get("url")
-                .and_then(Value::as_str)
-                .ok_or_else(|| invalid(format!("{triple}: url is missing")))?;
-            if url != expected_url(version, triple, archive) {
-                return Err(invalid(format!(
-                    "{triple}: url must be the {RELEASE_REPOSITORY} release download for v{version}"
-                )));
-            }
-            let sha256 = value
-                .get("sha256")
-                .and_then(Value::as_str)
-                .ok_or_else(|| invalid(format!("{triple}: sha256 is missing")))?;
-            crate::manifest::validate_sha256(sha256)?;
-            let size = value
-                .get("size")
-                .and_then(Value::as_u64)
-                .filter(|size| (1..=MAX_ARCHIVE_BYTES).contains(size))
-                .ok_or_else(|| invalid(format!("{triple}: size is missing or too large")))?;
-            let suffix = if triple.contains("windows") { ".exe" } else { "" };
-            let entries = value
-                .get("entries")
-                .and_then(Value::as_object)
-                .ok_or_else(|| invalid(format!("{triple}: entries are missing")))?;
-            if entries.len() != 2 {
-                return Err(invalid(format!("{triple}: declare exactly mcp and cli")));
-            }
-            let mcp_entry = entry_path(
-                entries.get("mcp").and_then(Value::as_str).unwrap_or(""),
-                &format!("{MCP_BINARY}{suffix}"),
-            )?;
-            let cli_entry = entry_path(
-                entries.get("cli").and_then(Value::as_str).unwrap_or(""),
-                &format!("{CLI_BINARY}{suffix}"),
-            )?;
-            if mcp_entry == cli_entry {
-                return Err(invalid(format!("{triple}: the entries must differ")));
-            }
-            targets.insert(
-                triple.clone(),
-                ReleaseTarget {
-                    triple: triple.clone(),
-                    url: url.to_owned(),
-                    sha256: sha256.to_owned(),
-                    size,
-                    archive,
-                    mcp_entry,
-                    cli_entry,
-                },
-            );
+            targets.insert(triple.clone(), parse_target(version, triple, value)?);
         }
         Ok(Self {
             version: version.to_owned(),

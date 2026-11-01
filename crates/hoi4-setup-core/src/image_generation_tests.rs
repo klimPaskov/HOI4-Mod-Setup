@@ -273,13 +273,10 @@ fn the_hoi4_imagegen_selection_needs_a_client_that_supports_it() {
 
 #[test]
 fn a_manifest_with_a_malformed_release_route_is_refused() {
-    let mut value = crate::test_support::manifest_value_with_hoi4_imagegen(
-        "0.2.0",
-        synthetic_targets("0.2.0"),
-    );
+    let mut value =
+        crate::test_support::manifest_value_with_hoi4_imagegen("0.2.0", synthetic_targets("0.2.0"));
     value["image_generation"]["providers"][0]["route"]["release_binary"]["targets"]
-        ["x86_64-pc-windows-msvc"]["url"] = json!(
-        "https://github.com/klimPaskov/hoi4-imagegen-mcp/releases/download/v0.2.0/other.zip"
-    );
+        ["x86_64-pc-windows-msvc"]["url"] =
+        json!("https://github.com/klimPaskov/hoi4-imagegen-mcp/releases/download/v0.2.0/other.zip");
     assert!(crate::manifest::parse_manifest(&serde_json::to_vec(&value).unwrap(), None).is_err());
 }

@@ -82,7 +82,6 @@ use hoi4_setup_core::adapt::*;
 use hoi4_setup_core::free_assistant::OPENROUTER_PROVIDER_ID;
 use hoi4_setup_core::image_generation::*;
 use hoi4_setup_core::manifest::{add_supported_profile_components, default_profile_component_ids};
-use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -901,6 +900,9 @@ pub fn run() {
             store_image_generation_credential,
             image_generation_credential_status,
             remove_image_generation_credential,
+            imagegen_sign_in_status,
+            imagegen_sign_in,
+            imagegen_doctor,
             claude_login_start,
             claude_login_wait,
             claude_login_cancel,
@@ -1229,6 +1231,69 @@ fn image_generation_credential_status(
         image_generation_credential_reference(provider, field).map_err(command_error)?;
     validate_image_generation_credential_for(&reference, provider, field).map_err(command_error)?;
     Ok(OsCredentialStore.read(&reference).ok().map(|_| reference))
+}
+
+fn installed_imagegen(project_root: &str) -> Result<crate::imagegen::InstalledImagegen, String> {
+    let root = validate_project_root(Path::new(project_root)).map_err(command_error)?;
+    let lock = read_project_lock(&root).map_err(command_error)?;
+    crate::imagegen::InstalledImagegen::from_selection(&root, lock.image_generation.as_ref())
+        .ok_or_else(|| {
+            "hoi4-imagegen is not installed in this project yet. Finish setup first.".to_string()
+        })
+}
+
+/// Whether hoi4-imagegen is signed in with ChatGPT (`login-status`).
+#[tauri::command(async)]
+async fn imagegen_sign_in_status(
+    project_root: String,
+) -> Result<crate::imagegen::SignInStatus, String> {
+    run_blocking_command("imagegen-sign-in-status", move || {
+        installed_imagegen(&project_root)?
+            .sign_in_status(&crate::imagegen::OsCliRunner)
+            .map_err(command_error)
+    })
+    .await
+}
+
+/// Launch `hoi4-imagegen login`, which opens the browser and keeps its tokens
+/// in the operating-system keychain, then report `login-status`.
+#[tauri::command(async)]
+async fn imagegen_sign_in(project_root: String) -> Result<crate::imagegen::SignInStatus, String> {
+    run_blocking_command("imagegen-sign-in", move || {
+        installed_imagegen(&project_root)?
+            .sign_in(&crate::imagegen::OsCliRunner)
+            .map_err(command_error)
+    })
+    .await
+}
+
+/// Run `hoi4-imagegen doctor` with the provider keys saved for this project.
+#[tauri::command(async)]
+async fn imagegen_doctor(project_root: String) -> Result<String, String> {
+    run_blocking_command("imagegen-doctor", move || {
+        let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+        let lock = read_project_lock(&root).map_err(command_error)?;
+        let installed = crate::imagegen::InstalledImagegen::from_selection(
+            &root,
+            lock.image_generation.as_ref(),
+        )
+        .ok_or_else(|| "hoi4-imagegen is not installed in this project yet.".to_string())?;
+        let fields = crate::imagegen::CREDENTIAL_FIELDS
+            .iter()
+            .map(|(field, name)| ((*field).to_owned(), (*name).to_owned()))
+            .collect::<Vec<_>>();
+        let environment = match lock.image_generation.as_ref() {
+            Some(selection) => {
+                crate::imagegen::scoped_environment(&OsCredentialStore, selection, &fields)
+                    .map_err(command_error)?
+            }
+            None => None,
+        };
+        installed
+            .doctor(&crate::imagegen::OsCliRunner, environment.as_ref())
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command(async)]
@@ -2462,14 +2527,20 @@ fn run_reviewed_post_install_actions(
     plan: &InstallationPlan,
     component_id: &str,
 ) -> Result<PostInstallActionOutcome, AppError> {
-    // A removal sets nothing up. Its only reviewed action is the cleanup of
-    // the GPTImage dependency tree that Setup itself installed.
+    // A removal sets nothing up. Its only reviewed actions are the cleanup of
+    // the hoi4-imagegen release folder and of a GPTImage dependency tree that
+    // Setup itself installed.
     if plan.maintenance_mode.as_deref() == Some("remove")
-        && !(component_id == IMAGEGEN_GPTIMAGE_COMPONENT_ID
+        && !((component_id == IMAGEGEN_GPTIMAGE_COMPONENT_ID
             && plan
                 .external_actions
                 .iter()
                 .any(|action| action.id == "external.imagegen.gptimage.cleanup"))
+            || (component_id == hoi4_setup_core::release_binary::COMPONENT_ID
+                && plan
+                    .external_actions
+                    .iter()
+                    .any(|action| action.id == crate::imagegen_actions::CLEANUP_ACTION_ID)))
     {
         return Err(AppError::Transaction(
             "managed removal cannot run a post-install action".into(),
@@ -2482,14 +2553,16 @@ fn run_reviewed_post_install_actions(
         return run_reviewed_live_tools_bootstrap(root, plan);
     }
     if component_id == IMAGEGEN_GPTIMAGE_COMPONENT_ID {
-        if plan
-            .external_actions
-            .iter()
-            .any(|action| action.id == "external.imagegen.gptimage.cleanup")
-        {
-            return run_reviewed_gptimage_cleanup(root, plan);
-        }
-        return run_reviewed_gptimage_bootstrap(root, plan);
+        // GPTImage is retired: only the cleanup of an older install remains.
+        return run_reviewed_gptimage_cleanup(root, plan);
+    }
+    if component_id == hoi4_setup_core::release_binary::COMPONENT_ID {
+        return crate::imagegen_actions::run_reviewed_actions(
+            root,
+            plan,
+            &crate::release_install::HttpReleaseDownloader::new()?,
+            &crate::imagegen::OsCliRunner,
+        );
     }
     if component_id != "workflow.3d" {
         return Err(AppError::Transaction(format!(
@@ -2662,8 +2735,9 @@ fn run_reviewed_post_install_actions(
     })
 }
 
+/// The retired GPTImage route. Setup no longer installs it; these names stay
+/// only to clean up a dependency tree an older Setup recorded.
 const IMAGEGEN_GPTIMAGE_COMPONENT_ID: &str = "imagegen.gptimage";
-const IMAGEGEN_GPTIMAGE_BOOTSTRAP: &str = ".tools/image_generation/providers/gptimage/bootstrap.py";
 const IMAGEGEN_GPTIMAGE_PACKAGE_ROOT: &str = ".tools/image_generation/providers/gptimage";
 const IMAGEGEN_GPTIMAGE_NODE_MODULES: &str =
     ".tools/image_generation/providers/gptimage/node_modules";
@@ -2735,279 +2809,6 @@ fn gptimage_bootstrap_outcome(
     }
 }
 
-fn expected_gptimage_file_hash(
-    plan: &InstallationPlan,
-    root: &Path,
-    relative: &str,
-) -> Result<String, AppError> {
-    if let Some(operation) = plan.operations.iter().find(|operation| {
-        operation.component_id == IMAGEGEN_GPTIMAGE_COMPONENT_ID
-            && operation.destination == relative
-    }) {
-        return operation
-            .result_sha256
-            .clone()
-            .or_else(|| operation.source_sha256.clone())
-            .ok_or_else(|| {
-                AppError::Transaction("the reviewed GPTImage file has no checksum".into())
-            });
-    }
-    let lock = read_project_lock(root)?;
-    lock.files
-        .iter()
-        .find(|file| file.component_id == IMAGEGEN_GPTIMAGE_COMPONENT_ID && file.path == relative)
-        .map(|file| file.installed_sha256.clone())
-        .ok_or_else(|| {
-            AppError::Transaction("the installed GPTImage file has no lock evidence".into())
-        })
-}
-
-fn run_reviewed_gptimage_bootstrap(
-    root: &Path,
-    plan: &InstallationPlan,
-) -> Result<PostInstallActionOutcome, AppError> {
-    let actions = plan
-        .external_actions
-        .iter()
-        .filter(|action| action.component_id == IMAGEGEN_GPTIMAGE_COMPONENT_ID)
-        .collect::<Vec<_>>();
-    if actions.len() != 1 {
-        return Err(AppError::Transaction(
-            "the reviewed GPTImage setup action is missing or duplicated".into(),
-        ));
-    }
-    let action = actions[0];
-    let reviewed_arguments = &action.arguments;
-    let expected_tree_sha256 = reviewed_arguments
-        .get(4)
-        .filter(|value| Regex::new(r"^[0-9a-f]{64}$").unwrap().is_match(value))
-        .ok_or_else(|| {
-            AppError::Transaction(
-                "the reviewed GPTImage source-tree hash is missing or invalid".into(),
-            )
-        })?;
-    let expected_lock_sha256 = reviewed_arguments
-        .get(6)
-        .filter(|value| Regex::new(r"^[0-9a-f]{64}$").unwrap().is_match(value))
-        .ok_or_else(|| {
-            AppError::Transaction(
-                "the reviewed GPTImage lockfile hash is missing or invalid".into(),
-            )
-        })?;
-    if action.command_source != "repository_script"
-        || action.platform != Platform::current()
-        || action.arguments.len() != 7
-        || action.arguments.first().map(String::as_str) != Some(IMAGEGEN_GPTIMAGE_BOOTSTRAP)
-        || action.arguments.get(1).map(String::as_str) != Some("--package-root")
-        || action.arguments.get(2).map(String::as_str)
-            != Some("<project_root>/.tools/image_generation/providers/gptimage")
-        || action.arguments.get(3).map(String::as_str) != Some("--expected-tree-sha256")
-        || action.arguments.get(5).map(String::as_str) != Some("--expected-lock-sha256")
-        || action.network_access == "not_declared"
-        || action.expected_writes.is_empty()
-        || action.privilege != "current_user"
-        || action.rollback_boundary == "not_declared_by_source"
-        || action.verified_package_name.as_deref() != Some("gptimage")
-        || action.verified_package_version.as_deref() != Some("0.1.0")
-    {
-        return Err(AppError::Transaction(
-            "the reviewed GPTImage setup action is incomplete or changed".into(),
-        ));
-    }
-    if !action
-        .expected_writes
-        .iter()
-        .any(|path| path == ".tools/image_generation/providers/gptimage/node_modules/**")
-        || !action
-            .network_access
-            .to_ascii_lowercase()
-            .contains("npm registry")
-        || !action
-            .rollback_boundary
-            .to_ascii_lowercase()
-            .contains("node_modules")
-    {
-        return Err(AppError::Transaction(
-            "the reviewed GPTImage network, write, or rollback boundary is incomplete".into(),
-        ));
-    }
-    let package_root = safe_join(root, IMAGEGEN_GPTIMAGE_PACKAGE_ROOT)?;
-    let package_json_path = format!("{IMAGEGEN_GPTIMAGE_PACKAGE_ROOT}/package.json");
-    let package_json =
-        crate::flatten::read_regular_file_no_follow_under_root(root, &package_json_path)?;
-    if sha256_bytes(&package_json) != expected_gptimage_file_hash(plan, root, &package_json_path)? {
-        return Err(AppError::PathSecurity(
-            "the installed GPTImage package metadata changed after review".into(),
-        ));
-    }
-    let package: Value = serde_json::from_slice(&package_json).map_err(|_| {
-        AppError::Source("the installed GPTImage package metadata is invalid".into())
-    })?;
-    if package.get("name").and_then(Value::as_str) != Some("gptimage")
-        || package.get("version").and_then(Value::as_str) != Some("0.1.0")
-    {
-        return Err(AppError::PathSecurity(
-            "the installed GPTImage package does not match its reviewed version".into(),
-        ));
-    }
-    let package_lock_path = format!("{IMAGEGEN_GPTIMAGE_PACKAGE_ROOT}/package-lock.json");
-    let expected_lock_hash = expected_gptimage_file_hash(plan, root, &package_lock_path)?;
-    if expected_lock_sha256 != &expected_lock_hash {
-        return Err(AppError::Transaction(
-            "the reviewed GPTImage lockfile hash differs from the selected package file".into(),
-        ));
-    }
-    let lock_bytes =
-        crate::flatten::read_regular_file_no_follow_under_root(root, &package_lock_path)?;
-    if sha256_bytes(&lock_bytes) != expected_lock_hash {
-        return Err(AppError::PathSecurity(
-            "the installed GPTImage package lock changed after review".into(),
-        ));
-    }
-    let script_bytes =
-        crate::flatten::read_regular_file_no_follow_under_root(root, IMAGEGEN_GPTIMAGE_BOOTSTRAP)?;
-    let expected_script_hash =
-        expected_gptimage_file_hash(plan, root, IMAGEGEN_GPTIMAGE_BOOTSTRAP)?;
-    if sha256_bytes(&script_bytes) != expected_script_hash {
-        return Err(AppError::PathSecurity(
-            "the GPTImage bootstrap script changed after review".into(),
-        ));
-    }
-    let python = match crate::process::find_path_executable(&[
-        "python.exe",
-        "python3.exe",
-        "python",
-        "python3",
-    ]) {
-        Ok(path) => path,
-        Err(_) => {
-            return Ok(gptimage_bootstrap_outcome(
-                "incomplete",
-                "Python 3 is unavailable for GPTImage setup",
-            ))
-        }
-    };
-    if matches!(Platform::current(), Platform::Windows | Platform::Linux)
-        && crate::process::validate_executable_publisher(&python, "Python Software Foundation")
-            .is_err()
-    {
-        return Ok(gptimage_bootstrap_outcome(
-            "incomplete",
-            "Python publisher validation did not pass for GPTImage setup",
-        ));
-    }
-    let node_modules_path = package_root.join("node_modules");
-    let previous_tree_hash = plan
-        .image_generation
-        .as_ref()
-        .and_then(|selection| selection.installed_package_tree_sha256.as_deref());
-    let previous_lock_hash = plan
-        .image_generation
-        .as_ref()
-        .and_then(|selection| selection.installed_package_lock_sha256.as_deref());
-    if node_modules_path.is_dir() && previous_lock_hash == Some(expected_lock_hash.as_str()) {
-        if let (Some(expected), Ok(actual)) = (
-            previous_tree_hash,
-            crate::mcp::package_tree_sha256(&node_modules_path),
-        ) {
-            if expected == actual {
-                return Ok(gptimage_bootstrap_outcome(
-                    "ready",
-                    format!(
-                        "package-tree-sha256:{actual};package-lock-sha256:{expected_lock_hash}"
-                    ),
-                ));
-            }
-        }
-    }
-    let node = match crate::process::find_path_executable(&["node.exe", "node"]) {
-        Ok(path) => path,
-        Err(_) => {
-            return Ok(gptimage_bootstrap_outcome(
-                "incomplete",
-                "Node.js LTS is unavailable for GPTImage setup",
-            ))
-        }
-    };
-    if matches!(Platform::current(), Platform::Windows | Platform::Linux)
-        && crate::process::validate_executable_publisher(&node, "OpenJS Foundation").is_err()
-    {
-        return Ok(gptimage_bootstrap_outcome(
-            "incomplete",
-            "Node.js publisher validation did not pass for GPTImage setup",
-        ));
-    }
-    let node_version = crate::process::ProcessSpec {
-        executable: node.clone(),
-        executable_sha256: Some(sha256_file(&node)?),
-        args: vec!["--version".into()],
-        cwd: Some(root.to_path_buf()),
-        platform: Platform::current(),
-        environment_names: Vec::new(),
-        timeout_seconds: 10,
-        max_output_bytes: 4096,
-    }
-    .run(std::slice::from_ref(&node), None);
-    let major = node_version.ok().and_then(|result| {
-        result
-            .stdout
-            .trim()
-            .strip_prefix('v')
-            .and_then(|version| version.split('.').next())
-            .and_then(|value| value.parse::<u64>().ok())
-    });
-    if major.is_none_or(|major| major < 20) {
-        return Ok(gptimage_bootstrap_outcome(
-            "incomplete",
-            "Node.js 20 or newer is required for GPTImage setup",
-        ));
-    }
-    let private_script = create_private_verified_script(&script_bytes)?;
-    let spec = crate::process::ProcessSpec {
-        executable: python.clone(),
-        executable_sha256: Some(sha256_file(&python)?),
-        args: vec![
-            "-I".into(),
-            private_script.display().to_string(),
-            "--package-root".into(),
-            package_root.display().to_string(),
-            "--expected-tree-sha256".into(),
-            expected_tree_sha256.clone(),
-            "--expected-lock-sha256".into(),
-            expected_lock_sha256.clone(),
-        ],
-        cwd: Some(root.to_path_buf()),
-        platform: Platform::current(),
-        environment_names: Vec::new(),
-        timeout_seconds: 12 * 60,
-        max_output_bytes: 128 * 1024,
-    };
-    let run = spec.run(&[python], None);
-    remove_private_verified_script(&private_script)?;
-    Ok(match run {
-        Ok(result) if result.status_code == Some(0) && !result.timed_out => {
-            match crate::mcp::package_tree_sha256(&node_modules_path) {
-                Ok(hash) => gptimage_bootstrap_outcome(
-                    "ready",
-                    format!("package-tree-sha256:{hash};package-lock-sha256:{expected_lock_hash}"),
-                ),
-                Err(error) => gptimage_bootstrap_outcome(
-                    "incomplete",
-                    format!(
-                        "the installed GPTImage dependencies could not be verified: {}",
-                        redact_secrets(&error.to_string(), &[])
-                    ),
-                ),
-            }
-        }
-        failure => gptimage_bootstrap_outcome(
-            "incomplete",
-            bootstrap_failure_details("GPTImage setup", failure),
-        ),
-    })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GptimageCleanupResult {
     Removed,
     AlreadyAbsent,
@@ -5593,6 +5394,10 @@ fn build_maintenance_plan_blocking(
         if let Some(installed_image) = lock.image_generation.as_ref() {
             desired_image.installed_package_tree_sha256 =
                 installed_image.installed_package_tree_sha256.clone();
+            desired_image.installed_release_version =
+                installed_image.installed_release_version.clone();
+            desired_image.installed_release_tree_sha256 =
+                installed_image.installed_release_tree_sha256.clone();
             desired_image.installed_package_lock_sha256 =
                 installed_image.installed_package_lock_sha256.clone();
         }
@@ -5949,6 +5754,10 @@ fn build_maintenance_plan_blocking(
             if let Some(installed_image) = lock.image_generation.as_ref() {
                 desired_image.installed_package_tree_sha256 =
                     installed_image.installed_package_tree_sha256.clone();
+                desired_image.installed_release_version =
+                    installed_image.installed_release_version.clone();
+                desired_image.installed_release_tree_sha256 =
+                    installed_image.installed_release_tree_sha256.clone();
                 desired_image.installed_package_lock_sha256 =
                     installed_image.installed_package_lock_sha256.clone();
             }
@@ -7001,23 +6810,53 @@ fn build_maintenance_plan_blocking(
     } else {
         Vec::new()
     };
-    let gptimage_selected =
-        provider_bootstrap_selected(&mode, selected_image_generation.as_ref(), "gptimage");
-    if gptimage_selected
-        && !external_actions
-            .iter()
-            .any(|action| action.id.starts_with("external.imagegen.gptimage."))
-    {
+    // hoi4-imagegen: one reviewed download for the selected provider, and a
+    // cleanup of the recorded version when it is replaced, deselected or removed.
+    let imagegen_selected = provider_bootstrap_selected(
+        &mode,
+        selected_image_generation.as_ref(),
+        hoi4_setup_core::release_binary::PROVIDER_ID,
+    );
+    let mut imagegen_state = "not_selected";
+    let mut imagegen_planned_version = None;
+    if imagegen_selected {
         let manifest = if let Some(manifest) = image_generation_manifest.as_ref() {
             manifest.clone()
         } else {
             resolve_installed_manifest(&lock)?
         };
-        external_actions.extend(manifest_external_actions(
-            &manifest,
-            &[IMAGEGEN_GPTIMAGE_COMPONENT_ID.into()],
-        ));
+        if let Some(selection) = selected_image_generation.as_ref() {
+            match crate::imagegen_actions::plan_install(&manifest, selection)? {
+                crate::imagegen_actions::InstallPlanning::NotSelected => {}
+                crate::imagegen_actions::InstallPlanning::Unsupported(_) => {
+                    imagegen_state = "unsupported_platform";
+                }
+                crate::imagegen_actions::InstallPlanning::Install(action) => {
+                    imagegen_planned_version = action.verified_package_version.clone();
+                    external_actions.push(*action);
+                    imagegen_state = "selected_pending";
+                }
+            }
+        }
     }
+    if let Some((version, tree)) = lock.image_generation.as_ref().and_then(|selection| {
+        Some((
+            selection.installed_release_version.clone()?,
+            selection.installed_release_tree_sha256.clone()?,
+        ))
+    }) {
+        if imagegen_state != "unsupported_platform"
+            && imagegen_planned_version.as_deref() != Some(version.as_str())
+        {
+            external_actions.push(crate::imagegen_actions::cleanup_action(&version, &tree));
+        }
+    }
+    optional_workflows.insert(
+        hoi4_setup_core::release_binary::COMPONENT_ID.into(),
+        imagegen_state.into(),
+    );
+    // The retired GPTImage route is never installed again. An older install's
+    // recorded dependency tree is still removed by its hash-bound cleanup.
     let gptimage_installed_with_receipt = lock.components.iter().any(|component| {
         component.id == IMAGEGEN_GPTIMAGE_COMPONENT_ID
             && !matches!(
@@ -7029,20 +6868,10 @@ fn build_maintenance_plan_blocking(
         .as_ref()
         .and_then(|selection| selection.installed_package_tree_sha256.as_ref())
         .is_some();
-    let gptimage_cleanup_required =
-        (mode == "remove" || !gptimage_selected) && gptimage_installed_with_receipt;
-    if gptimage_cleanup_required {
+    if gptimage_installed_with_receipt {
         external_actions.push(reviewed_gptimage_cleanup_action());
     }
-    optional_workflows.insert(
-        IMAGEGEN_GPTIMAGE_COMPONENT_ID.into(),
-        if gptimage_selected {
-            "selected_pending"
-        } else {
-            "not_selected"
-        }
-        .into(),
-    );
+    optional_workflows.insert(IMAGEGEN_GPTIMAGE_COMPONENT_ID.into(), "not_selected".into());
     let external_actions_reviewed = external_actions.is_empty();
     if let Some(record) = codex_analysis.as_ref() {
         validate_analysis_source_binding(record, &plan_source)?;
@@ -8767,6 +8596,8 @@ mod tests {
             credential_references: BTreeMap::new(),
             installed_package_tree_sha256: None,
             installed_package_lock_sha256: None,
+            installed_release_version: None,
+            installed_release_tree_sha256: None,
         };
         let guided = adapt_image_generation_guidance(b"Before\n<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:START -->\nplaceholder\n<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:END -->\nAfter", &manifest, &selection).unwrap();
         let guided = String::from_utf8(guided).unwrap();
@@ -8959,6 +8790,8 @@ mod tests {
             credential_references: BTreeMap::new(),
             installed_package_tree_sha256: None,
             installed_package_lock_sha256: None,
+            installed_release_version: None,
+            installed_release_tree_sha256: None,
         };
         let adapted = adapt_image_generation_client_config(
             br#"{"mcpServers":{"user_tool":{"command":"keep"},"hoi4_image_openai_api":{"command":"old"},"hoi4_image_old_provider":{"command":"older"}}}"#,
@@ -9023,6 +8856,8 @@ mod tests {
             credential_references: BTreeMap::new(),
             installed_package_tree_sha256: None,
             installed_package_lock_sha256: None,
+            installed_release_version: None,
+            installed_release_tree_sha256: None,
         };
         let root = tempdir().unwrap();
         std::fs::write(
