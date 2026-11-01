@@ -1,16 +1,35 @@
-# HOI4 Mod Setup
+<p align="center">
+  <img src="docs/images/app-icon.png" width="96" height="96" alt="HOI4 Mod Setup">
+</p>
 
-[![Discord](https://img.shields.io/badge/Discord-Join%20Community-7289da?logo=discord&logoColor=white)](https://discord.gg/rAXesGcT2t)
-[![YouTube](https://img.shields.io/badge/YouTube-Chaos%20Redux-ff0000?logo=youtube&logoColor=white)](https://www.youtube.com/@ChaosRedux)
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20the%20Project-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/klimpaskov)
-[![Download](https://img.shields.io/github/v/release/klimPaskov/HOI4-Mod-Setup?label=Download&logo=github&color=2ea44f)](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
-[![Issues](https://img.shields.io/badge/Bugs%20%26%20Ideas-Issues-24292f?logo=github&logoColor=white)](https://github.com/klimPaskov/HOI4-Mod-Setup/issues)
+<h1 align="center">HOI4 Mod Setup</h1>
 
-[![Watch the HOI4 Mod Setup video: One App, All HOI4 Tools](docs/images/setup-app-demo-thumbnail.png)](https://www.youtube.com/watch?v=qdFbLO92dQI)
+<p align="center">
+  Prepare a new or existing <em>Hearts of Iron IV</em> mod for AI-assisted development.
+</p>
 
-Prepare a new or existing **Hearts of Iron IV mod** for AI-assisted development: project
-instructions, skills, subagents, HOI4 tools, and an offline wiki for Claude Code, Codex, Cursor,
-and [many more coding clients](docs/36_coding_environment_catalog.md).
+<p align="center">
+  <a href="https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/klimPaskov/HOI4-Mod-Setup?label=Download&logo=github&color=2ea44f"></a>
+  <a href="https://discord.gg/rAXesGcT2t"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join%20Community-7289da?logo=discord&logoColor=white"></a>
+  <a href="https://www.youtube.com/@ChaosRedux"><img alt="YouTube" src="https://img.shields.io/badge/YouTube-Chaos%20Redux-ff0000?logo=youtube&logoColor=white"></a>
+  <a href="https://ko-fi.com/klimpaskov"><img alt="Ko-fi" src="https://img.shields.io/badge/Ko--fi-Support%20the%20Project-ff5e5b?logo=kofi&logoColor=white"></a>
+  <a href="https://github.com/klimPaskov/HOI4-Mod-Setup/issues"><img alt="Issues" src="https://img.shields.io/badge/Bugs%20%26%20Ideas-Issues-24292f?logo=github&logoColor=white"></a>
+</p>
+
+<p align="center">
+  <a href="#desktop-app-recommended">Desktop app</a> ·
+  <a href="#web-edition-lightweight">Web edition</a> ·
+  <a href="docs/QUICKSTART.md">Quick start</a> ·
+  <a href="docs/USER_GUIDE.md">User guide</a> ·
+  <a href="docs/TROUBLESHOOTING.md">Troubleshooting</a>
+</p>
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=qdFbLO92dQI"><img src="docs/images/setup-app-demo-thumbnail.png" alt="Watch the HOI4 Mod Setup video: One App, All HOI4 Tools"></a>
+</p>
+
+Project instructions, skills, subagents, HOI4 tools, and an offline wiki for Claude Code, Codex,
+Cursor, and [many more coding clients](docs/36_coding_environment_catalog.md).
 
 **Two ways to use it:**
 
