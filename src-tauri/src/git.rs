@@ -2624,8 +2624,7 @@ mod tests {
     fn a_repository_with_no_commit_yet_is_a_complete_inspection() {
         let project = tempdir().unwrap();
         run_git_initialize(project.path(), "--initial-branch=main").unwrap();
-        fs::write(project.path().join("descriptor.mod"), "name=\"x\"
-").unwrap();
+        fs::write(project.path().join("descriptor.mod"), r#"name="x""#).unwrap();
 
         let inspection = inspect_read_only(project.path());
 
