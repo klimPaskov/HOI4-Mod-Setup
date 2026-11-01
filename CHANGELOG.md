@@ -5,6 +5,7 @@ HOI4 Mod Setup follows semantic versioning.
 ## Unreleased
 
 - Scan a mod folder that was just `git init`ed (no commit yet) as a complete inspection. The missing first commit was read as an error, so the scan showed "Scan incomplete" with the raw id `scan.git.limit`.
+- Accept `.txt` files in the offline wiki snapshot. The package now ships `paradox_wiki/LICENSE.txt`, and the installation check rejected it ("offline wiki file type is not supported"), so every new install on the latest source stopped before applying any file.
 
 ## 0.8.1 - 2026-10-31
 
