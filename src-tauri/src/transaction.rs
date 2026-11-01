@@ -3657,7 +3657,7 @@ fn validate_managed_bytes(
             ));
         }
     } else if lower.starts_with("paradox_wiki/") {
-        if lower.ends_with(".md") || lower.ends_with(".svg") {
+        if lower.ends_with(".md") || lower.ends_with(".svg") || lower.ends_with(".txt") {
             let text = std::str::from_utf8(bytes).map_err(|_| {
                 AppError::Transaction(format!("offline wiki text is not UTF-8: {destination}"))
             })?;
@@ -11409,6 +11409,25 @@ description: Example skill.
 
         operation.destination = "paradox_wiki/Overview.md".into();
         validate_managed_bytes(project.path(), &operation, b"# Offline wiki\n").unwrap();
+
+        // The snapshot ships its license as a plain text file.
+        operation.destination = "paradox_wiki/LICENSE.txt".into();
+        validate_managed_bytes(
+            project.path(),
+            &operation,
+            b"CC BY-SA 3.0
+",
+        )
+        .unwrap();
+        assert!(validate_managed_bytes(
+            project.path(),
+            &operation,
+            b"  
+"
+        )
+        .is_err());
+        operation.destination = "paradox_wiki/archive.zip".into();
+        assert!(validate_managed_bytes(project.path(), &operation, b"PK").is_err());
 
         operation.destination = "paradox_wiki/media/example.svg".into();
         validate_managed_bytes(
