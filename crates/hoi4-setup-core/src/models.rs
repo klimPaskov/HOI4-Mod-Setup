@@ -459,12 +459,19 @@ pub struct ImageGenerationSelection {
     /// Opaque references only; secret values never enter the plan or project.
     #[serde(default)]
     pub credential_references: BTreeMap<String, String>,
-    /// Verified local dependency tree created by the GPTImage bootstrap. It
-    /// lets a later provider change remove only the exact tree Setup installed.
+    /// Verified dependency tree that Setup's retired GPTImage bootstrap
+    /// created. Kept only so an older install can still be cleaned up: it lets
+    /// an update remove exactly the tree Setup installed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_package_tree_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_package_lock_sha256: Option<String>,
+    /// The hoi4-imagegen release Setup installed and the hash of its installed
+    /// files. A later update or removal deletes only a tree that still matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_release_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_release_tree_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

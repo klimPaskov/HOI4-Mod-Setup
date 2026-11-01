@@ -10,6 +10,10 @@ publish = false
 
 # Everything here must build for wasm32-unknown-unknown: no filesystem,
 # process, network, OS clock, or OS randomness access outside adapter traits.
+[features]
+# Fixtures other crates' tests build manifests from. Never enabled in a build.
+test-support = []
+
 [dependencies]
 crc32fast = "1.5"
 hex = "0.4"

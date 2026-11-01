@@ -16,6 +16,8 @@ pub mod error;
 pub mod export;
 pub mod free_assistant;
 pub mod image_generation;
+#[cfg(test)]
+mod image_generation_tests;
 pub mod live_testing;
 pub mod manifest;
 pub mod mcp_target;
@@ -27,7 +29,10 @@ pub mod portrait;
 pub mod profile;
 pub mod project_files;
 pub mod proposals;
+pub mod release_binary;
 pub mod schemas;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod text;
 pub mod zip;
 

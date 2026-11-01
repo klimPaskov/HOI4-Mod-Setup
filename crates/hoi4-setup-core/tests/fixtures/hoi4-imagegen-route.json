@@ -1,0 +1,103 @@
+{
+  "_comment": "Test fixture for the release_binary route. The kit manifest declares the real URLs, sizes and hashes after the hoi4-imagegen-mcp release; tests replace the target digests with those of archives they build.",
+  "provider": {
+    "id": "hoi4_imagegen",
+    "display_name": "ChatGPT sign-in and API keys (hoi4-imagegen)",
+    "description": "Sign in with ChatGPT once, or add an OpenAI, Gemini, fal or ComfyUI key. Runs locally.",
+    "availability": "supported",
+    "requirements": [
+      "A ChatGPT plan with browser sign-in, or at least one image provider key."
+    ],
+    "good_for": ["Concept art", "Images guided by reference files", "Transparent PNG output"],
+    "cost_summary": "ChatGPT plan limits, or your provider's per-image price.",
+    "documentation_url": "https://github.com/klimPaskov/hoi4-imagegen-mcp",
+    "models": ["Chosen by hoi4-imagegen from the signed-in provider"],
+    "supported_coding_environments": ["claude_code", "codex", "github_copilot", "opencode", "cursor", "qoder"],
+    "route": {
+      "kind": "release_binary",
+      "auth_method": "chatgpt_login",
+      "server_id": "hoi4_imagegen",
+      "url": null,
+      "component_id": "imagegen.hoi4_imagegen",
+      "source_repository": "https://github.com/klimPaskov/hoi4-imagegen-mcp",
+      "source_revision": null,
+      "package_name": "hoi4-imagegen",
+      "package_version": "0.2.0",
+      "package_tree_sha256": null,
+      "source_tree_sha256": null,
+      "package_lock_sha256": null,
+      "runtime_entry": null,
+      "tool_names": {
+        "generate": "hoi4.image_generate",
+        "edit": "hoi4.image_edit"
+      },
+      "supported_models": [],
+      "tool_arguments": {},
+      "required_environment_names": [],
+      "auth_headers": [],
+      "api_protocol": null,
+      "api_base_url": null,
+      "default_model": null,
+      "result_format": "png",
+      "credential_fields": [
+        {"id": "openai_api_key", "display_name": "OpenAI API key", "environment_name": "OPENAI_API_KEY"},
+        {"id": "gemini_api_key", "display_name": "Gemini API key", "environment_name": "GEMINI_API_KEY"},
+        {"id": "fal_key", "display_name": "fal key", "environment_name": "FAL_KEY"},
+        {"id": "comfyui_api_key", "display_name": "ComfyUI API key", "environment_name": "COMFYUI_API_KEY"}
+      ],
+      "requires_primary_coding_environment": null,
+      "release_binary": {
+        "version": "0.2.0",
+        "install_root": ".tools/image_generation/hoi4-imagegen",
+        "targets": {}
+      }
+    },
+    "capabilities": {
+      "reference_images": {"supported": true, "max_count": null, "notes": "Pass project image paths as references."},
+      "image_edits": true,
+      "background_removal": false,
+      "transparent_background": {"native": false, "request_parameter": null, "notes": "Check the saved PNG for alpha below 255."},
+      "size_limits": {"accepts_dimensions": false, "maximum_width_px": null, "maximum_height_px": null, "maximum_pixels": null, "notes": "Follow the signed-in provider's limits."},
+      "one_image_per_call": true,
+      "alpha_verification": "Open the saved PNG and check its alpha channel.",
+      "fallback_if_no_alpha": "Use a background-removal route or ask the maintainer.",
+      "fallback_if_no_edits": "Generate a new variation from the reference."
+    },
+    "reference_mcp": {
+      "name": "hoi4-imagegen-mcp",
+      "url": "https://github.com/klimPaskov/hoi4-imagegen-mcp",
+      "maintenance": "official",
+      "authentication": "ChatGPT sign-in or provider API keys",
+      "version": "0.2.0",
+      "notes": "Release binary installed by HOI4 Mod Setup.",
+      "tool_names": ["hoi4.image_generate", "hoi4.image_edit"]
+    }
+  },
+  "component": {
+    "id": "imagegen.hoi4_imagegen",
+    "display_name": "hoi4-imagegen image server",
+    "description": "Installs the verified hoi4-imagegen release binary for this platform into the project's tools folder.",
+    "category": "mcp",
+    "optional": true,
+    "platforms": ["windows", "macos", "linux"],
+    "source": {
+      "kind": "generated",
+      "path": ".tools/image_generation/hoi4-imagegen"
+    },
+    "destination": {
+      "path": ".tools/image_generation/hoi4-imagegen/",
+      "ownership": "managed",
+      "outside_project": false
+    },
+    "dependencies": [],
+    "expected_files": [],
+    "required_tools": [],
+    "environment": [],
+    "conflicts": [],
+    "conflict_policy": "replace_if_unmodified",
+    "validation": [],
+    "update": {"strategy": "replace_if_unmodified", "remove_obsolete": true, "preserve_local_additions": true},
+    "capabilities": ["image generation", "image editing"],
+    "notes": ["The binary is downloaded from the manifest-declared release URL and verified before it is installed."]
+  }
+}

@@ -815,6 +815,32 @@ pub fn validate_manifest(
             "rollback retention must be positive".into(),
         ));
     }
+    // A release-binary image provider must declare a complete, pinned route,
+    // and its component must exist so selection can resolve it.
+    for provider in manifest
+        .image_generation
+        .as_ref()
+        .and_then(|catalog| catalog.get("providers"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|provider| crate::release_binary::is_release_binary_provider(provider))
+    {
+        crate::release_binary::ReleaseBinaryRoute::from_provider(provider)?;
+        let component_id = provider
+            .pointer("/route/component_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if component_id != crate::release_binary::COMPONENT_ID
+            || !components.contains_key(component_id)
+            || provider.pointer("/route/server_id").and_then(Value::as_str)
+                != Some(crate::release_binary::SERVER_ID)
+        {
+            return Err(AppError::Source(
+                "the release-binary image provider needs its component and server id".into(),
+            ));
+        }
+    }
     if manifest
         .signing
         .as_ref()
