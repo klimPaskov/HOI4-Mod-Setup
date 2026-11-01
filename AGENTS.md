@@ -392,10 +392,12 @@ SHA-256 before opening the archive, extracts only the two declared entries, and
 installs them side by side under `.tools/image_generation/hoi4-imagegen/<version>/`.
 A replaced version is removed only after the new one passes
 `hoi4-imagegen --version` and only while its files match the lock. The ChatGPT
-sign-in belongs to the binary: Setup launches `hoi4-imagegen login` with an
-argument array and reads `login-status`, and never sees, stores or logs the
-tokens. Provider keys stay in the OS credential store and reach only the
-`hoi4-imagegen doctor` process, through the scoped environment. The retired
+sign-in belongs to the binary: Setup shows `hoi4-imagegen login-risk-note`, and
+only after the user confirms launches `hoi4-imagegen login --accept-risk` with
+an argument array and reads `login-status`; it never sees, stores or logs the
+tokens. Provider keys stay in the OS credential store, where the binary reads
+them itself; Setup also passes them to the `hoi4-imagegen doctor` process
+through the scoped environment. The retired
 GPTImage route is never installed; older manifests that list it are ignored.
 
 ## 11. UI rules

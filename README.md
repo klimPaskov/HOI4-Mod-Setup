@@ -70,9 +70,11 @@ program your AI client uses to make and edit images. On the image step choose **
 API keys (hoi4-imagegen)**. Setup downloads the release for your computer, checks its SHA-256, and
 installs it in `.tools/image_generation/hoi4-imagegen/` inside the mod.
 
-- **Sign in:** on the last screen choose **Sign in with ChatGPT**. The program opens your browser and
-  keeps the sign-in in your operating-system keychain; Setup never sees or stores it. You can skip
-  this and add an OpenAI, Gemini, fal or ComfyUI key on the image step instead.
+- **Sign in:** on the last screen choose **Sign in with ChatGPT**. Setup shows the program's own
+  risk notice; after you confirm it, the program opens your browser (and waits up to five minutes)
+  and keeps the sign-in in your operating-system keychain. Setup never sees or stores it. You can
+  skip this and add an OpenAI, Gemini, fal or ComfyUI key on the image step instead. Saved keys are
+  read from the credential store by the program itself, so there is nothing to export.
 - **First image:** open the mod in your AI client and ask for one, for example "make a 156x210
   portrait for the Atlantis focus". The tools are named `hoi4.image_*`.
 - **Troubleshooting:** run `hoi4-imagegen doctor` from the install folder to see which providers are

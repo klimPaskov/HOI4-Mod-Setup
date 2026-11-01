@@ -902,6 +902,7 @@ pub fn run() {
             remove_image_generation_credential,
             imagegen_sign_in_status,
             imagegen_sign_in,
+            imagegen_login_risk_note,
             imagegen_doctor,
             claude_login_start,
             claude_login_wait,
@@ -1255,7 +1256,19 @@ async fn imagegen_sign_in_status(
     .await
 }
 
-/// Launch `hoi4-imagegen login`, which opens the browser and keeps its tokens
+/// The text `hoi4-imagegen login-risk-note` prints, for the user to confirm.
+#[tauri::command(async)]
+async fn imagegen_login_risk_note(project_root: String) -> Result<String, String> {
+    run_blocking_command("imagegen-risk-note", move || {
+        installed_imagegen(&project_root)?
+            .risk_note(&crate::imagegen::OsCliRunner)
+            .map_err(command_error)
+    })
+    .await
+}
+
+/// Launch `hoi4-imagegen login --accept-risk` after the user confirmed the
+/// risk note. The binary opens the browser and keeps its tokens
 /// in the operating-system keychain, then report `login-status`.
 #[tauri::command(async)]
 async fn imagegen_sign_in(project_root: String) -> Result<crate::imagegen::SignInStatus, String> {

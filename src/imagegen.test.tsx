@@ -1,13 +1,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImagegenSignIn, defaultImageProvider, isRetiredImageProvider } from "./App";
-import { imagegenSignIn, imagegenSignInStatus } from "./lib/tauri";
+import { imagegenLoginRiskNote, imagegenSignIn, imagegenSignInStatus } from "./lib/tauri";
 import type { ImageGenerationProviderDefinition } from "./types";
 
 vi.mock("./free-assistant.json", () => ({ default: { endpoint: null, model: "nvidia/nemotron-3-super-120b-a12b:free" } }));
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, isTauriRuntime: () => true, imagegenSignIn: vi.fn(), imagegenSignInStatus: vi.fn() };
+  return { ...actual, isTauriRuntime: () => true, imagegenSignIn: vi.fn(), imagegenSignInStatus: vi.fn(), imagegenLoginRiskNote: vi.fn() };
 });
 
 afterEach(() => {
@@ -39,7 +39,11 @@ describe("hoi4-imagegen sign-in step", () => {
     vi.mocked(imagegenSignIn).mockResolvedValue({ value: { signed_in: true, detail: "" } });
     render(<ImagegenSignIn projectRoot="C:/mods/atlantis" />);
     expect(await screen.findByText("Not signed in")).toBeInTheDocument();
+    vi.mocked(imagegenLoginRiskNote).mockResolvedValue({ value: "Risk: unofficial route." });
     fireEvent.click(screen.getByRole("button", { name: "Sign in with ChatGPT" }));
+    expect(await screen.findByText("Risk: unofficial route.")).toBeInTheDocument();
+    expect(imagegenSignIn).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "I understand, continue" }));
     await waitFor(() => expect(imagegenSignIn).toHaveBeenCalledWith("C:/mods/atlantis"));
     expect(await screen.findByText("Signed in")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sign in with ChatGPT" })).not.toBeInTheDocument();
@@ -49,7 +53,9 @@ describe("hoi4-imagegen sign-in step", () => {
     vi.mocked(imagegenSignInStatus).mockResolvedValue({ value: { signed_in: false, detail: "" } });
     vi.mocked(imagegenSignIn).mockResolvedValue({ value: null, error: "hoi4-imagegen is not installed in this project yet." });
     render(<ImagegenSignIn projectRoot="C:/mods/atlantis" />);
+    vi.mocked(imagegenLoginRiskNote).mockResolvedValue({ value: "Risk: unofficial route." });
     fireEvent.click(await screen.findByRole("button", { name: "Sign in with ChatGPT" }));
+    fireEvent.click(await screen.findByRole("button", { name: "I understand, continue" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("not installed");
     expect(screen.getByText("Not signed in")).toBeInTheDocument();
   });

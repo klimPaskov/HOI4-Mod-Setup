@@ -21,7 +21,7 @@ Keep API keys in Windows Credential Manager, macOS Keychain or the Linux desktop
 ### ChatGPT sign-in through hoi4-imagegen
 
 - **Route and sign-in:** Setup installs the verified [hoi4-imagegen-mcp](https://github.com/klimPaskov/hoi4-imagegen-mcp) release for the computer's platform. `hoi4-imagegen login` opens the browser and keeps the tokens in the operating-system keychain; Setup only launches it and reads `login-status`. This replaces the retired GPTImage route.
-- **Providers:** After sign-in the ChatGPT route is the default. Optional `OPENAI_API_KEY`, `GEMINI_API_KEY`, `FAL_KEY` and `COMFYUI_API_KEY` keys are stored in the credential store like other keys.
+- **Providers:** After sign-in the ChatGPT route is the default. Optional OpenAI, Gemini, fal and ComfyUI keys are stored in Setup's credential store (service `com.klimpaskov.hoi4-mod-setup`, account `credential://image_generation_api_key/hoi4_imagegen_<field>`). `hoi4-imagegen` and `hoi4-imagegen-mcp` read them from there when the matching environment variable (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `FAL_KEY`, `COMFYUI_API_KEY`) is unset, so nothing needs exporting. The sign-in is `hoi4-imagegen login --accept-risk`, run only after the user confirms the risk note from `hoi4-imagegen login-risk-note`.
 - **Cost and limits:** The ChatGPT route uses the account's plan limits. Check the program's own `doctor` output for what is ready.
 
 ### Codex native ImageGen

@@ -80,6 +80,7 @@ interface TauriCommandMap {
   store_image_generation_credential: { args: { provider: string; field: string; value: string }; result: CredentialReference };
   image_generation_credential_status: { args: { provider: string; field: string }; result: CredentialReference | null };
   imagegen_sign_in_status: { args: { projectRoot: string }; result: ImagegenSignInStatus };
+  imagegen_login_risk_note: { args: { projectRoot: string }; result: string };
   imagegen_sign_in: { args: { projectRoot: string }; result: ImagegenSignInStatus };
   imagegen_doctor: { args: { projectRoot: string }; result: string };
   remove_image_generation_credential: { args: { provider: string; field: string }; result: boolean };
@@ -268,7 +269,12 @@ export async function imagegenSignInStatus(projectRoot: string): Promise<Command
   return invokeCommandResult("imagegen_sign_in_status", { projectRoot });
 }
 
-/** Launches `hoi4-imagegen login`; the binary opens the browser itself. */
+/** The risk note text the user must confirm before signing in. */
+export async function imagegenLoginRiskNote(projectRoot: string): Promise<CommandResult<string>> {
+  return invokeCommandResult("imagegen_login_risk_note", { projectRoot });
+}
+
+/** Launches `hoi4-imagegen login --accept-risk` after the user confirmed the note; the binary opens the browser itself. */
 export async function imagegenSignIn(projectRoot: string): Promise<CommandResult<ImagegenSignInStatus>> {
   return invokeCommandResult("imagegen_sign_in", { projectRoot });
 }

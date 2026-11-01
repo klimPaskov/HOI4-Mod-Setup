@@ -227,7 +227,13 @@ impl CliRunner for FakeCli {
         );
         let (code, stdout) = match spec.args.first().map(String::as_str) {
             Some("--version") => (0, self.version_output.borrow().clone()),
+            Some("login-risk-note") => (0, "Risk note: this uses an unofficial route.".to_owned()),
             Some("login") => {
+                assert_eq!(
+                    spec.args,
+                    ["login", "--accept-risk"],
+                    "never without the accepted risk"
+                );
                 self.signed_in.set(true);
                 (0, "Signed in. Risk note acknowledged.".to_owned())
             }
@@ -829,13 +835,15 @@ fn sign_in_launches_the_binary_with_an_argument_array_and_reports_login_status()
     let imagegen = installed(&root);
     let cli = FakeCli::reporting("0.2.0");
     assert!(!imagegen.sign_in_status(&cli).unwrap().signed_in);
+    assert!(imagegen.risk_note(&cli).unwrap().contains("Risk"));
     let status = imagegen.sign_in(&cli).unwrap();
     assert!(status.signed_in);
     assert_eq!(
         cli.arguments(),
         vec![
             vec!["login-status".to_owned()],
-            vec!["login".to_owned()],
+            vec!["login-risk-note".to_owned()],
+            vec!["login".to_owned(), "--accept-risk".to_owned()],
             vec!["login-status".to_owned()],
         ]
     );

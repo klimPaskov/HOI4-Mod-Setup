@@ -177,10 +177,30 @@ impl InstalledImagegen {
         })
     }
 
-    /// Launch `hoi4-imagegen login`, then report `login-status`. The binary
-    /// opens the browser and stores the tokens; Setup sees neither.
+    /// The risk note `hoi4-imagegen login-risk-note` prints. The UI shows it
+    /// and asks the user to confirm before [`Self::sign_in`] is called.
+    pub fn risk_note(&self, runner: &dyn CliRunner) -> Result<String, AppError> {
+        let spec = self.spec(&["login-risk-note"], STATUS_TIMEOUT_SECONDS, Vec::new())?;
+        let result = runner.run(&spec, None)?;
+        let note = result.stdout.trim();
+        if result.timed_out || result.status_code != Some(0) || note.is_empty() {
+            return Err(AppError::Process(
+                "hoi4-imagegen could not show its sign-in risk note".into(),
+            ));
+        }
+        Ok(redact_secrets(note, &[]).chars().take(8000).collect())
+    }
+
+    /// Launch `hoi4-imagegen login --accept-risk`, then report `login-status`.
+    /// Call it only after the user confirmed the risk note in the UI. The
+    /// binary opens the browser, waits for the redirect and stores the tokens;
+    /// Setup sees neither.
     pub fn sign_in(&self, runner: &dyn CliRunner) -> Result<SignInStatus, AppError> {
-        let spec = self.spec(&["login"], LOGIN_TIMEOUT_SECONDS, Vec::new())?;
+        let spec = self.spec(
+            &["login", "--accept-risk"],
+            LOGIN_TIMEOUT_SECONDS,
+            Vec::new(),
+        )?;
         let result = runner.run(&spec, None)?;
         let mut status = self.sign_in_status(runner)?;
         if !status.signed_in && !result.timed_out {
@@ -190,7 +210,8 @@ impl InstalledImagegen {
             }
         }
         if result.timed_out {
-            status.detail = "Sign-in did not finish in ten minutes.".into();
+            status.detail =
+                "Sign-in did not finish. Choose Sign in with ChatGPT to try again.".into();
         }
         Ok(status)
     }

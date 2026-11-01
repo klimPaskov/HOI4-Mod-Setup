@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, checkInstallationRequirements, runAgentSetupResult, readDiagnostics, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelOpenRouterSignIn, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, draftModDescription, evaluateReadiness, findInterruptedTransaction, forgetContextAttachment, imagegenSignIn, imagegenSignInStatus, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, openRouterSignIn, pickContextDocuments, pickContextImages, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, checkInstallationRequirements, runAgentSetupResult, readDiagnostics, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelOpenRouterSignIn, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, draftModDescription, evaluateReadiness, findInterruptedTransaction, forgetContextAttachment, imagegenLoginRiskNote, imagegenSignIn, imagegenSignInStatus, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, openRouterSignIn, pickContextDocuments, pickContextImages, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
 import { base64ByteLength, base64DataUrl, renderCoverPng, renderReferenceJpeg } from "./lib/images";
 import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, ContextDocumentState, ContextImageState, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, McpSupport, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SetupRequirement, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
@@ -3426,7 +3426,7 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
         return <article className={`image-provider-card${selected ? " selected" : ""}${!usable ? " unavailable" : ""}`} key={provider.id}>
           <label className="image-provider-choice"><input type="radio" name="primary-image-provider" value={provider.id} checked={selected} disabled={!usable} onChange={() => choosePrimary(provider.id)} /><span><strong>{provider.display_name}</strong><small>{provider.description}</small></span>{selected && <Status label="Primary" tone="info" />}</label>
           <div className="image-provider-details"><span>{provider.cost_summary}</span><span>{provider.good_for.join(" · ")}</span><small>{provider.requirements.join(" ")}</small>{provider.models.length > 0 && <small>Models: {provider.models.join(", ")}</small>}{!usable && <small role="note">This provider needs a coding client that supports it.</small>}{provider.documentation_url && <ExternalLink href={provider.documentation_url}>Provider details <span aria-hidden="true">↗</span></ExternalLink>}</div>
-          {selectedIds.includes(provider.id) && provider.route.kind === "release_binary" && <p className="muted image-provider-secret">Setup downloads this program from its GitHub release, checks its SHA-256, and installs it in this project. After setup you can sign in with ChatGPT on the last screen. Keys below are optional and stay in this computer's credential store.</p>}
+          {selectedIds.includes(provider.id) && provider.route.kind === "release_binary" && <p className="muted image-provider-secret">Setup downloads this program from its GitHub release, checks its SHA-256, and installs it in this project. After setup you can sign in with ChatGPT on the last screen. Keys below are optional. They stay in this computer's credential store, and the program reads them from there itself, so there is nothing to export.</p>}
           {selectedIds.includes(provider.id) && provider.route.credential_fields?.map((field) => {
             const key = `${provider.id}.${field.id}`;
             const saved = Boolean(selection.credential_references[key]);
@@ -4099,6 +4099,7 @@ export function ImagegenSignIn({ projectRoot }: { projectRoot: string }) {
   const [status, setStatus] = useState<{ signed_in: boolean; detail: string }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [riskNote, setRiskNote] = useState<string>();
   useEffect(() => {
     if (!isTauriRuntime() || !projectRoot) return;
     let active = true;
@@ -4106,12 +4107,27 @@ export function ImagegenSignIn({ projectRoot }: { projectRoot: string }) {
     return () => { active = false; };
   }, [projectRoot]);
   if (!isTauriRuntime() || !projectRoot) return null;
+  // Step one shows the program's own risk note; nothing is launched yet.
+  const showRiskNote = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await imagegenLoginRiskNote(projectRoot);
+      if (result.value) setRiskNote(result.value);
+      else setError(result.error ?? "The sign-in notice could not be shown.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Step two runs only after the user confirmed that note.
   const signIn = async () => {
     if (busy) return;
     setBusy(true);
     setError(undefined);
     try {
       const result = await imagegenSignIn(projectRoot);
+      setRiskNote(undefined);
       if (result.value) setStatus(result.value);
       else setError(result.error ?? "Sign-in could not be started.");
     } finally {
@@ -4120,8 +4136,15 @@ export function ImagegenSignIn({ projectRoot }: { projectRoot: string }) {
   };
   return <div className="ready-check-list imagegen-sign-in">
     <CheckRow label="Image sign-in (optional)" status={status?.signed_in ? "Signed in" : status ? "Not signed in" : "Checking"} tone={status?.signed_in ? "pass" : "muted"} />
-    {!status?.signed_in && <button type="button" className="button secondary ready-panel-action" disabled={busy} aria-busy={busy || undefined} onClick={() => void signIn()}>{busy ? "Waiting for sign-in…" : "Sign in with ChatGPT"}</button>}
-    <p className="ready-panel-note muted">{status?.signed_in ? "hoi4-imagegen can make images with your ChatGPT plan." : "Opens your browser. You can skip this and use an OpenAI, Gemini, fal or ComfyUI key instead."}</p>
+    {!status?.signed_in && !riskNote && <button type="button" className="button secondary ready-panel-action" disabled={busy} aria-busy={busy || undefined} onClick={() => void showRiskNote()}>Sign in with ChatGPT</button>}
+    {!status?.signed_in && riskNote && <div className="ready-panel-note" role="group" aria-label="Sign-in notice">
+      <p style={{ whiteSpace: "pre-wrap" }}>{riskNote}</p>
+      <div className="button-row">
+        <button type="button" className="button secondary ready-panel-action" disabled={busy} aria-busy={busy || undefined} onClick={() => void signIn()}>{busy ? "Waiting for the browser sign-in…" : "I understand, continue"}</button>
+        <button type="button" className="text-button" disabled={busy} onClick={() => setRiskNote(undefined)}>Cancel</button>
+      </div>
+    </div>}
+    <p className="ready-panel-note muted">{status?.signed_in ? "hoi4-imagegen can make images with your ChatGPT plan." : "Shows a short notice, then opens your browser. You can skip this and use an OpenAI, Gemini, fal or ComfyUI key instead."}</p>
     {status && !status.signed_in && status.detail && <p className="ready-panel-note muted" role="status">{status.detail}</p>}
     {error && <p className="ready-panel-note" role="alert">{error}</p>}
   </div>;
