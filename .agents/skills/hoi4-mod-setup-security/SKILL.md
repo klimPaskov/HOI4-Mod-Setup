@@ -300,9 +300,12 @@ replacing existing bytes, and a redacted assignment at the end of a message.
   private Node hash immediately before spawn, clears Node influence variables,
   and passes the key only to that exact private Node entry. The child keeps
   the project working directory (downloads default to `meshy_output/`), and
-  Meshy 0.6.2 loads that directory's `.env` through non-override `dotenv`, so
+  Meshy 0.6.7 loads that directory's `.env` through non-override `dotenv`, so
   the launcher pins every runtime-read value project content could abuse
   (`TRANSPORT`, `MESHY_API_HOST`, `NO_PROXY=*`, `NODE_TLS_REJECT_UNAUTHORIZED`).
+  The one variable 0.6.7 added, `MESHY_CLIENT`, only names the host app in the
+  User-Agent comment sent to the pinned API host (filtered to `A-Za-z0-9._-`),
+  so it stays unpinned.
   Re-inventory runtime-read environment variables for every reviewed runtime
   bump and extend the pinned set before accepting a new lock.
 - A 3D health result is cached only as `ready` or `incomplete`, keyed by the canonical project root and a fingerprint of the locked workflow revision, manifest hash, and installed workflow file hashes. The cache stores no credential, command output, or provider response; a lock or Meshy-vault change or process restart invalidates the result and requires a new explicit health run.

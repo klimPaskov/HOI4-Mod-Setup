@@ -4,6 +4,14 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Move the reviewed Meshy MCP runtime from 0.6.2 to 0.6.7 (the exact locked runtime is now 3,954 files). The new runtime adds Auto Split, Text to Motion, and Usage tools, the `meshy-t2.5` model, and the host application's name in the Meshy User-Agent, no longer repeats a create after a timeout or a server error, and refuses the retired `meshy-t1` model and `lowpoly` type. An inventory of every environment variable the runtime and its unchanged dependencies read found one addition, `MESHY_CLIENT`, which only labels that User-Agent (filtered to letters, digits, `.`, `_`, and `-`, and sent only to the pinned API host), so the launcher's pinned values (`TRANSPORT`, `MESHY_API_HOST`, `NO_PROXY`, and `NODE_TLS_REJECT_UNAUTHORIZED`) are unchanged. The runtime also reads `ProgramFiles` and `ProgramFiles(x86)` after loading the project's `.env` to find a slicer program, so the Meshy launcher now always defines both (the app's own values, or a fixed harmless path where there are none) and a project `.env` cannot point the detected slicer at its own program. The launcher accepts only this exact runtime, so a project set up with an earlier Meshy runtime needs **Repair**.
+
+## 0.8.2 - 2026-11-01
+
+- Scan a mod folder that was just `git init`ed (no commit yet) as a complete inspection. The missing first commit was read as an error, so the scan showed "Scan incomplete" with the raw id `scan.git.limit`.
+- Repair and update started right after an install no longer add the live-testing workflow. The wizard's default live-testing choice was sent instead of the installed one, so the review listed extra files to create (and the acceptance run ended with "Git and managed files" blocked).
+- Accept `.txt` files in the offline wiki snapshot. The package now ships `paradox_wiki/LICENSE.txt`, and the installation check rejected it ("offline wiki file type is not supported"), so every new install on the latest source stopped before applying any file.
+
 ## 0.8.1 - 2026-10-31
 
 - Find Python the way people install it. The setup looked only at PATH and rejected every shortcut, so Python 3.14 from the Python install manager (which puts only shortcuts on PATH) was reported as "Python 3.9 or newer was not found" although it was installed. It now also searches the install manager's, the classic installers', Program Files, framework and Homebrew folders, tries each candidate until one is python.org's and 3.9 or newer, and names what it skipped and why. The development-tools step uses the same search.

@@ -11,13 +11,13 @@ use std::path::{Path, PathBuf};
 
 const CLI_MARKER: &str = "--run-verified-meshy-mcp";
 const PACKAGE_NAME: &str = "@meshy-ai/meshy-mcp-server";
-const PACKAGE_VERSION: &str = "0.6.2";
+const PACKAGE_VERSION: &str = "0.6.7";
 const RUNTIME_TREE_SHA256: &str =
-    "3ad84a9d8f6a1c4ccd97fe8cc15d710d9102911960664ece373d79f0b32430db";
-const RUNTIME_FILE_COUNT: u64 = 3952;
+    "dbd2ebfce197a18875c3d367ad4b5325a345b92ce54c2a33440f5490efe7f6b3";
+const RUNTIME_FILE_COUNT: u64 = 3954;
 const RUNTIME_ENTRY: &str = "@meshy-ai/meshy-mcp-server/dist/index.js";
 const MAX_NODE_BYTES: u64 = 128 * 1024 * 1024;
-/// Runtime-read variables pinned for the reviewed 0.6.2 runtime. It runs in
+/// Runtime-read variables pinned for the reviewed 0.6.7 runtime. It runs in
 /// the project folder (downloads default to `<cwd>/meshy_output`) and calls
 /// `dotenv.config()`, which adds a project `.env` to the environment but never
 /// overrides a variable that already exists. Without these pins, project
@@ -25,12 +25,49 @@ const MAX_NODE_BYTES: u64 = 128 * 1024 * 1024;
 /// authenticated requests through a proxy (`proxy-from-env` honors
 /// `NO_PROXY=*` before any proxy variable), or disable TLS verification.
 /// `MESHY_API_HOST` is read before `dotenv` runs and is pinned defensively.
+/// 0.6.7 also reads `MESHY_CLIENT` after `dotenv` runs. It only names the
+/// host application in the trailing comment of the User-Agent sent to the
+/// pinned API host, after a filter that keeps `A-Za-z0-9._-` and bounds the
+/// length, so project content cannot inject a header or change behavior with
+/// it. It is left unpinned on purpose.
+///
+/// 0.6.7 also reads `ProgramFiles` and `ProgramFiles(x86)` after `dotenv`
+/// runs (its slicer detector builds executable paths from them, and the agent
+/// is told to launch the detected path with `meshy_send_to_slicer`). The
+/// shared child environment does not carry them, so a project `.env` could
+/// have supplied them and pointed that path at a project-planted program.
+/// `runtime_environment` therefore always defines both: the parent process's
+/// own values when it has them, otherwise the fixed harmless
+/// `SLICER_FALLBACK_DIRECTORY`. Only the Meshy launcher passes them.
 pub(crate) const PINNED_RUNTIME_ENVIRONMENT: [(&str, &str); 4] = [
     ("TRANSPORT", "stdio"),
     ("MESHY_API_HOST", "https://api.meshy.ai"),
     ("NO_PROXY", "*"),
     ("NODE_TLS_REJECT_UNAUTHORIZED", "1"),
 ];
+
+const SLICER_ENVIRONMENT_NAMES: [&str; 2] = ["ProgramFiles", "ProgramFiles(x86)"];
+const SLICER_FALLBACK_DIRECTORY: &str = "/nonexistent-program-files";
+
+/// The complete pinned environment for the Meshy child: the static pins plus
+/// both slicer-detection directories, never unset.
+pub(crate) fn runtime_environment() -> Vec<(String, String)> {
+    runtime_environment_from(|name| std::env::var(name).ok())
+}
+
+fn runtime_environment_from(read: impl Fn(&str) -> Option<String>) -> Vec<(String, String)> {
+    let mut environment = PINNED_RUNTIME_ENVIRONMENT
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.to_string()))
+        .collect::<Vec<_>>();
+    for name in SLICER_ENVIRONMENT_NAMES {
+        let value = read(name)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| SLICER_FALLBACK_DIRECTORY.to_string());
+        environment.push((name.to_string(), value));
+    }
+    environment
+}
 
 fn cli_requested(args: &[String]) -> bool {
     args.len() == 2 && args[1] == CLI_MARKER
@@ -132,13 +169,18 @@ fn launch() -> Result<i32, AppError> {
     let node_sha256 = sha256_file(&private_node)?;
     verify_materialized_package_tree(&tree)?;
     let entry = safe_join(&tree.root, RUNTIME_ENTRY)?;
+    let environment = runtime_environment();
+    let pinned = environment
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
     let result = crate::process::run_private_credential_stdio_proxy(
         &private_node,
         &node_sha256,
         &[entry.display().to_string()],
         "MESHY_API_KEY",
         &key,
-        &PINNED_RUNTIME_ENVIRONMENT,
+        &pinned,
     );
     drop(key);
     result
@@ -172,6 +214,42 @@ mod tests {
             CLI_MARKER.into(),
             "project-script.py".into()
         ]));
+    }
+
+    #[test]
+    fn child_environment_always_defines_the_slicer_directories() {
+        let names = |environment: &[(String, String)]| {
+            SLICER_ENVIRONMENT_NAMES
+                .iter()
+                .map(|name| {
+                    environment
+                        .iter()
+                        .find(|(key, _)| key == name)
+                        .map(|(_, value)| value.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+        let unset = runtime_environment_from(|_| None);
+        assert_eq!(
+            names(&unset),
+            vec![
+                Some(SLICER_FALLBACK_DIRECTORY.to_string()),
+                Some(SLICER_FALLBACK_DIRECTORY.to_string())
+            ]
+        );
+        let blank = runtime_environment_from(|_| Some("  ".into()));
+        assert_eq!(names(&blank), names(&unset));
+        let set = runtime_environment_from(|name| Some(format!("real:{name}")));
+        assert_eq!(
+            names(&set),
+            vec![
+                Some("real:ProgramFiles".to_string()),
+                Some("real:ProgramFiles(x86)".to_string())
+            ]
+        );
+        assert!(set.iter().any(|(k, v)| k == "TRANSPORT" && v == "stdio"));
+        let live = runtime_environment();
+        assert!(names(&live).iter().all(Option::is_some));
     }
 
     fn write_meshy_runtime_fixture(root: &Path) {
