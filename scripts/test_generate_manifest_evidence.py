@@ -64,6 +64,19 @@ class ManifestEvidenceTests(unittest.TestCase):
 
         GENERATOR.validate_offline_wiki_links(snapshot)
 
+    def test_wiki_link_validation_reads_the_hoi4_wiki_folder(self) -> None:
+        GENERATOR.validate_offline_wiki_links(
+            {
+                "hoi4_wiki/effects.md": b"[Triggers](triggers.md) ![Map](media/map.png)",
+                "hoi4_wiki/triggers.md": b"# Triggers",
+                "hoi4_wiki/media/map.png": b"png",
+            }
+        )
+        with self.assertRaisesRegex(SystemExit, "offline wiki link is missing"):
+            GENERATOR.validate_offline_wiki_links(
+                {"hoi4_wiki/effects.md": b"[Missing](missing.md)"}
+            )
+
     def test_wiki_link_validation_rejects_missing_local_targets(self) -> None:
         snapshot = {
             "paradox_wiki/Overview.md": b"[Missing](missing.md)",

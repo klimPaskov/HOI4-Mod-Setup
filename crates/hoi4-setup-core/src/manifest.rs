@@ -43,6 +43,31 @@ pub struct SelectedSourceFile {
     pub platform: ManifestPlatform,
 }
 
+/// The kit's HOI4 wiki folder. Kit manifests before 2026-11 installed it as
+/// `paradox_wiki/`, so both names are accepted wherever the wiki is read.
+pub const WIKI_FOLDER: &str = "hoi4_wiki";
+/// The folder name earlier kit versions used for the same wiki.
+pub const LEGACY_WIKI_FOLDER: &str = "paradox_wiki";
+/// Both folder names, the current one first.
+pub const WIKI_FOLDERS: [&str; 2] = [WIKI_FOLDER, LEGACY_WIKI_FOLDER];
+
+/// The wiki folder a project uses: the current name when that folder exists,
+/// otherwise the legacy one when it exists, otherwise the current name.
+pub fn wiki_folder_in(is_dir: impl Fn(&str) -> bool) -> &'static str {
+    WIKI_FOLDERS
+        .into_iter()
+        .find(|folder| is_dir(folder))
+        .unwrap_or(WIKI_FOLDER)
+}
+
+/// Whether a relative path (any case) is inside either wiki folder.
+pub fn is_wiki_path(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_ascii_lowercase();
+    WIKI_FOLDERS
+        .iter()
+        .any(|folder| lower.starts_with(&format!("{folder}/")))
+}
+
 pub fn validate_manifest_destinations(components: &[ComponentDefinition]) -> Result<(), AppError> {
     let mut owners: std::collections::HashMap<String, Vec<&ComponentDefinition>> =
         std::collections::HashMap::new();
@@ -782,6 +807,19 @@ pub fn validate_manifest(
             "wiki provenance contains an unsupported status".into(),
         ));
     }
+    if !WIKI_FOLDERS
+        .iter()
+        .any(|folder| manifest.wiki.destination == format!("{folder}/"))
+    {
+        return Err(AppError::Source(
+            "wiki destination must be hoi4_wiki/ or paradox_wiki/".into(),
+        ));
+    }
+    if wiki_component.destination.path != manifest.wiki.destination {
+        return Err(AppError::Source(
+            "wiki destination must match the wiki component's destination".into(),
+        ));
+    }
     let mut required_pages = HashSet::new();
     for page in &manifest.wiki.required_pages {
         let page = require_canonical_manifest_path(page, "required wiki page")
@@ -791,7 +829,7 @@ pub fn validate_manifest(
                 "duplicate required wiki page: {page}"
             )));
         }
-        let expected_path = format!("paradox_wiki/{page}");
+        let expected_path = format!("{}{page}", manifest.wiki.destination);
         if !wiki_component
             .expected_files
             .iter()
@@ -801,11 +839,6 @@ pub fn validate_manifest(
                 "required wiki page lacks manifest evidence: {page}"
             )));
         }
-    }
-    if manifest.wiki.destination != "paradox_wiki/" {
-        return Err(AppError::Source(
-            "wiki destination must be paradox_wiki/".into(),
-        ));
     }
     if manifest.wiki.required_pages.is_empty() {
         return Err(AppError::Source("wiki must declare required pages".into()));
@@ -1444,4 +1477,39 @@ pub fn installation_components(
         }
     }
     Ok(requested)
+}
+
+#[cfg(test)]
+mod wiki_folder_tests {
+    use super::*;
+
+    #[test]
+    fn the_wiki_folder_prefers_the_new_name_and_falls_back_to_the_legacy_name() {
+        assert_eq!(wiki_folder_in(|_| false), "hoi4_wiki");
+        assert_eq!(
+            wiki_folder_in(|folder| folder == "paradox_wiki"),
+            "paradox_wiki"
+        );
+        assert_eq!(wiki_folder_in(|_| true), "hoi4_wiki");
+    }
+
+    #[test]
+    fn wiki_paths_are_recognised_in_either_folder_and_any_case() {
+        for path in [
+            "hoi4_wiki/effects.md",
+            "paradox_wiki/media/a.png",
+            "HOI4_Wiki/Effects.md",
+            "paradox_wiki\\effects.md",
+        ] {
+            assert!(is_wiki_path(path), "{path}");
+        }
+        for path in [
+            "hoi4_wiki",
+            "hoi4_wikis/a.md",
+            "docs/hoi4_wiki/a.md",
+            "wiki/a.md",
+        ] {
+            assert!(!is_wiki_path(path), "{path}");
+        }
+    }
 }

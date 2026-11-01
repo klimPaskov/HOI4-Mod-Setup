@@ -292,7 +292,7 @@ Unix exclusive rename uses `renameat2(RENAME_NOREPLACE)` on Linux and `renameatx
 - Every setup carries an empty `.tmp` project directory as a managed directory
   entry without a marker file. Every plan also generates or reviews the
   managed `.gitignore` block even when Git setup is skipped; the block ignores
-  `.tmp/`, `.agents/`, `.codex/`, `.tools/`, `paradox_wiki/`, `AGENTS.md`, and
+  `.tmp/`, `.agents/`, `.codex/`, `.tools/`, `hoi4_wiki/`, `paradox_wiki/`, `AGENTS.md`, and
   application-local cache/backup paths while preserving project rules outside
   the managed block.
 - Validate staged output.

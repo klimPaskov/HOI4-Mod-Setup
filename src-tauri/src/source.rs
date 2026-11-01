@@ -1855,6 +1855,49 @@ mod tests {
         parse_manifest(&serde_json::to_vec(&value).unwrap(), Some(&revision)).unwrap();
     }
 
+    /// The stored manifest with every `paradox_wiki` path renamed, as the kit
+    /// publishes it after the folder became `hoi4_wiki/`.
+    fn manifest_with_wiki_folder(folder: &str) -> (Value, String) {
+        let (value, revision) = live_tools_manifest_value();
+        let text = serde_json::to_string(&value)
+            .unwrap()
+            .replace("paradox_wiki", folder);
+        (serde_json::from_str(&text).unwrap(), revision)
+    }
+
+    #[test]
+    fn manifest_accepts_the_hoi4_wiki_and_the_legacy_paradox_wiki_destination() {
+        for folder in ["hoi4_wiki", "paradox_wiki"] {
+            let (value, revision) = manifest_with_wiki_folder(folder);
+            let manifest = parse_manifest(&serde_json::to_vec(&value).unwrap(), Some(&revision))
+                .unwrap_or_else(|error| panic!("{folder}: {error}"));
+            assert_eq!(manifest.wiki.destination, format!("{folder}/"));
+        }
+    }
+
+    #[test]
+    fn manifest_rejects_any_other_wiki_destination() {
+        let (value, revision) = manifest_with_wiki_folder("other_wiki");
+        let error = parse_manifest(&serde_json::to_vec(&value).unwrap(), Some(&revision))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("wiki destination must be hoi4_wiki/ or paradox_wiki/")
+                || error.contains("other_wiki"),
+            "{error}"
+        );
+        let (mut value, revision) = manifest_with_wiki_folder("hoi4_wiki");
+        value["wiki"]["destination"] = serde_json::json!("paradox_wiki/");
+        let error = parse_manifest(&serde_json::to_vec(&value).unwrap(), Some(&revision))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("wiki destination must match the wiki component's destination")
+                || error.contains("lacks manifest evidence"),
+            "{error}"
+        );
+    }
+
     #[test]
     fn authoritative_manifest_schema_rejects_unknown_top_level_fields() {
         let mut value: Value = serde_json::from_slice(include_bytes!(

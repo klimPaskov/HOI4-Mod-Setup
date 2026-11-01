@@ -48,6 +48,7 @@ const IGNORED_SCAN_DIRECTORIES: &[&str] = &[
     ".hoi4-mod-setup",
     ".tools",
     ".tmp",
+    "hoi4_wiki",
     "paradox_wiki",
     ".venv",
     "venv",
@@ -3103,24 +3104,25 @@ fn detect_existing_components(
     conflicts: &mut Vec<ScanConflict>,
 ) {
     for path in [
+        "hoi4_wiki",
         "paradox_wiki",
         ".claude/skills",
         ".claude/agents",
         ".agents/skills",
         ".codex/agents",
     ] {
-        let present = if path == "paradox_wiki" {
+        let present = if hoi4_setup_core::manifest::WIKI_FOLDERS.contains(&path) {
             fs::symlink_metadata(root.join(path))
                 .ok()
                 .is_some_and(|metadata| {
                     if is_link_metadata(&metadata) {
                         conflicts.push(ScanConflict {
-                            id: "conflict.paradox_wiki.link".into(),
+                            id: format!("conflict.{path}.link"),
                             path: path.into(),
                             kind: "other".into(),
                             severity: "block".into(),
                             details: Some(
-                                "The offline wiki directory is a link and was not followed.".into(),
+                                "The HOI4 wiki directory is a link and was not followed.".into(),
                             ),
                         });
                     }
@@ -4288,6 +4290,7 @@ mod tests {
             "build",
             ".tools",
             ".tmp",
+            "hoi4_wiki",
             "paradox_wiki",
         ] {
             fs::create_dir_all(directory.path().join(name)).unwrap();
@@ -4329,27 +4332,32 @@ mod tests {
 
     #[test]
     fn skipped_managed_wiki_is_detected_without_reading_its_pages() {
-        let directory = tempdir().unwrap();
-        fs::write(
-            directory.path().join("descriptor.mod"),
-            "name=\"Example\"\n",
-        )
-        .unwrap();
-        fs::create_dir_all(directory.path().join("paradox_wiki/pages")).unwrap();
-        fs::write(
-            directory.path().join("paradox_wiki/pages/large-page.md"),
-            "wiki content that is not part of the project scan",
-        )
-        .unwrap();
+        for folder in ["hoi4_wiki", "paradox_wiki"] {
+            let directory = tempdir().unwrap();
+            fs::write(
+                directory.path().join("descriptor.mod"),
+                "name=\"Example\"\n",
+            )
+            .unwrap();
+            fs::create_dir_all(directory.path().join(folder).join("pages")).unwrap();
+            fs::write(
+                directory.path().join(folder).join("pages/large-page.md"),
+                "wiki content that is not part of the project scan",
+            )
+            .unwrap();
 
-        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
-        let serialized = serde_json::to_string(&result).unwrap();
+            let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+            let serialized = serde_json::to_string(&result).unwrap();
 
-        assert!(!serialized.contains("large-page.md"));
-        assert!(result
-            .conflicts
-            .iter()
-            .any(|conflict| conflict.path == "paradox_wiki"));
+            assert!(!serialized.contains("large-page.md"), "{folder}");
+            assert!(
+                result
+                    .conflicts
+                    .iter()
+                    .any(|conflict| conflict.path == folder),
+                "{folder}"
+            );
+        }
     }
 
     #[test]

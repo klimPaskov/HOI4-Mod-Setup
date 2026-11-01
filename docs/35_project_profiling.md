@@ -58,7 +58,7 @@ byte, so a reimport never presents the setup's own documentation as the mod's.
 A file the user changed, or kept from before the setup, is profiled normally.
 
 The profile excludes entries such as `.git`, `.tools`, `.tmp`,
-`paradox_wiki`, `node_modules`, `target`, `dist`, `build`, `out`, `venv`,
+`hoi4_wiki`, `paradox_wiki`, `node_modules`, `target`, `dist`, `build`, `out`, `venv`,
 `env`, `__pycache__`, `coverage`, and other hidden or cache/tooling trees.
 The exact security/path classifier remains implementation-owned; a new
 exclusion must preserve deterministic counts and visible coverage reporting.

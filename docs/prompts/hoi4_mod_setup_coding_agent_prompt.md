@@ -100,7 +100,7 @@ same immutable locked source revision.
 
 ## Wiki
 
-Install the selected repository tree under `<mod_project>/paradox_wiki/`. Validate hash, containment, core page coverage, and media policy. Do not invent source or license metadata.
+Install the selected repository tree under `<mod_project>/hoi4_wiki/` (or `paradox_wiki/` when the manifest declares it). Validate hash, containment, core page coverage, and media policy. Do not invent source or license metadata.
 
 ## 3D
 

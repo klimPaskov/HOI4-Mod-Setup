@@ -2536,6 +2536,7 @@ mod tests {
             ".agents/",
             ".codex/",
             ".tools/",
+            "hoi4_wiki/",
             "paradox_wiki/",
             "AGENTS.md",
         ] {
@@ -2552,6 +2553,22 @@ mod tests {
         assert!(merged.ends_with("\n\nother-rule"));
         assert!(merged.lines().any(|line| line == ".tmp/"));
         assert!(!merged.contains(".tools/3d_pipeline/vendor/"));
+    }
+
+    #[test]
+    fn gitignore_merge_moves_a_paradox_wiki_block_to_the_hoi4_wiki_folder_and_keeps_user_rules() {
+        let old = "local-rule\n\n# BEGIN HOI4 Mod Setup managed rules\n.tmp/\n.agents/\n.codex/\n.tools/\nparadox_wiki/\nAGENTS.md\n# END HOI4 Mod Setup managed rules\n\nother-rule\nparadox_wiki/my-notes.md";
+        let merged = merge_gitignore(Some(old));
+        assert!(merged.starts_with("local-rule\n\n"));
+        assert!(merged.ends_with("\n\nother-rule\nparadox_wiki/my-notes.md"));
+        assert!(merged.lines().any(|line| line == "hoi4_wiki/"));
+        assert_eq!(
+            merged
+                .matches("# BEGIN HOI4 Mod Setup managed rules")
+                .count(),
+            1
+        );
+        assert_eq!(merge_gitignore(Some(&merged)), merged);
     }
 
     #[test]

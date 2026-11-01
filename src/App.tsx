@@ -122,7 +122,7 @@ const DEFAULT_COMPONENTS: ComponentRow[] = [
   { id: "core.skills", title: "Skills", detail: "Current HOI4 workflow skills", size: "—", selected: true, required: true },
   { id: "core.subagents", title: "Subagents", detail: "Specialist agents with per-role model tiers", size: "—", selected: true, required: true },
   { id: "mcp.hoi4_agent_tools", title: "HOI4 Agent Tools MCP", detail: "Optional HOI4-aware coding tools", size: "—", selected: true, required: false, platform: "windows" },
-  { id: "wiki.snapshot", title: "Offline wiki", detail: "Installed under paradox_wiki/", size: "—", selected: true, required: true },
+  { id: "wiki.snapshot", title: "HOI4 wiki (kit)", detail: "Installed under hoi4_wiki/", size: "—", selected: true, required: true },
 ];
 
 const PORTRAIT_REPOSITORY = "https://github.com/klimPaskov/comfyui-hoi4-portraits";
