@@ -2,7 +2,7 @@
 
 HOI4 Mod Setup follows semantic versioning.
 
-## Unreleased
+## 0.8.4 - 2026-11-01
 
 - Show the Apache 2.0 license agreement as a page of the Windows installer and fill in the installer's publisher, copyright, and description. This does not remove Windows SmartScreen's "unknown publisher" warning; that needs a certificate from a trusted authority (see RELEASING.md, Signing configuration).
 
