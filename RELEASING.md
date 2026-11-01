@@ -235,6 +235,12 @@ Apple certificate and notarization secrets are injected only into the
 official-signing step; the community macOS path receives no Apple secrets.
 The public release contains no certificate or private key.
 
+The community certificate (`ChaosX`) is not issued by a trusted authority, so Windows
+SmartScreen and macOS Gatekeeper still warn about an unknown publisher. Only the official
+route below (Azure Artifact Signing on Windows, Apple Developer ID plus notarization on
+macOS) removes those warnings. The installer's license page, publisher, and copyright come
+from `bundle` in `src-tauri/tauri.conf.json` and the Windows-only `src-tauri/tauri.windows.conf.json` (a license file on macOS adds a prompt to the disk image that blocks unattended mounting) and are independent of signing.
+
 The two `WINDOWS_COMMUNITY_*` values are encrypted repository secrets. Rotate
 them together; never store the decoded PFX or password in source, artifacts, or
 logs. The official Azure route continues to use the reviewed DigiCert RFC 3161

@@ -2,6 +2,10 @@
 
 HOI4 Mod Setup follows semantic versioning.
 
+## Unreleased
+
+- Show the Apache 2.0 license agreement as a page of the Windows installer and fill in the installer's publisher, copyright, and description. This does not remove Windows SmartScreen's "unknown publisher" warning; that needs a certificate from a trusted authority (see RELEASING.md, Signing configuration).
+
 ## 0.8.3 - 2026-11-01
 
 - Move the reviewed Meshy MCP runtime from 0.6.2 to 0.6.7 (the exact locked runtime is now 3,954 files). The new runtime adds Auto Split, Text to Motion, and Usage tools, the `meshy-t2.5` model, and the host application's name in the Meshy User-Agent, no longer repeats a create after a timeout or a server error, and refuses the retired `meshy-t1` model and `lowpoly` type. An inventory of every environment variable the runtime and its unchanged dependencies read found one addition, `MESHY_CLIENT`, which only labels that User-Agent (filtered to letters, digits, `.`, `_`, and `-`, and sent only to the pinned API host), so the launcher's pinned values (`TRANSPORT`, `MESHY_API_HOST`, `NO_PROXY`, and `NODE_TLS_REJECT_UNAUTHORIZED`) are unchanged. The runtime also reads `ProgramFiles` and `ProgramFiles(x86)` after loading the project's `.env` to find a slicer program, so the Meshy launcher now always defines both (the app's own values, or a fixed harmless path where there are none) and a project `.env` cannot point the detected slicer at its own program. The launcher accepts only this exact runtime, so a project set up with an earlier Meshy runtime needs **Repair**.

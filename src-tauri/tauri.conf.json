@@ -27,6 +27,9 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Klim Paskov",
+    "copyright": "Copyright 2026 Klim Paskov. Licensed under the Apache License 2.0.",
+    "shortDescription": "Prepare a Hearts of Iron IV mod for AI-assisted development",
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",
