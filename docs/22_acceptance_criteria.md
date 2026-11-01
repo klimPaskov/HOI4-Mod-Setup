@@ -191,7 +191,7 @@
 
 ## Wiki
 
-- WIKI-01: Wiki installs under `<mod_project>/paradox_wiki/`.
+- WIKI-01: Wiki installs under `<mod_project>/hoi4_wiki/` (or `paradox_wiki/` for a manifest that still declares it).
 - WIKI-02: Required pages and media policy are validated.
 - WIKI-03: Broken integrity blocks core readiness.
 - WIKI-04: Missing formal source or license metadata is reported honestly.

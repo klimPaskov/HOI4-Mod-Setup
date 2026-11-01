@@ -81,7 +81,7 @@ consumed by the app without releasing a new app binary.
 | `.codex/agents/` | Generic bounded Codex subagents |
 | `.codex/config.toml` | Codex and MCP configuration example |
 | `.tools/3d_pipeline/` | Optional 3D bootstrap and support files |
-| `paradox_wiki/` | Offline Markdown snapshot and media |
+| `hoi4_wiki/` (earlier `paradox_wiki/`) | Offline Markdown snapshot and media |
 | `AGENTS_template.md` | Mod-agnostic project instruction template |
 | `AGENTS_chaos_redux.md` | Full project-specific example |
 | `README.md` | Setup guidance and repository overview |

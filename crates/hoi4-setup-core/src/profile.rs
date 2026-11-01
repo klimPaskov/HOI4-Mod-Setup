@@ -61,6 +61,7 @@ pub fn excluded(name: &str) -> bool {
                 | "dist"
                 | "build"
                 | "out"
+                | "hoi4_wiki"
                 | "paradox_wiki"
                 | "venv"
                 | "env"
