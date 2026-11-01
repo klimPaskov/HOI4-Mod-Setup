@@ -63,6 +63,22 @@ Your `descriptor.mod`, `thumbnail.png`, `README.md`, and mod content are never o
 only reads the folder. Updating again shows only the files you edited, and an interrupted install can
 be undone. Details in the [user guide](docs/USER_GUIDE.md#existing-mods-import-reimport-update).
 
+## Images: hoi4-imagegen
+
+Setup can install [hoi4-imagegen-mcp](https://github.com/klimPaskov/hoi4-imagegen-mcp), a local
+program your AI client uses to make and edit images. On the image step choose **ChatGPT sign-in and
+API keys (hoi4-imagegen)**. Setup downloads the release for your computer, checks its SHA-256, and
+installs it in `.tools/image_generation/hoi4-imagegen/` inside the mod.
+
+- **Sign in:** on the last screen choose **Sign in with ChatGPT**. The program opens your browser and
+  keeps the sign-in in your operating-system keychain; Setup never sees or stores it. You can skip
+  this and add an OpenAI, Gemini, fal or ComfyUI key on the image step instead.
+- **First image:** open the mod in your AI client and ask for one, for example "make a 156x210
+  portrait for the Atlantis focus". The tools are named `hoi4.image_*`.
+- **Troubleshooting:** run `hoi4-imagegen doctor` from the install folder to see which providers are
+  ready, and `hoi4-imagegen login-status` to check the sign-in. If Setup says the files changed,
+  run **Repair**. Your mod's other files are never touched.
+
 ## Learn more
 
 - [Quick start with screenshots](docs/QUICKSTART.md) and the [full user guide](docs/USER_GUIDE.md)

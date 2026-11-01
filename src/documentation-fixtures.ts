@@ -121,17 +121,58 @@ const manifest = {
       { id: "none", display_name: "None", description: "Disable live testing.", requirements: [], supported_platforms: ["all"], supported_coding_environments: [], experimental: false, route: { kind: "none" }, guidance: [] },
     ],
   },
-  image_generation: (sourceManifest as unknown as SourceManifestPreview).image_generation ?? {
-    default_provider: "gptimage",
-    providers: [
-      { id: "gptimage", display_name: "ChatGPT subscription (GPTImage)", description: "Use the local GPTImage server with your ChatGPT plan.", availability: "supported", requirements: ["ChatGPT plan and browser sign-in."], good_for: ["Concept art", "Reference images"], cost_summary: "No separate image API bill; plan limits apply.", models: ["GPT Image"], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "local_package", auth_method: "chatgpt_subscription", component_id: "imagegen.gptimage", tool_names: { generate: "generate_image", auth_status: "image_auth_status" } }, capabilities: { reference_images: { supported: true, max_count: 5, notes: "Pass the image paths and explain what to copy." }, image_edits: false, transparent_background: { native: false, notes: "PNG output may have an opaque background." }, size_limits: { notes: "Follow the selected route's size limits." }, one_image_per_call: true, fallback_if_no_alpha: "Use background removal and check the saved alpha.", fallback_if_no_edits: "Make a new version from references." } },
-      { id: "openai_api", display_name: "OpenAI Images API", description: "Use image models with a key saved on this computer.", availability: "supported", requirements: ["OpenAI API key."], good_for: ["Image edits", "Transparent output"], cost_summary: "Pay per image; quality and size change the price.", models: ["GPT Image 2.5", "GPT Image 2", "GPT Image 1.5"], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "stdio_adapter", auth_method: "api_key_vault", component_id: "imagegen.runtime", api_protocol: "openai_images", api_base_url: "https://api.openai.com/v1", default_model: "gpt-image-2.5-sunburst", supported_models: ["gpt-image-2.5-sunburst", "gpt-image-2", "gpt-image-1.5"], credential_fields: [{ id: "api_key", display_name: "OpenAI API key", environment_name: "OPENAI_API_KEY" }] }, capabilities: { reference_images: { supported: true, max_count: 16, notes: "Reference limits vary by model." }, image_edits: true, transparent_background: { native: true, notes: "Supported models can return transparent images; check the alpha." }, size_limits: { accepts_dimensions: true, maximum_width_px: 3840, maximum_height_px: 3840, notes: "Use model-supported dimensions." }, one_image_per_call: true, fallback_if_no_alpha: "Use a configured background-removal route.", fallback_if_no_edits: "Make a new version from references." } },
-      { id: "gemini_api", display_name: "Google Gemini images (Nano Banana)", description: "Use Google's image models through AI Studio.", availability: "supported", requirements: ["Google AI Studio API key."], good_for: ["Reference-guided edits", "Several visual styles"], cost_summary: "Pay per image; size and model affect the price.", models: ["Nano Banana 2.1", "Nano Banana Pro"], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "stdio_adapter", auth_method: "api_key_vault", component_id: "imagegen.runtime", api_protocol: "gemini_generate_content", default_model: "gemini-3.1-flash-image", credential_fields: [{ id: "api_key", display_name: "Google AI Studio API key", environment_name: "GEMINI_API_KEY" }] }, capabilities: { reference_images: { supported: true, max_count: 14, notes: "Limits depend on the model." }, image_edits: true, transparent_background: { native: false, notes: "Native alpha is not documented." }, size_limits: { accepts_dimensions: true, maximum_width_px: 4096, maximum_height_px: 4096, notes: "Limits depend on the model." }, one_image_per_call: true, fallback_if_no_alpha: "Use a configured background-removal route.", fallback_if_no_edits: "Make a new version from references." } },
-      { id: "fal_ai", display_name: "fal.ai", description: "Choose among many hosted image models.", availability: "supported", requirements: ["fal API key."], good_for: ["FLUX", "Recraft", "Ideogram", "Seedream"], cost_summary: "Pay per model run; prices vary.", models: ["FLUX", "Recraft", "Ideogram", "Seedream", "Nano Banana"], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "stdio_adapter", auth_method: "api_key_vault", component_id: "imagegen.runtime", api_protocol: "fal_queue", default_model: "fal-ai/flux-2-pro", credential_fields: [{ id: "api_key", display_name: "fal API key", environment_name: "FAL_KEY" }] }, capabilities: { reference_images: { supported: true, max_count: 1, notes: "Limits depend on model." }, image_edits: true, transparent_background: { native: false, notes: "Some models support transparency." }, size_limits: { notes: "Limits depend on model." }, one_image_per_call: true, fallback_if_no_alpha: "Use a configured background-removal route.", fallback_if_no_edits: "Make a new version from references." } },
-      { id: "none", display_name: "None — I will make art myself", description: "Use artwork you create or source yourself.", availability: "supported", requirements: ["No account or install."], good_for: ["Your own artwork"], cost_summary: "No provider charge.", models: [], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "manual", auth_method: "none" }, capabilities: { reference_images: { supported: false, notes: "Add your own files to the project." }, image_edits: false, transparent_background: { native: false, notes: "Check alpha in the files you add." }, size_limits: { notes: "Use HOI4 asset size rules." }, one_image_per_call: true, fallback_if_no_alpha: "Edit the image yourself and check its alpha.", fallback_if_no_edits: "Edit the image yourself." } },
+  image_generation: fixtureImageGeneration(),
+};
+
+function hoi4ImagegenFixture(): NonNullable<SourceManifestPreview["image_generation"]>["providers"][number] {
+  return {
+  id: "hoi4_imagegen",
+  display_name: "ChatGPT sign-in and API keys (hoi4-imagegen)",
+  description: "Sign in with ChatGPT once, or add an OpenAI, Gemini, fal or ComfyUI key. Runs on this computer.",
+  availability: "supported",
+  requirements: ["A ChatGPT plan with browser sign-in, or at least one provider key."],
+  good_for: ["Concept art", "Reference images", "Transparent PNG output"],
+  cost_summary: "ChatGPT plan limits, or your provider's per-image price.",
+  documentation_url: "https://github.com/klimPaskov/hoi4-imagegen-mcp",
+  models: ["Chosen from the signed-in provider"],
+  supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"],
+  route: {
+    kind: "release_binary",
+    auth_method: "chatgpt_login",
+    server_id: "hoi4_imagegen",
+    component_id: "imagegen.hoi4_imagegen",
+    tool_names: { generate: "hoi4.image_generate", edit: "hoi4.image_edit" },
+    credential_fields: [
+      { id: "openai_api_key", display_name: "OpenAI API key", environment_name: "OPENAI_API_KEY" },
+      { id: "gemini_api_key", display_name: "Gemini API key", environment_name: "GEMINI_API_KEY" },
+      { id: "fal_key", display_name: "fal key", environment_name: "FAL_KEY" },
+      { id: "comfyui_api_key", display_name: "ComfyUI API key", environment_name: "COMFYUI_API_KEY" },
     ],
   },
+  capabilities: {
+    reference_images: { supported: true, max_count: 5, notes: "Pass the image paths and explain what to copy." },
+    image_edits: true,
+    transparent_background: { native: false, notes: "Check the saved PNG for alpha below 255." },
+    size_limits: { notes: "Follow the signed-in provider's limits." },
+    one_image_per_call: true,
+    fallback_if_no_alpha: "Use background removal and check the saved alpha.",
+    fallback_if_no_edits: "Make a new version from references.",
+  },
 };
+}
+
+/**
+ * The bundled snapshot is an older source revision that still lists the retired
+ * GPTImage route. The fixture shows the catalog the current package publishes:
+ * hoi4-imagegen first and GPTImage gone.
+ */
+function fixtureImageGeneration(): NonNullable<SourceManifestPreview["image_generation"]> {
+  const snapshot = (sourceManifest as unknown as SourceManifestPreview).image_generation;
+  return {
+    default_provider: "hoi4_imagegen",
+    providers: [hoi4ImagegenFixture(), ...(snapshot?.providers ?? []).filter((provider) => provider.id !== "gptimage")],
+  };
+}
 
 const semanticAnalysis: CodexAnalysis = {
   schema_version: "1.0.0",
@@ -327,7 +368,7 @@ export function documentationFixture(base: WizardState): WizardState {
   if (scenario === "components") return { ...common, screen: "components" };
   if (scenario === "environments") return { ...common, screen: "environments", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"] };
   if (scenario === "live-testing") return { ...common, screen: "live-testing", selectedComponents: [...common.selectedComponents, "workflow.live_testing"] };
-  if (scenario === "image-generation") return { ...common, screen: "image-generation", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"], imageGeneration: { primary_provider: "gptimage", additional_providers: ["openai_api"], route_settings: {}, credential_references: {} } };
+  if (scenario === "image-generation") return { ...common, screen: "image-generation", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"], imageGeneration: { primary_provider: "hoi4_imagegen", additional_providers: ["openai_api"], route_settings: {}, credential_references: {} } };
   if (scenario === "workflows") return { ...common, screen: "workflows", meshSelected: true, superEventsSelected: true, portraitPipeline: runpodPortrait, selectedComponents: [...common.selectedComponents, "workflow.3d", "workflow.super_events", "workflow.live_testing", ...portraitComponentIds] };
   if (scenario === "mcp") return { ...common, screen: "mcp", meshSelected: true, meshKeyStatus: "present", selectedComponents: [...common.selectedComponents, "workflow.3d"] };
   if (scenario === "git") return { ...common, screen: "git", gitOnlineAction: "create_public_github", gitHubRepository: "atlantis-rising" };

@@ -526,6 +526,9 @@ pub(crate) fn prepare(
                 recorded.installed_package_tree_sha256.clone();
             chosen.image.installed_package_lock_sha256 =
                 recorded.installed_package_lock_sha256.clone();
+            chosen.image.installed_release_version = recorded.installed_release_version.clone();
+            chosen.image.installed_release_tree_sha256 =
+                recorded.installed_release_tree_sha256.clone();
         }
     }
     let (identity, conventions, provenance) = match (maintenance, lock.as_ref(), project.as_ref()) {
@@ -1218,6 +1221,7 @@ fn readiness_checks(
                     "{name} reads its key from the operating-system credential store. A browser cannot save it there; add it with the desktop app's image settings."
                 ),
                 "chatgpt_subscription" => format!("{name} needs your ChatGPT sign-in in the provider's own tool."),
+                "chatgpt_login" => format!("{name} is a program the desktop app installs and signs in for you. Open this mod there to install it."),
                 "local" => format!("{name} needs its server running on this computer."),
                 "none" | "manual" => continue,
                 _ => format!("Finish {name}'s own setup before generating images."),

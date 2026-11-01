@@ -16,7 +16,7 @@ Follow these steps to prepare a new or existing mod for AI-assisted development.
 
 6. **Choose your coding clients.** On **Coding environments**, choose any supported client as your primary one, then select any other clients you use. Setup prepares matching instructions, tools, and settings for the clients you select. [Screenshot](screenshots/15-coding-environments.png)
 
-7. **Choose an image provider.** Pick a main provider and add optional providers if you want them. ChatGPT through GPTImage is ready as the default route; other choices include API services, local image tools, Codex image generation when Codex is selected, and making art yourself. The app keeps API keys in the Windows credential store, macOS Keychain or Linux Secret Service. Change providers later in **Update and repair**. [Screenshot](screenshots/16-image-generation.png)
+7. **Choose an image provider.** Pick a main provider and add optional providers if you want them. The ChatGPT sign-in through hoi4-imagegen is the default route (Setup installs it, then you sign in on the last screen); other choices include API services, local image tools, Codex image generation when Codex is selected, and making art yourself. The app keeps API keys in the Windows credential store, macOS Keychain or Linux Secret Service. Change providers later in **Update and repair**. [Screenshot](screenshots/16-image-generation.png)
 
 8. **Choose components.** On **Choose what to install**, review the project instructions, skills, subagents, tools, and offline Paradox wiki. Required items stay selected. [Screenshot](screenshots/04-components.png)
 

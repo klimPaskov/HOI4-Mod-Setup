@@ -258,16 +258,16 @@ describe("HOI4 Mod Setup wizard", () => {
       return <ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
     }
     render(<ControlledImageStep />);
-    expect(screen.getByRole("radio", { name: /ChatGPT subscription \(GPTImage\)/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /ChatGPT sign-in and API keys \(hoi4-imagegen\)/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /OpenAI Images API/ })).not.toBeChecked();
     expect(screen.getAllByLabelText("Add as an optional provider", { selector: "input" })[0]).toBeChecked();
-    expect(screen.getByText(/No separate image API bill/)).toBeInTheDocument();
+    expect(screen.getByText(/ChatGPT plan limits/)).toBeInTheDocument();
     expect(screen.getByLabelText("Model")).toHaveValue("gpt-image-2.5-sunburst");
     fireEvent.change(screen.getByLabelText("Model"), { target: { value: "gpt-image-2" } });
     expect(screen.getByLabelText("Model")).toHaveValue("gpt-image-2");
     fireEvent.click(screen.getByRole("radio", { name: /OpenAI Images API/ }));
     expect(screen.getByRole("radio", { name: /OpenAI Images API/ })).toBeChecked();
-    expect(screen.getByRole("radio", { name: /ChatGPT subscription \(GPTImage\)/ })).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: /ChatGPT sign-in and API keys \(hoi4-imagegen\)/ })).not.toBeChecked();
   });
 
   it("copies recent diagnostics for a failure report", async () => {
@@ -285,7 +285,7 @@ describe("HOI4 Mod Setup wizard", () => {
     const fixture = { ...documentationFixture(readyState()), primaryCodingEnvironment: "aider", additionalCodingEnvironments: [] as string[] };
     render(<ImageGenerationSetup state={fixture} update={vi.fn()} />);
     expect(screen.getByRole("radio", { name: /^None — I will make art myself/ })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: /ChatGPT subscription \(GPTImage\)/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /ChatGPT sign-in and API keys \(hoi4-imagegen\)/ })).toBeDisabled();
   });
 
   it("selects the manifest image components when the provider route changes", () => {
@@ -297,11 +297,11 @@ describe("HOI4 Mod Setup wizard", () => {
     }
 
     render(<ControlledImageStep />);
-    expect(imageGenerationComponentIds(fixture.imageGeneration, fixture.manifestPreview)).toContain("imagegen.gptimage");
-    expect(screen.getByLabelText("selected image components")).toHaveTextContent("imagegen.gptimage");
+    expect(imageGenerationComponentIds(fixture.imageGeneration, fixture.manifestPreview)).toContain("imagegen.hoi4_imagegen");
+    expect(screen.getByLabelText("selected image components")).toHaveTextContent("imagegen.hoi4_imagegen");
     fireEvent.click(screen.getByRole("radio", { name: /OpenAI Images API/ }));
     expect(screen.getByLabelText("selected image components")).toHaveTextContent("imagegen.runtime");
-    expect(screen.getByLabelText("selected image components")).not.toHaveTextContent("imagegen.gptimage");
+    expect(screen.getByLabelText("selected image components")).not.toHaveTextContent("imagegen.hoi4_imagegen");
   });
 
   it("sends image API keys to the OS vault bridge and clears the password draft", async () => {
@@ -313,10 +313,10 @@ describe("HOI4 Mod Setup wizard", () => {
       return <ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
     }
     render(<ControlledImageStep />);
-    const input = screen.getByLabelText("OpenAI API key");
+    const input = screen.getAllByLabelText("OpenAI API key")[0];
     fireEvent.change(input, { target: { value: "sk-test-image-key" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Store" })[0]);
-    await waitFor(() => expect(storeImageGenerationCredential).toHaveBeenCalledWith("openai_api", "api_key", "sk-test-image-key"));
+    await waitFor(() => expect(storeImageGenerationCredential).toHaveBeenCalledWith("hoi4_imagegen", "openai_api_key", "sk-test-image-key"));
     expect(await screen.findByText(/credential stored on this computer/i)).toBeInTheDocument();
     expect(input).toHaveValue("");
   });

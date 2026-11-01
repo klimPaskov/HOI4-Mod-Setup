@@ -543,7 +543,9 @@ pub fn remove_release(
         return Ok(RemoveResult::ModifiedKept);
     }
     let _ = relative;
-    // Drop the install root once the last version is gone.
+    // Drop the install root once the last version is gone. The handle is
+    // released first: Windows will not delete a directory that is held open.
+    drop(install_root);
     let _ = project.remove_dir_if_empty(route::INSTALL_ROOT);
     Ok(RemoveResult::Removed)
 }

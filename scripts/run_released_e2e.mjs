@@ -151,7 +151,7 @@ async function commonSetup() {
   await record("image-provider"); await next();
   await at("Choose what to install");
   await expect(page.getByRole("button", { name: /Image provider MCP adapter/ })).toHaveAttribute("aria-pressed", fresh ? "false" : "true");
-  await expect(page.getByRole("button", { name: /GPTImage MCP source/ })).toHaveAttribute("aria-pressed", fresh ? "true" : "false");
+  await expect(page.getByRole("button", { name: /hoi4-imagegen image server/ })).toHaveAttribute("aria-pressed", fresh ? "true" : "false");
   await record("selected-components"); await next();
   await at("Optional workflows");
   await expect(page.getByRole("switch", { name: /^HOI4 Live Tools/ })).toBeVisible();
@@ -531,8 +531,8 @@ try {
       const dimensions = await page.evaluate(async (base64) => { const image = new Image(); image.src = `data:image/png;base64,${base64}`; await image.decode(); return [image.naturalWidth, image.naturalHeight]; }, png.toString("base64"));
       assert.deepEqual(dimensions, [600, 600]);
       assert.equal(readiness.checks.find((check) => check.id === "launcher.registration").status, "pass");
-      assert.equal(lock.image_generation.primary_provider, "gptimage");
-      assert.ok(lock.image_generation.installed_package_tree_sha256);
+      assert.equal(lock.image_generation.primary_provider, "hoi4_imagegen");
+      assert.ok(lock.image_generation.installed_release_tree_sha256);
     } else {
       result.preservation = await assertOriginals(project, original, { gitignoreText });
       assert.equal(readiness.checks.find((check) => check.id === "launcher.registration").status, "not_selected");

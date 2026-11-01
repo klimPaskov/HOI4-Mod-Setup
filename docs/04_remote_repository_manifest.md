@@ -203,6 +203,59 @@ Disjoint tree components may share a standard managed destination directory such
 
 The application creates a reviewed output such as a descriptor, adapted AGENTS, or preference state.
 
+### Release binary image provider
+
+An image provider whose `route.kind` is `release_binary` installs one program
+from a per-platform GitHub release instead of repository files. The route
+declares `release_binary` beside the usual route fields (`auth_method` is
+`chatgpt_login`, `component_id` is `imagegen.hoi4_imagegen`, `server_id` is
+`hoi4_imagegen`, `package_version` equals the release version):
+
+```json
+"release_binary": {
+  "version": "0.2.0",
+  "install_root": ".tools/image_generation/hoi4-imagegen",
+  "targets": {
+    "x86_64-pc-windows-msvc": {
+      "url": "https://github.com/klimPaskov/hoi4-imagegen-mcp/releases/download/v0.2.0/hoi4-imagegen-v0.2.0-x86_64-pc-windows-msvc.zip",
+      "sha256": "<64 lowercase hex>",
+      "size": 12345678,
+      "archive": "zip",
+      "entries": {
+        "mcp": "hoi4-imagegen-v0.2.0-x86_64-pc-windows-msvc/hoi4-imagegen-mcp.exe",
+        "cli": "hoi4-imagegen-v0.2.0-x86_64-pc-windows-msvc/hoi4-imagegen.exe"
+      }
+    }
+  }
+}
+```
+
+Targets are `x86_64-pc-windows-msvc` (`zip`), `aarch64-apple-darwin`,
+`x86_64-apple-darwin`, `x86_64-unknown-linux-gnu` and
+`aarch64-unknown-linux-gnu` (`tar.gz`). A target may be omitted; its platform
+is then reported as unsupported. Validation is strict and the app derives the
+only acceptable `url` from the version and target, so the repository must be
+`klimPaskov/hoi4-imagegen-mcp`, the host `github.com`, the path a release
+download of `v<version>`, with no query, port or credentials. The component
+`imagegen.hoi4_imagegen` is a `generated` component with no `expected_files`;
+it exists so selection, dependency and readiness handling treat the provider
+like any other image component. Both format 5 and format 6 schemas accept the
+route.
+
+The app downloads only the declared URL (following at most four redirects to
+`objects.githubusercontent.com` or `release-assets.githubusercontent.com`),
+checks size and SHA-256 before it opens the archive, refuses an archive with
+any traversal, absolute, link, encrypted or oversized entry, extracts only the
+two declared entries, and installs them in
+`.tools/image_generation/hoi4-imagegen/<version>/` (executable on macOS and
+Linux). It then runs `hoi4-imagegen --version` and requires the declared
+version. An update installs the new version beside the old one, retargets the
+client entries, and removes the old version only after the check passed and
+only while its files still hash to what the lock recorded. The retired
+`local_package` GPTImage route (`imagegen.gptimage`, `hoi4_image_gptimage`) is
+never installed; an older manifest that lists it is accepted and its provider
+is ignored with a message.
+
 ## Destination ownership
 
 - `managed`: remote file, replace only when local matches installed hash

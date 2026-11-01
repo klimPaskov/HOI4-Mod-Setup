@@ -2809,6 +2809,7 @@ fn gptimage_bootstrap_outcome(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GptimageCleanupResult {
     Removed,
     AlreadyAbsent,
@@ -9127,20 +9128,24 @@ mod tests {
     #[test]
     fn removal_never_plans_a_provider_bootstrap() {
         let selection = ImageGenerationSelection {
-            primary_provider: "gptimage".into(),
+            primary_provider: hoi4_setup_core::release_binary::PROVIDER_ID.into(),
             ..Default::default()
         };
         assert!(provider_bootstrap_selected(
             "repair",
             Some(&selection),
-            "gptimage"
+            hoi4_setup_core::release_binary::PROVIDER_ID
         ));
         assert!(!provider_bootstrap_selected(
             "remove",
             Some(&selection),
-            "gptimage"
+            hoi4_setup_core::release_binary::PROVIDER_ID
         ));
-        assert!(!provider_bootstrap_selected("update", None, "gptimage"));
+        assert!(!provider_bootstrap_selected(
+            "update",
+            None,
+            hoi4_setup_core::release_binary::PROVIDER_ID
+        ));
     }
 
     #[test]
