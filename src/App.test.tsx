@@ -1287,6 +1287,24 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(vi.mocked(scanProject).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(buildMaintenancePlanResult).mock.invocationCallOrder[0]);
   });
 
+  it("repairs with the installed live-testing choice, not the wizard default", async () => {
+    enableTauriRuntime();
+    window.__HOI4_DOCUMENTATION_STATE__ = {
+      ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity },
+      projectPathsOverridden: true, screen: "update", scanContext: undefined,
+      liveTesting: { provider: "clausewitz_mcp", linux_ready: false, wsl_distribution: "", ssh_host: "" },
+    };
+    vi.mocked(scanProject).mockResolvedValue({
+      findings: [{ id: "installation.managed", value: JSON.stringify({ present: true, valid: true, component_ids: ["core.agents"], live_testing: { provider: "none", linux_ready: false, wsl_distribution: "", ssh_host: "" } }) }],
+      scanId: "live", projectRoot: "C:\mods\cold-war-curtain", partial: false, cancelled: false, limitsHit: [], completedAt: "2026-10-14T00:00:00Z",
+    } as never);
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /Repair installation/ }));
+    await waitFor(() => expect(buildMaintenancePlanResult).toHaveBeenCalled());
+    const sent = vi.mocked(buildMaintenancePlanResult).mock.calls.at(-1)!;
+    expect(sent[9]).toMatchObject({ provider: "none" });
+  });
+
   it("uses the fresh installed snapshot without overwriting the requested workflow", async () => {
     enableTauriRuntime();
     window.__HOI4_DOCUMENTATION_STATE__ = {
