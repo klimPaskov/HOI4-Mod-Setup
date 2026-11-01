@@ -2,7 +2,7 @@
 
 HOI4 Mod Setup follows semantic versioning.
 
-## Unreleased
+## 0.8.4 - 2026-11-01
 
 - Accept the kit's HOI4 wiki folder under its new name. The kit renames `paradox_wiki/` to `hoi4_wiki/`, and every released build rejected a manifest with any other wiki destination. The manifest may now declare `hoi4_wiki/` or `paradox_wiki/`, scans, readiness, file checks, ChatGPT sources and the managed `.gitignore` block treat both names as the wiki, and the wiki component is shown as "HOI4 wiki (kit)". Updating or repairing a project installed under `paradox_wiki/` installs `hoi4_wiki/`, removes the old pages that you never edited and the emptied old folders, and keeps every page you edited (it is listed for review). Release this version before the kit publishes its renamed manifest, because older builds cannot read it.
 
