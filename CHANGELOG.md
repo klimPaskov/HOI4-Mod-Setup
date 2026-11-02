@@ -8,9 +8,11 @@ HOI4 Mod Setup follows semantic versioning.
 - Offer an optional ChatGPT sign-in on the Ready screen. Setup shows the program's risk note (`login-risk-note`), and after the user confirms it launches `hoi4-imagegen login --accept-risk` and reads `login-status`; the program owns the browser step and the keychain tokens. Optional OpenAI, Gemini, fal and ComfyUI keys are stored in the credential store and read from there by the program itself; Setup also passes them to the `hoi4-imagegen doctor` process it starts.
 - Retire the GPTImage route. Setup no longer installs it and no longer runs its bootstrap. An existing install's managed `hoi4_image_gptimage` entry is replaced by `hoi4_imagegen` on update, and its recorded dependency tree is still cleaned up. A setup package that lists only GPTImage is accepted, and the provider is ignored with a message.
 
-## 0.8.4 - 2026-11-01
+## 0.8.5 - 2026-11-02
 
 - Accept the kit's HOI4 wiki folder under its new name. The kit renames `paradox_wiki/` to `hoi4_wiki/`, and every released build rejected a manifest with any other wiki destination. The manifest may now declare `hoi4_wiki/` or `paradox_wiki/`, scans, readiness, file checks, ChatGPT sources and the managed `.gitignore` block treat both names as the wiki, and the wiki component is shown as "HOI4 wiki (kit)". Updating or repairing a project installed under `paradox_wiki/` installs `hoi4_wiki/`, removes the old pages that you never edited and the emptied old folders, and keeps every page you edited (it is listed for review). Release this version before the kit publishes its renamed manifest, because older builds cannot read it.
+
+## 0.8.4 - 2026-11-01
 
 - Show the Apache 2.0 license agreement as a page of the Windows installer and fill in the installer's publisher, copyright, and description. This does not remove Windows SmartScreen's "unknown publisher" warning; that needs a certificate from a trusted authority (see RELEASING.md, Signing configuration).
 
