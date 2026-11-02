@@ -355,7 +355,7 @@ pub fn adapt_image_only_client_config_for(
         let text = std::str::from_utf8(bytes).map_err(|error| {
             AppError::Source(format!("Codex configuration is not UTF-8: {error}"))
         })?;
-        let mut config = text.parse::<toml::Value>().map_err(|error| {
+        let mut config = toml::from_str::<toml::Value>(text).map_err(|error| {
             AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
         })?;
         let table = config
@@ -664,12 +664,12 @@ pub fn merge_image_client_config(
                 "coding client TOML configuration is not UTF-8: {error}"
             ))
         })?;
-        let mut incoming_value = incoming_text.parse::<toml::Value>().map_err(|error| {
+        let mut incoming_value = toml::from_str::<toml::Value>(incoming_text).map_err(|error| {
             AppError::Source(format!(
                 "coding client TOML configuration is not valid TOML: {error}"
             ))
         })?;
-        let local_value = local_text.parse::<toml::Value>().map_err(|error| {
+        let local_value = toml::from_str::<toml::Value>(local_text).map_err(|error| {
             AppError::Source(format!(
                 "coding client TOML configuration is not valid TOML: {error}"
             ))

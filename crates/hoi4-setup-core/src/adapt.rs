@@ -124,7 +124,7 @@ fn adapt_gfx_settings(bytes: &[u8], identity: &ProjectIdentity) -> Vec<u8> {
 pub fn adapt_subagent_for_spawn(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|error| AppError::Source(format!("subagent definition is not UTF-8: {error}")))?;
-    let mut value = text.parse::<toml::Value>().map_err(|error| {
+    let mut value = toml::from_str::<toml::Value>(text).map_err(|error| {
         AppError::Source(format!("subagent definition is not valid TOML: {error}"))
     })?;
     if let Some(fork_context) = value.get("fork_context").and_then(toml::Value::as_bool) {
@@ -153,7 +153,7 @@ pub fn adapt_subagent_for_spawn(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
             "adapted subagent definition could not be written: {error}"
         ))
     })?;
-    rendered.parse::<toml::Value>().map_err(|error| {
+    toml::from_str::<toml::Value>(&rendered).map_err(|error| {
         AppError::Source(format!("adapted subagent definition is invalid: {error}"))
     })?;
     Ok(rendered.into_bytes())
@@ -436,7 +436,7 @@ pub fn adapt_portrait_config_source(
             "portrait provider configuration is not UTF-8: {error}"
         ))
     })?;
-    let mut config = text.parse::<toml::Value>().map_err(|error| {
+    let mut config = toml::from_str::<toml::Value>(text).map_err(|error| {
         AppError::Source(format!(
             "portrait provider configuration is not valid TOML: {error}"
         ))
@@ -526,7 +526,7 @@ pub fn adapt_portrait_config_source(
             "adapted portrait provider configuration could not be written: {error}"
         ))
     })?;
-    rendered.parse::<toml::Value>().map_err(|error| {
+    toml::from_str::<toml::Value>(&rendered).map_err(|error| {
         AppError::Source(format!(
             "adapted portrait provider configuration is invalid: {error}"
         ))
@@ -606,7 +606,7 @@ pub fn adapt_codex_config(
     let bytes = adapt_optional_portrait_section(bytes, portrait.enabled)?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|error| AppError::Source(format!("Codex configuration is not UTF-8: {error}")))?;
-    let mut config = text.parse::<toml::Value>().map_err(|error| {
+    let mut config = toml::from_str::<toml::Value>(text).map_err(|error| {
         AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
     })?;
     if let Some(table) = config.as_table_mut() {
@@ -732,7 +732,7 @@ pub fn adapt_codex_config(
             "adapted Codex configuration could not be written: {error}"
         ))
     })?;
-    rendered.parse::<toml::Value>().map_err(|error| {
+    toml::from_str::<toml::Value>(&rendered).map_err(|error| {
         AppError::Source(format!("adapted Codex configuration is invalid: {error}"))
     })?;
     Ok(rendered.into_bytes())

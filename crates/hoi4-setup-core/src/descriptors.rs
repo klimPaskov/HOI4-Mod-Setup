@@ -290,7 +290,7 @@ pub fn placeholder_thumbnail_png() -> Result<Vec<u8>, AppError> {
         let mut encoder = png::Encoder::new(&mut bytes, SIDE, SIDE);
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
-        encoder.set_compression(png::Compression::Best);
+        encoder.set_compression(png::Compression::High);
         let mut writer = encoder.write_header().map_err(|error| {
             AppError::InvalidInput(format!("thumbnail header could not be encoded: {error}"))
         })?;
@@ -321,7 +321,9 @@ pub fn validate_thumbnail_png(bytes: &[u8]) -> Result<(u32, u32), AppError> {
             "thumbnail dimensions are outside the supported range".into(),
         ));
     }
-    let output_size = reader.output_buffer_size();
+    let output_size = reader.output_buffer_size().ok_or_else(|| {
+        AppError::InvalidInput("thumbnail dimensions are outside the supported range".into())
+    })?;
     let mut output = vec![0_u8; output_size];
     reader.next_frame(&mut output).map_err(|error| {
         AppError::InvalidInput(format!("thumbnail could not be decoded: {error}"))

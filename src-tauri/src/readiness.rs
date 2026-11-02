@@ -180,7 +180,7 @@ fn valid_codex_subagent_tree(root: &Path) -> bool {
             let Ok(text) = fs::read_to_string(path) else {
                 return false;
             };
-            let Ok(value) = text.parse::<toml::Value>() else {
+            let Ok(value) = toml::from_str::<toml::Value>(&text) else {
                 return false;
             };
             match value.get("fork_context").and_then(toml::Value::as_bool) {
@@ -300,7 +300,7 @@ pub(crate) fn valid_coding_environment_with_mcp(
         // The Codex MCP route is checked by the dedicated Codex detection.
         return fs::read_to_string(project_root.join(".codex/config.toml"))
             .ok()
-            .is_some_and(|text| text.parse::<toml::Value>().is_ok())
+            .is_some_and(|text| toml::from_str::<toml::Value>(&text).is_ok())
             && valid_subagent_tree(project_root);
     }
     let Some(client) = crate::coding_environment::native_client(environment) else {
@@ -1612,7 +1612,7 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
     let codex_text = fs::read_to_string(project_root.join(".codex/config.toml")).ok();
     let codex_valid = codex_text
         .as_deref()
-        .is_some_and(|text| text.parse::<toml::Value>().is_ok());
+        .is_some_and(|text| toml::from_str::<toml::Value>(text).is_ok());
     let runtime_supported = matches!(Platform::current(), Platform::Windows | Platform::Linux);
     let mcp_unsupported = lock.as_ref().is_some_and(|lock| {
         lock.components.iter().any(|component| {

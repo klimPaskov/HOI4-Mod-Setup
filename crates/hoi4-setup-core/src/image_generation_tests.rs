@@ -54,7 +54,7 @@ fn existing_file(path: &str) -> Vec<u8> {
 
 fn entries(path: &str, bytes: &[u8]) -> serde_json::Map<String, Value> {
     if path.ends_with(".toml") {
-        let value: toml::Value = std::str::from_utf8(bytes).unwrap().parse().unwrap();
+        let value: toml::Value = toml::from_str(std::str::from_utf8(bytes).unwrap()).unwrap();
         return serde_json::to_value(value["mcp_servers"].clone())
             .unwrap()
             .as_object()
