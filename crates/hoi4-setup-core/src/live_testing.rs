@@ -226,10 +226,9 @@ pub fn adapt_config(
     };
     let selected = route(selection, platform)?;
     if mcp.format.is_toml() {
-        let mut config: toml::Value = std::str::from_utf8(bytes)
-            .map_err(|e| AppError::Source(e.to_string()))?
-            .parse()
-            .map_err(|e: toml::de::Error| AppError::Source(e.to_string()))?;
+        let text = std::str::from_utf8(bytes).map_err(|e| AppError::Source(e.to_string()))?;
+        let mut config: toml::Value =
+            toml::from_str(text).map_err(|e: toml::de::Error| AppError::Source(e.to_string()))?;
         let root = config
             .as_table_mut()
             .ok_or_else(|| AppError::Source("Codex configuration must be a table".into()))?;
@@ -600,7 +599,7 @@ mod tests {
                 let text = String::from_utf8(configured.clone()).unwrap();
                 assert!(text.contains("clausewitz_linux"), "{destination}");
                 if destination.ends_with(".toml") {
-                    let parsed: toml::Value = text.parse().unwrap();
+                    let parsed: toml::Value = toml::from_str(&text).unwrap();
                     assert_eq!(
                         parsed["mcp_servers"]["clausewitz_linux"]["startup_timeout_sec"]
                             .as_integer(),
@@ -614,7 +613,7 @@ mod tests {
                 assert!(!text.contains("hoi4-live"), "{destination}");
                 assert!(text.contains("unrelated"));
                 if mcp.format.is_toml() {
-                    let parsed: toml::Value = text.parse().unwrap();
+                    let parsed: toml::Value = toml::from_str(&text).unwrap();
                     assert_eq!(
                         parsed["mcp_servers"]["clausewitz_linux"]
                             .get("enabled")

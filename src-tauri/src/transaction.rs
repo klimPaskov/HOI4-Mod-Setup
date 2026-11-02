@@ -3693,7 +3693,7 @@ fn validate_managed_bytes(
     } else if lower.ends_with(".toml") {
         let text = std::str::from_utf8(bytes)
             .map_err(|_| AppError::Transaction(format!("TOML validation failed: {destination}")))?;
-        text.parse::<toml::Value>().map_err(|error| {
+        toml::from_str::<toml::Value>(text).map_err(|error| {
             AppError::Transaction(format!("TOML validation failed for {destination}: {error}"))
         })?;
     } else if lower.ends_with(".json") {
@@ -5620,7 +5620,7 @@ fn build_transaction_readiness(
         || (codex_path.is_file()
             && fs::read_to_string(codex_path)
                 .ok()
-                .and_then(|text| text.parse::<toml::Value>().ok())
+                .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
                 .is_some());
     let wiki_pages = plan.wiki_required_pages.clone();
     let wiki_folder = crate::readiness::wiki_folder(project_root);

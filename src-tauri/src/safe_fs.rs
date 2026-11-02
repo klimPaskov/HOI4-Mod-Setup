@@ -1717,7 +1717,7 @@ fn set_delete_disposition(file: &File) -> io::Result<()> {
             return Err(error);
         }
     }
-    let disposition = FILE_DISPOSITION_INFO { DeleteFile: 1 };
+    let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
     let result = unsafe {
         SetFileInformationByHandle(
             file.as_raw_handle() as HANDLE,
@@ -1876,7 +1876,7 @@ fn windows_rename_by_handle(source_file: &File, destination_path: &Path) -> io::
     unsafe {
         let buffer_pointer = buffer.as_mut_ptr() as *mut u8;
         let info = buffer_pointer as *mut FILE_RENAME_INFO;
-        (*info).Anonymous.ReplaceIfExists = 0;
+        (*info).Anonymous.ReplaceIfExists = false;
         (*info).RootDirectory = std::ptr::null_mut();
         (*info).FileNameLength = name_bytes as u32;
         std::ptr::copy_nonoverlapping(

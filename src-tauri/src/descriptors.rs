@@ -421,7 +421,7 @@ mod tests {
         assert_eq!(validate_thumbnail_png(&bytes).unwrap(), (600, 600));
         let decoder = png::Decoder::new(Cursor::new(bytes));
         let mut reader = decoder.read_info().unwrap();
-        let mut pixels = vec![0_u8; reader.output_buffer_size()];
+        let mut pixels = vec![0_u8; reader.output_buffer_size().unwrap()];
         let frame = reader.next_frame(&mut pixels).unwrap();
         assert_eq!(frame.color_type, png::ColorType::Rgb);
         assert!(pixels[..frame.buffer_size()]

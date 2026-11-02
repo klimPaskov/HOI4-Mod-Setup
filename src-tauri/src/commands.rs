@@ -8737,7 +8737,7 @@ mod tests {
             },
         )
         .unwrap();
-        let adapted: toml::Value = std::str::from_utf8(&adapted).unwrap().parse().unwrap();
+        let adapted: toml::Value = toml::from_str(std::str::from_utf8(&adapted).unwrap()).unwrap();
         assert!(adapted["mcp_servers"]
             .get("hoi4_image_openai_api")
             .is_some());
@@ -8841,13 +8841,14 @@ mod tests {
         let route = &vscode["servers"]["hoi4_image_openai_api"];
         assert_eq!(route["type"], "stdio");
         assert_eq!(route["cwd"], "${workspaceFolder}");
-        let grok: toml::Value = std::str::from_utf8(&adapt_for(
-            "grok_build",
-            ".grok/config.toml",
-            b"[mcp_servers.hoi4_image_old_provider]\ncommand = \"old\"\n",
-        ))
-        .unwrap()
-        .parse()
+        let grok: toml::Value = toml::from_str(
+            std::str::from_utf8(&adapt_for(
+                "grok_build",
+                ".grok/config.toml",
+                b"[mcp_servers.hoi4_image_old_provider]\ncommand = \"old\"\n",
+            ))
+            .unwrap(),
+        )
         .unwrap();
         let route = &grok["mcp_servers"]["hoi4_image_openai_api"];
         assert_eq!(route["cwd"].as_str(), Some("."));
@@ -10017,7 +10018,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
             &test_portrait_config("disabled", false),
         )
         .unwrap();
-        let value: toml::Value = String::from_utf8(adapted).unwrap().parse().unwrap();
+        let value: toml::Value = toml::from_str(&String::from_utf8(adapted).unwrap()).unwrap();
         assert_eq!(
             value["mcp_servers"]["hoi4_agent_tools"]["env"]["HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES"]
                 .as_str(),
@@ -10062,11 +10063,12 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
             }
         }
         let source = b"[mcp_servers.hoi4_agent_tools]\ncommand = 'hoi4-agent-tools.cmd'\nenv = { HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES = '30' }\n[mcp_servers.custom]\ncommand = 'keep-me'\n";
-        let value: toml::Value = String::from_utf8(
-            retarget_client_config(source, ".codex/config.toml", Some(&launch)).unwrap(),
+        let value: toml::Value = toml::from_str(
+            &String::from_utf8(
+                retarget_client_config(source, ".codex/config.toml", Some(&launch)).unwrap(),
+            )
+            .unwrap(),
         )
-        .unwrap()
-        .parse()
         .unwrap();
         assert_eq!(
             value["mcp_servers"]["hoi4_agent_tools"]["command"].as_str(),
@@ -10076,11 +10078,11 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
             value["mcp_servers"]["custom"]["command"].as_str(),
             Some("keep-me")
         );
-        let removed: toml::Value =
-            String::from_utf8(retarget_client_config(source, ".codex/config.toml", None).unwrap())
-                .unwrap()
-                .parse()
-                .unwrap();
+        let removed: toml::Value = toml::from_str(
+            &String::from_utf8(retarget_client_config(source, ".codex/config.toml", None).unwrap())
+                .unwrap(),
+        )
+        .unwrap();
         assert!(removed["mcp_servers"].get("hoi4_agent_tools").is_none());
         assert_eq!(
             removed["mcp_servers"]["custom"]["command"].as_str(),
@@ -10088,11 +10090,12 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         );
         // Grok Build shares the TOML route shape; an unregistered or legacy
         // path is never rewritten.
-        let grok: toml::Value = String::from_utf8(
-            retarget_client_config(source, ".grok/config.toml", Some(&launch)).unwrap(),
+        let grok: toml::Value = toml::from_str(
+            &String::from_utf8(
+                retarget_client_config(source, ".grok/config.toml", Some(&launch)).unwrap(),
+            )
+            .unwrap(),
         )
-        .unwrap()
-        .parse()
         .unwrap();
         assert_eq!(
             grok["mcp_servers"]["hoi4_agent_tools"]["command"].as_str(),
@@ -10528,7 +10531,7 @@ Work only on the files named by the parent.
 "#;
         let adapted = adapt_subagent_for_spawn(source).unwrap();
         let text = String::from_utf8(adapted).unwrap();
-        let value = text.parse::<toml::Value>().unwrap();
+        let value = toml::from_str::<toml::Value>(&text).unwrap();
         assert!(value
             .get("developer_instructions")
             .and_then(toml::Value::as_str)

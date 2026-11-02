@@ -334,7 +334,7 @@ fn package_tree_identity(files: &[(String, Vec<u8>)]) -> (String, u64) {
         digest.update([0]);
         digest.update(bytes);
     }
-    (format!("{:x}", digest.finalize()), files.len() as u64)
+    (hex::encode(digest.finalize()), files.len() as u64)
 }
 
 /// Hash a link-free installed package directory without copying it. This is

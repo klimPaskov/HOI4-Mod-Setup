@@ -72,5 +72,7 @@ describe("dropped and picked folders", () => {
     const paths = selection.files.map((file) => file.path);
     expect(paths.slice(0, 2)).toEqual(["Zebra.txt", "apple.txt"]);
     expect(paths).toEqual([...paths].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)));
-  });
+    // The 2 second budget above guards the ordering itself; the test timeout only
+    // covers building and checking 40,000 paths on a loaded runner.
+  }, 30_000);
 });

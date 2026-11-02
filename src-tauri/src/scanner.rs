@@ -2759,7 +2759,7 @@ fn detect_agentic_files(
         .iter()
         .filter(|file| {
             let text = String::from_utf8_lossy(&file.bytes);
-            let Ok(value) = text.parse::<toml::Value>() else {
+            let Ok(value) = toml::from_str::<toml::Value>(&text) else {
                 return true;
             };
             // Mirror the installer: a subagent either declares a top-level
@@ -2805,7 +2805,7 @@ fn detect_agentic_files(
     let codex_parse = codex_observation.and_then(|file| {
         String::from_utf8(file.bytes.clone())
             .ok()
-            .and_then(|text| text.parse::<toml::Value>().ok())
+            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
     });
     let mcp_servers = codex_parse
         .as_ref()
@@ -2976,7 +2976,7 @@ fn detect_coding_environments(
                 if format.is_toml() {
                     std::str::from_utf8(&file.bytes)
                         .ok()
-                        .is_some_and(|text| text.parse::<toml::Value>().is_ok())
+                        .is_some_and(|text| toml::from_str::<toml::Value>(text).is_ok())
                 } else {
                     crate::native_mcp::parse_json_lenient(&file.bytes).is_ok()
                 }
