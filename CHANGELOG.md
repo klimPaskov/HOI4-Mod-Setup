@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.9.1 - 2026-11-02
+
 - Install hoi4-imagegen on a first install. A new project or an import planned no download for the `release_binary` image route, because that route declares no repository command for the manifest scan to find. The plan showed the provider as ready, but nothing was installed, and the project lock held no `installed_release_version` or `installed_release_tree_sha256`, so the ChatGPT sign-in, an update and a removal could not find the install. A first install now plans the same reviewed, hash-checked download that update and repair already planned, and the lock records the version and the hash of the installed files. A project installed with 0.9.0 has no receipt: run **Repair** to install it.
 - Move between two kit revisions that spell a file name with different case. Maintenance compared the installed and the incoming file lists exactly, so a file renamed only in case (the kit's `bop_fin_*.png` and `bop_FIN_*.png`) was planned twice, as a replacement and as an obsolete removal. The transaction refused the plan as "duplicate plan destination", and on Windows or macOS the removal would have deleted the file just written. Maintenance now compares paths ignoring case, the way the plan validates them, and plans one operation per file.
 - Move a project back to a kit revision that still uses `paradox_wiki/`. The emptied `hoi4_wiki/` folder is removed only after the update commits, and the readiness check inside the update chose it because it existed, so it reported every required wiki page missing ("wiki.coverage: 11 required wiki pages are missing") and blocked the lock. A wiki folder that holds pages now wins over an empty one.
