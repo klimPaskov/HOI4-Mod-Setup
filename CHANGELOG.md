@@ -2,7 +2,7 @@
 
 HOI4 Mod Setup follows semantic versioning.
 
-## Unreleased
+## 0.9.0 - 2026-11-02
 
 - Install hoi4-imagegen-mcp as the image provider. The source manifest can declare a per-platform release archive (`release_binary` route); Setup downloads only that URL, checks its size and SHA-256 before opening the archive, extracts the two declared programs safely, installs them under `.tools/image_generation/hoi4-imagegen/<version>/`, runs `hoi4-imagegen --version`, and registers the `hoi4_imagegen` server in every selected client's project MCP file, keeping your own entries. An update installs the new version beside the old one, retargets the entries, and removes the old version only after the check passed and only while it is unchanged.
 - Offer an optional ChatGPT sign-in on the Ready screen. Setup shows the program's risk note (`login-risk-note`), and after the user confirms it launches `hoi4-imagegen login --accept-risk` and reads `login-status`; the program owns the browser step and the keychain tokens. Optional OpenAI, Gemini, fal and ComfyUI keys are stored in the credential store and read from there by the program itself; Setup also passes them to the `hoi4-imagegen doctor` process it starts.
