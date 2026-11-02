@@ -235,7 +235,22 @@ pub(crate) fn build_plan_with(
         .iter()
         .map(|component| (component.id.as_str(), component))
         .collect::<std::collections::HashMap<_, _>>();
-    let external_actions = manifest_external_actions(&resolution.manifest, &download_selected);
+    let mut external_actions = manifest_external_actions(&resolution.manifest, &download_selected);
+    // The hoi4-imagegen release binary declares no repository command, so the
+    // manifest scan above never finds its install. Plan the reviewed download
+    // here, for a new project and for an import alike. Its component state
+    // tells the transaction to run it and record the receipt in the lock.
+    let imagegen_state =
+        match crate::imagegen_actions::plan_install(&resolution.manifest, &image_generation)? {
+            crate::imagegen_actions::InstallPlanning::NotSelected => None,
+            crate::imagegen_actions::InstallPlanning::Unsupported(_) => {
+                Some("unsupported_platform")
+            }
+            crate::imagegen_actions::InstallPlanning::Install(action) => {
+                external_actions.push(*action);
+                Some("selected_pending")
+            }
+        };
     let mut operations = Vec::new();
     let mut conflicts = Vec::new();
     let mut prepared = Vec::new();
@@ -732,6 +747,12 @@ pub(crate) fn build_plan_with(
             "ready".into()
         };
         optional_workflows.insert(component.id.clone(), selected_state);
+    }
+    if let Some(state) = imagegen_state {
+        optional_workflows.insert(
+            hoi4_setup_core::release_binary::COMPONENT_ID.into(),
+            state.into(),
+        );
     }
     let (backup_root, staging_root) = host.transaction_roots()?;
     let mut plan = InstallationPlan {

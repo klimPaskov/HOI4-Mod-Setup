@@ -72,10 +72,23 @@ description: Fixture content for {path}
 
 impl SourceFixture {
     pub(crate) fn new() -> Self {
-        let mut manifest: Value = serde_json::from_slice(include_bytes!(
-            "../../../docs/source-manifest/hoi4-mod-setup.manifest.json"
-        ))
-        .expect("the checked-in manifest is JSON");
+        Self::from_manifest(
+            serde_json::from_slice(include_bytes!(
+                "../../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+            ))
+            .expect("the checked-in manifest is JSON"),
+        )
+    }
+
+    /// The package of a kit that offers the hoi4-imagegen release route in
+    /// place of GPTImage, with the given release `targets` at `version`.
+    pub(crate) fn with_hoi4_imagegen(version: &str, targets: Value) -> Self {
+        Self::from_manifest(
+            hoi4_setup_core::test_support::manifest_value_with_hoi4_imagegen(version, targets),
+        )
+    }
+
+    fn from_manifest(mut manifest: Value) -> Self {
         let mut files = BTreeMap::new();
         let required_wiki_pages: Vec<String> = manifest["wiki"]["required_pages"]
             .as_array()

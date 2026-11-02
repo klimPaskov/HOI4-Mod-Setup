@@ -9403,6 +9403,15 @@ pub fn reinstall_operations(
         .collect()
 }
 
+/// The identity of a locked file for comparison with another source's list:
+/// where it lives, ignoring the case and Unicode form of its path.
+fn destination_key(file: &LockedFile) -> (bool, String) {
+    (
+        file.external,
+        canonical_relative_key(&file.path).unwrap_or_else(|_| file.path.clone()),
+    )
+}
+
 /// Plan an update against an exact incoming lock view. Existing unchanged
 /// files are replaceable, missing files are creates, and modified files stay
 /// skipped until the conflict engine supplies an explicit decision.
@@ -9411,6 +9420,18 @@ pub fn update_operations(
     incoming_files: &[LockedFile],
     project_root: &Path,
 ) -> Result<Vec<PlanOperation>, AppError> {
+    // Paths are compared the way the plan validates destinations: ignoring
+    // case. A source that only changes the case of a file name (the kit renamed
+    // `bop_fin_*.png` to `bop_FIN_*.png`) ships the same file, and on a
+    // case-insensitive disk an obsolete removal of the old spelling would
+    // delete the file just written under the new one.
+    let current_by_key: HashMap<(bool, String), &LockedFile> = current_lock
+        .files
+        .iter()
+        .map(|file| (destination_key(file), file))
+        .collect();
+    let incoming_keys: std::collections::HashSet<(bool, String)> =
+        incoming_files.iter().map(destination_key).collect();
     let mut operations: Vec<PlanOperation> = incoming_files
         .iter()
         .enumerate()
@@ -9421,10 +9442,7 @@ pub fn update_operations(
             } else {
                 None
             };
-            let previous_file = current_lock
-                .files
-                .iter()
-                .find(|current| current.path == file.path && current.external == file.external);
+            let previous_file = current_by_key.get(&destination_key(file)).copied();
             let previous = previous_file.map(|current| current.installed_sha256.as_str());
             let local_state = match (local_sha256.as_deref(), previous) {
                 (None, _) => LocalState::Absent,
@@ -9504,10 +9522,7 @@ pub fn update_operations(
         .collect::<Result<_, AppError>>()?;
     let server_ids = installer_mcp_server_ids(current_lock);
     for (index, file) in current_lock.files.iter().enumerate() {
-        if incoming_files
-            .iter()
-            .any(|incoming| incoming.path == file.path && incoming.external == file.external)
-        {
+        if incoming_keys.contains(&destination_key(file)) {
             continue;
         }
         let destination = locked_file_destination(project_root, file)?;
@@ -9860,6 +9875,24 @@ mod tests {
         app_root: &Path,
         installed: &InstallationLock,
     ) -> (InstallationPlan, InstallationLock) {
+        update_wiki_folder(
+            project_root,
+            app_root,
+            installed,
+            "paradox_wiki",
+            "hoi4_wiki",
+        )
+    }
+
+    /// Update an installation whose lock holds `from/` wiki pages against a
+    /// source that ships the same pages under `to/`.
+    fn update_wiki_folder(
+        project_root: &Path,
+        app_root: &Path,
+        installed: &InstallationLock,
+        from: &str,
+        to: &str,
+    ) -> (InstallationPlan, InstallationLock) {
         let mut update = ready_plan_without_wiki_pages(project_root);
         update.plan_id = Uuid::new_v4();
         update.maintenance_mode = Some("update".into());
@@ -9868,8 +9901,8 @@ mod tests {
             .iter()
             .cloned()
             .map(|mut file| {
-                if let Some(rest) = file.path.strip_prefix("paradox_wiki/") {
-                    file.path = format!("hoi4_wiki/{rest}");
+                if let Some(rest) = file.path.strip_prefix(&format!("{from}/")) {
+                    file.path = format!("{to}/{rest}");
                 }
                 file
             })
@@ -9952,6 +9985,40 @@ mod tests {
         );
     }
 
+    /// A maintenance move to an older kit revision ships the wiki under the
+    /// legacy `paradox_wiki/` again. The unedited `hoi4_wiki/` folder goes and
+    /// readiness reads the legacy folder that now holds the pages.
+    #[test]
+    fn moving_back_to_the_paradox_wiki_folder_replaces_the_hoi4_wiki_folder() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let installed = install_wiki_pages(project.path(), app.path(), "hoi4_wiki");
+
+        let (_, lock) = update_wiki_folder(
+            project.path(),
+            app.path(),
+            &installed,
+            "hoi4_wiki",
+            "paradox_wiki",
+        );
+
+        for page in wiki_page_names() {
+            assert!(
+                project.path().join("paradox_wiki").join(&page).is_file(),
+                "{page}"
+            );
+        }
+        assert!(!project.path().join("hoi4_wiki").exists());
+        assert!(!lock
+            .files
+            .iter()
+            .any(|file| file.path.starts_with("hoi4_wiki/")));
+        assert_eq!(
+            crate::readiness::wiki_folder(project.path()),
+            "paradox_wiki"
+        );
+    }
+
     #[test]
     fn updating_to_the_hoi4_wiki_folder_keeps_a_page_the_user_edited() {
         let project = tempdir().unwrap();
@@ -10021,6 +10088,60 @@ mod tests {
         assert!(update.operations.iter().all(|operation| {
             operation.action == OperationAction::Skip && operation.resolution.is_none()
         }));
+    }
+
+    /// A source that only changes the case of a shipped file name (the kit's
+    /// `bop_fin_*.png` and `bop_FIN_*.png`) must give one operation for it. Two
+    /// operations, a replacement and an obsolete removal, share one destination:
+    /// the plan is refused as a duplicate, and on a case-insensitive disk the
+    /// removal would delete the file written under the other spelling.
+    #[test]
+    fn a_case_only_rename_between_sources_is_one_operation_not_a_duplicate() {
+        let project = tempdir().unwrap();
+        let template: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let locked = |path: &str, bytes: &[u8]| {
+            let mut file = template.files[0].clone();
+            file.path = path.into();
+            file.external = false;
+            file.preserved_local = false;
+            file.ownership = Ownership::Managed;
+            file.source_path = path.into();
+            file.source_sha256 = sha256_bytes(bytes);
+            file.installed_sha256 = sha256_bytes(bytes);
+            file.installed_size = Some(bytes.len() as u64);
+            file.source_size = Some(bytes.len() as u64);
+            file
+        };
+        let dir = ".agents/skills/hoi4-feature-assets/assets/icons";
+        let newer = format!("{dir}/bop_FIN_side.png");
+        let older = format!("{dir}/bop_fin_side.png");
+        fs::create_dir_all(project.path().join(dir)).unwrap();
+        fs::write(project.path().join(&newer), b"png").unwrap();
+        let mut current_lock = template.clone();
+
+        // Both directions: the incoming source spells the name the other way.
+        for (installed, incoming) in [(&newer, &older), (&older, &newer)] {
+            current_lock.files = vec![locked(installed, b"png")];
+            let operations =
+                update_operations(&current_lock, &[locked(incoming, b"png")], project.path())
+                    .unwrap();
+            let destinations = operations
+                .iter()
+                .map(|operation| operation.destination.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(&destinations, &[incoming.clone()]);
+            // The check validate_plan makes on every plan.
+            hoi4_setup_core::text::validate_destination_set(&destinations).unwrap();
+            assert!(operations
+                .iter()
+                .all(|operation| operation.action != OperationAction::DeleteManaged));
+        }
+        // A file the source really dropped is still removed.
+        let operations = update_operations(&current_lock, &[], project.path()).unwrap();
+        assert_eq!(operations.len(), 1);
     }
 
     #[test]
@@ -13523,6 +13644,125 @@ description: Example skill.
         plan.operations[0].local_state = LocalState::Unmodified;
 
         validate_plan(&plan).unwrap();
+    }
+
+    /// A fresh install of the hoi4-imagegen release route runs the reviewed
+    /// install and the success lock records the version and tree hash that
+    /// cleanup and sign-in later rely on.
+    #[test]
+    fn fresh_install_records_the_hoi4_imagegen_receipt_in_the_lock() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (action, selection) = crate::imagegen_tests::arm_fake_release("0.2.0");
+        let mut plan = ready_plan(project.path());
+        plan.image_generation = Some(selection);
+        plan.optional_workflows.insert(
+            hoi4_setup_core::release_binary::COMPONENT_ID.into(),
+            "selected_pending".into(),
+        );
+        plan.external_actions = vec![action];
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+
+        let (journal, lock) = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                post_install_action_runner: Some(crate::imagegen_tests::fake_release_runner),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert!(
+            journal.stages[9]
+                .evidence
+                .iter()
+                .any(|item| item.contains("external-action:imagegen.hoi4_imagegen:ready")),
+            "the install action must run: {:?}",
+            journal.stages[9].evidence
+        );
+        let image = lock.image_generation.as_ref().unwrap();
+        assert_eq!(image.installed_release_version.as_deref(), Some("0.2.0"));
+        let tree = image.installed_release_tree_sha256.as_deref().unwrap();
+        // The saved lock on disk carries it too, not only the returned value.
+        let saved: InstallationLock = serde_json::from_slice(
+            &fs::read(project.path().join(".hoi4-mod-setup/install.lock.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            saved
+                .image_generation
+                .unwrap()
+                .installed_release_tree_sha256
+                .as_deref(),
+            Some(tree)
+        );
+
+        // An update to another version installs it, removes the version the lock
+        // recorded, and replaces the receipt.
+        let old_tree = tree.to_owned();
+        let (mut action, mut selection) = crate::imagegen_tests::arm_fake_release("0.3.0");
+        selection.installed_release_version = Some("0.2.0".into());
+        selection.installed_release_tree_sha256 = Some(old_tree.clone());
+        action.id = crate::imagegen_actions::INSTALL_ACTION_ID.into();
+        let mut update = plan.clone();
+        update.plan_id = Uuid::new_v4();
+        update.maintenance_mode = Some("update".into());
+        // The project files are unchanged; only the image server moves.
+        update.operations = update_operations(&lock, &lock.files.clone(), project.path()).unwrap();
+        let update_prepared = update
+            .operations
+            .iter()
+            .filter(|operation| {
+                operation.action == OperationAction::Create || operation.destination == "AGENTS.md"
+            })
+            .map(|operation| PreparedFile {
+                operation_id: operation.id.clone(),
+                destination: operation.destination.clone(),
+                bytes: b"safe".to_vec(),
+                expected_sha256: sha256_bytes(b"safe"),
+            })
+            .collect::<Vec<_>>();
+        update.image_generation = Some(selection);
+        update.external_actions = vec![
+            action,
+            crate::imagegen_actions::cleanup_action("0.2.0", &old_tree),
+        ];
+        let (_, updated) = run_test_transaction(
+            project.path(),
+            &update,
+            &update_prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                post_install_action_runner: Some(crate::imagegen_tests::fake_release_runner),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let image = updated.image_generation.unwrap();
+        assert_eq!(image.installed_release_version.as_deref(), Some("0.3.0"));
+        // The fake archives hold the same files, so the tree hash is unchanged;
+        // it is still the hash of what is on disk for the new version.
+        let (_, new_tree) = crate::release_install::installed_tree(project.path(), "0.3.0")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            image.installed_release_tree_sha256.as_deref(),
+            Some(new_tree.as_str())
+        );
+        let versions = project.path().join(".tools/image_generation/hoi4-imagegen");
+        assert!(versions.join("0.3.0").is_dir());
+        assert!(
+            !versions.join("0.2.0").exists(),
+            "the recorded old version is removed"
+        );
     }
 
     fn ready_three_d_action(

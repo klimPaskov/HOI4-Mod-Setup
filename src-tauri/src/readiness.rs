@@ -1101,9 +1101,35 @@ fn add_status_check(
 }
 
 /// The kit's HOI4 wiki folder in an installed project: `hoi4_wiki`, or the
-/// `paradox_wiki` name earlier kit versions used when only that exists.
+/// `paradox_wiki` name earlier kit versions used. A folder that holds a file
+/// wins over an empty one, because a transaction that moves between kit revisions with
+/// different wiki names leaves the emptied folder (and its subfolders) in
+/// place until it has committed, and readiness runs before that cleanup.
 pub(crate) fn wiki_folder(project_root: &Path) -> &'static str {
-    hoi4_setup_core::manifest::wiki_folder_in(|folder| project_root.join(folder).is_dir())
+    hoi4_setup_core::manifest::WIKI_FOLDERS
+        .into_iter()
+        .find(|folder| directory_holds_a_file(&project_root.join(folder), 0))
+        .unwrap_or_else(|| {
+            hoi4_setup_core::manifest::wiki_folder_in(|folder| project_root.join(folder).is_dir())
+        })
+}
+
+fn directory_holds_a_file(path: &Path, depth: usize) -> bool {
+    if depth > 32 || path_has_link_component(path) {
+        return false;
+    }
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_file() || (kind.is_dir() && directory_holds_a_file(&entry.path(), depth + 1)) {
+            return true;
+        }
+    }
+    false
 }
 
 const MAX_WIKI_FILES: usize = 100_000;
@@ -2581,6 +2607,20 @@ my notes
         fs::create_dir_all(project.path().join("paradox_wiki")).unwrap();
         assert_eq!(wiki_folder(project.path()), "paradox_wiki");
         fs::create_dir_all(project.path().join("hoi4_wiki")).unwrap();
+        assert_eq!(wiki_folder(project.path()), "hoi4_wiki");
+    }
+
+    #[test]
+    fn a_wiki_folder_with_pages_wins_over_an_emptied_one() {
+        let project = tempfile::tempdir().unwrap();
+        // A move from the hoi4_wiki layout back to a paradox_wiki revision
+        // leaves empty hoi4_wiki folders until the transaction has committed.
+        fs::create_dir_all(project.path().join("hoi4_wiki/extra")).unwrap();
+        fs::create_dir_all(project.path().join("paradox_wiki")).unwrap();
+        fs::write(project.path().join("paradox_wiki/Home.md"), b"page").unwrap();
+        assert_eq!(wiki_folder(project.path()), "paradox_wiki");
+        // With pages in both folders the current name is the wiki.
+        fs::write(project.path().join("hoi4_wiki/extra/Page.md"), b"page").unwrap();
         assert_eq!(wiki_folder(project.path()), "hoi4_wiki");
     }
 

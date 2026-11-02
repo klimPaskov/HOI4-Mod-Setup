@@ -657,3 +657,71 @@ fn a_linux_plan_needs_a_node_runtime_only_once_it_registers_the_mcp_package() {
     let error = session.build_plan(&unanalysed).unwrap_err().to_string();
     assert!(!error.contains("Node runtime"), "{error}");
 }
+
+/// A kit whose default image route is the hoi4-imagegen release binary plans
+/// the reviewed install on a first install, and the lock the transaction writes
+/// records the version and the hash of the installed files. Without the action
+/// nothing is downloaded and the lock has no receipt, so Sign in, update and
+/// removal cannot find the install.
+#[test]
+fn a_first_install_with_the_hoi4_imagegen_route_installs_it_and_records_the_receipt() {
+    use hoi4_setup_core::release_binary::COMPONENT_ID;
+
+    let targets = crate::imagegen_tests::armed_release_targets("0.2.0");
+    let mut hosted = hosted_with(SourceFixture::with_hoi4_imagegen("0.2.0", targets));
+    hosted.service = hosted
+        .service
+        .clone()
+        .with_post_install_runner(crate::imagegen_tests::fake_release_runner);
+    let session = hosted.session();
+    let root = existing_project(&hosted);
+    let mut state = fixture::planning_state("existing", &root, None, None);
+    analyze_existing(&session, &hosted.latest(), &root, &mut state);
+
+    let plan = session.build_plan(&state).unwrap();
+
+    assert_eq!(
+        plan.image_generation.as_ref().unwrap().primary_provider,
+        "hoi4_imagegen"
+    );
+    let installs = plan
+        .external_actions
+        .iter()
+        .filter(|action| action.id == crate::imagegen_actions::INSTALL_ACTION_ID)
+        .collect::<Vec<_>>();
+    assert_eq!(installs.len(), 1, "{:?}", plan.external_actions);
+    assert_eq!(installs[0].component_id, COMPONENT_ID);
+    assert_eq!(
+        plan.optional_workflows
+            .get(COMPONENT_ID)
+            .map(String::as_str),
+        Some("selected_pending")
+    );
+
+    for path in ["CLAUDE.md", "descriptor.mod"] {
+        session
+            .decide_conflict(plan.plan_id, path, "replace")
+            .unwrap();
+    }
+    for path in [".gitignore", "README.md", "docs/linux.md"] {
+        session.decide_conflict(plan.plan_id, path, "keep").unwrap();
+    }
+    let decided = session
+        .decide_conflict(plan.plan_id, "docs/linux.md", "keep")
+        .unwrap();
+    let journal = approve_and_apply(&session, &decided);
+    assert_eq!(journal.state, "completed");
+
+    let lock: InstallationLock =
+        serde_json::from_slice(&fs::read(root.join(".hoi4-mod-setup/install.lock.json")).unwrap())
+            .unwrap();
+    let image = lock.image_generation.unwrap();
+    assert_eq!(image.primary_provider, "hoi4_imagegen");
+    assert_eq!(image.installed_release_version.as_deref(), Some("0.2.0"));
+    let recorded = image.installed_release_tree_sha256.unwrap();
+    // The recorded hash is the one of the files on disk.
+    let (_, tree) = crate::release_install::installed_tree(&root, "0.2.0")
+        .unwrap()
+        .unwrap();
+    assert_eq!(tree, recorded);
+}
