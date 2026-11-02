@@ -2,6 +2,10 @@
 
 HOI4 Mod Setup follows semantic versioning.
 
+## Unreleased
+
+- Install hoi4-imagegen on a first install. A new project or an import planned no download for the `release_binary` image route, because that route declares no repository command for the manifest scan to find. The plan showed the provider as ready, but nothing was installed, and the project lock held no `installed_release_version` or `installed_release_tree_sha256`, so the ChatGPT sign-in, an update and a removal could not find the install. A first install now plans the same reviewed, hash-checked download that update and repair already planned, and the lock records the version and the hash of the installed files. A project installed with 0.9.0 has no receipt: run **Repair** to install it.
+
 ## 0.9.0 - 2026-11-02
 
 - Install hoi4-imagegen-mcp as the image provider. The source manifest can declare a per-platform release archive (`release_binary` route); Setup downloads only that URL, checks its size and SHA-256 before opening the archive, extracts the two declared programs safely, installs them under `.tools/image_generation/hoi4-imagegen/<version>/`, runs `hoi4-imagegen --version`, and registers the `hoi4_imagegen` server in every selected client's project MCP file, keeping your own entries. An update installs the new version beside the old one, retargets the entries, and removes the old version only after the check passed and only while it is unchanged.

@@ -13525,6 +13525,125 @@ description: Example skill.
         validate_plan(&plan).unwrap();
     }
 
+    /// A fresh install of the hoi4-imagegen release route runs the reviewed
+    /// install and the success lock records the version and tree hash that
+    /// cleanup and sign-in later rely on.
+    #[test]
+    fn fresh_install_records_the_hoi4_imagegen_receipt_in_the_lock() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (action, selection) = crate::imagegen_tests::arm_fake_release("0.2.0");
+        let mut plan = ready_plan(project.path());
+        plan.image_generation = Some(selection);
+        plan.optional_workflows.insert(
+            hoi4_setup_core::release_binary::COMPONENT_ID.into(),
+            "selected_pending".into(),
+        );
+        plan.external_actions = vec![action];
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+
+        let (journal, lock) = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                post_install_action_runner: Some(crate::imagegen_tests::fake_release_runner),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert!(
+            journal.stages[9]
+                .evidence
+                .iter()
+                .any(|item| item.contains("external-action:imagegen.hoi4_imagegen:ready")),
+            "the install action must run: {:?}",
+            journal.stages[9].evidence
+        );
+        let image = lock.image_generation.as_ref().unwrap();
+        assert_eq!(image.installed_release_version.as_deref(), Some("0.2.0"));
+        let tree = image.installed_release_tree_sha256.as_deref().unwrap();
+        // The saved lock on disk carries it too, not only the returned value.
+        let saved: InstallationLock = serde_json::from_slice(
+            &fs::read(project.path().join(".hoi4-mod-setup/install.lock.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            saved
+                .image_generation
+                .unwrap()
+                .installed_release_tree_sha256
+                .as_deref(),
+            Some(tree)
+        );
+
+        // An update to another version installs it, removes the version the lock
+        // recorded, and replaces the receipt.
+        let old_tree = tree.to_owned();
+        let (mut action, mut selection) = crate::imagegen_tests::arm_fake_release("0.3.0");
+        selection.installed_release_version = Some("0.2.0".into());
+        selection.installed_release_tree_sha256 = Some(old_tree.clone());
+        action.id = crate::imagegen_actions::INSTALL_ACTION_ID.into();
+        let mut update = plan.clone();
+        update.plan_id = Uuid::new_v4();
+        update.maintenance_mode = Some("update".into());
+        // The project files are unchanged; only the image server moves.
+        update.operations = update_operations(&lock, &lock.files.clone(), project.path()).unwrap();
+        let update_prepared = update
+            .operations
+            .iter()
+            .filter(|operation| {
+                operation.action == OperationAction::Create || operation.destination == "AGENTS.md"
+            })
+            .map(|operation| PreparedFile {
+                operation_id: operation.id.clone(),
+                destination: operation.destination.clone(),
+                bytes: b"safe".to_vec(),
+                expected_sha256: sha256_bytes(b"safe"),
+            })
+            .collect::<Vec<_>>();
+        update.image_generation = Some(selection);
+        update.external_actions = vec![
+            action,
+            crate::imagegen_actions::cleanup_action("0.2.0", &old_tree),
+        ];
+        let (_, updated) = run_test_transaction(
+            project.path(),
+            &update,
+            &update_prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                post_install_action_runner: Some(crate::imagegen_tests::fake_release_runner),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let image = updated.image_generation.unwrap();
+        assert_eq!(image.installed_release_version.as_deref(), Some("0.3.0"));
+        // The fake archives hold the same files, so the tree hash is unchanged;
+        // it is still the hash of what is on disk for the new version.
+        let (_, new_tree) = crate::release_install::installed_tree(project.path(), "0.3.0")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            image.installed_release_tree_sha256.as_deref(),
+            Some(new_tree.as_str())
+        );
+        let versions = project.path().join(".tools/image_generation/hoi4-imagegen");
+        assert!(versions.join("0.3.0").is_dir());
+        assert!(
+            !versions.join("0.2.0").exists(),
+            "the recorded old version is removed"
+        );
+    }
+
     fn ready_three_d_action(
         _project_root: &Path,
         _plan: &InstallationPlan,

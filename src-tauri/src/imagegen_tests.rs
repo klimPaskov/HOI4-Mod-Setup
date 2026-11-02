@@ -997,3 +997,62 @@ fn redirects_stay_on_github_release_hosts_over_https() {
     assert!(!allowed(&url("https://github.com:8443/a"), 0));
     assert!(!allowed(&url("https://user@github.com/a"), 0));
 }
+
+// ---- A fake release for the real transaction path ----------------------------
+
+thread_local! {
+    static TRANSACTION_RELEASE: RefCell<Option<(String, Vec<u8>)>> = const { RefCell::new(None) };
+}
+
+/// The reviewed install action for a fake `version` archive, plus the plan
+/// selection that goes with it. Arms [`fake_release_runner`] on this thread.
+pub(crate) fn arm_fake_release(
+    version: &str,
+) -> (crate::models::ExternalAction, ImageGenerationSelection) {
+    let release = release(version);
+    let manifest = host_manifest(version, &release);
+    let chosen = selection("hoi4_imagegen");
+    let InstallPlanning::Install(action) = plan_install(&manifest, &chosen).unwrap() else {
+        panic!("the provider is selected and supported on this host");
+    };
+    TRANSACTION_RELEASE.with(|slot| *slot.borrow_mut() = Some((version.into(), release.archive)));
+    (*action, chosen)
+}
+
+/// A post-install runner for the transaction that answers the hoi4-imagegen
+/// component with the real action over the armed fake archive and fake CLI.
+pub(crate) fn fake_release_runner(
+    root: &std::path::Path,
+    plan: &InstallationPlan,
+    component_id: &str,
+) -> Result<crate::transaction::PostInstallActionOutcome, AppError> {
+    if component_id != route::COMPONENT_ID {
+        // The plan's other reviewed actions are not under test here.
+        return Ok(crate::transaction::PostInstallActionOutcome {
+            component_id: component_id.into(),
+            state: "ready".into(),
+            evidence: "Fixture runner: nothing was started.".into(),
+        });
+    }
+    let (version, archive) = TRANSACTION_RELEASE
+        .with(|slot| slot.borrow().clone())
+        .expect("arm_fake_release was called on this thread");
+    run_reviewed_actions(
+        root,
+        plan,
+        &FakeDownloader::new(&archive),
+        &FakeCli::reporting(&version),
+    )
+}
+
+/// The manifest `targets` of a fake `version` archive for every platform, with
+/// this host's entry carrying the real digest and size. Arms
+/// [`fake_release_runner`] on this thread.
+pub(crate) fn armed_release_targets(version: &str) -> serde_json::Value {
+    let release = release(version);
+    let mut targets = synthetic_targets(version);
+    targets[host_triple()]["sha256"] = serde_json::json!(release.target.sha256);
+    targets[host_triple()]["size"] = serde_json::json!(release.target.size);
+    TRANSACTION_RELEASE.with(|slot| *slot.borrow_mut() = Some((version.into(), release.archive)));
+    targets
+}
