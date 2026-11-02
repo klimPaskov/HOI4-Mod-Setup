@@ -177,8 +177,8 @@ describe("HOI4 Mod Setup wizard", () => {
     }
 
     render(<ControlledEnvironmentStep />);
-    fireEvent.click(screen.getByRole("radio", { name: /^Cursor / }));
-    expect(screen.getByRole("radio", { name: /^Cursor / })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /^Cursor/ }));
+    expect(screen.getByRole("radio", { name: /^Cursor/ })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Codex/ })).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: /Cursor/ })).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /Qoder/ })).toBeChecked();
