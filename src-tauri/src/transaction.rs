@@ -9403,9 +9403,6 @@ pub fn reinstall_operations(
         .collect()
 }
 
-/// Plan an update against an exact incoming lock view. Existing unchanged
-/// files are replaceable, missing files are creates, and modified files stay
-/// skipped until the conflict engine supplies an explicit decision.
 /// The identity of a locked file for comparison with another source's list:
 /// where it lives, ignoring the case and Unicode form of its path.
 fn destination_key(file: &LockedFile) -> (bool, String) {
@@ -9415,6 +9412,9 @@ fn destination_key(file: &LockedFile) -> (bool, String) {
     )
 }
 
+/// Plan an update against an exact incoming lock view. Existing unchanged
+/// files are replaceable, missing files are creates, and modified files stay
+/// skipped until the conflict engine supplies an explicit decision.
 pub fn update_operations(
     current_lock: &InstallationLock,
     incoming_files: &[LockedFile],
@@ -10069,7 +10069,6 @@ mod tests {
         fs::create_dir_all(project.path().join(dir)).unwrap();
         fs::write(project.path().join(&newer), b"png").unwrap();
         let mut current_lock = template.clone();
-        current_lock.files = vec![locked(&newer, b"png")];
 
         // Both directions: the incoming source spells the name the other way.
         for (installed, incoming) in [(&newer, &older), (&older, &newer)] {
