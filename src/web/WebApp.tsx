@@ -16,7 +16,7 @@ import { folderFromDrop, folderFromInput, readFileBytes } from "./folder";
 import type { FolderSelection } from "./folder";
 import { fetchRaw, MANIFEST_PATH, networkLog, onNetworkLog, resolveSource, SOURCE_NAME, SOURCE_OWNER } from "./github";
 import type { NetworkRecord, ResolvedSource, SourceMode } from "./github";
-import { availableImageProviders, defaultImageChoice, isLoopbackUrl, liveTestingProblem, NO_LIVE_TESTING, NO_PORTRAITS, normalizeImageChoice, portraitProblem } from "./integrations";
+import { availableImageProviders, defaultImageChoice, isLoopbackUrl, imageChoiceProblem, liveTestingProblem, NO_LIVE_TESTING, NO_PORTRAITS, normalizeImageChoice, portraitProblem } from "./integrations";
 import ContextPanel from "./parts/ContextPanel";
 import type { ContextDocumentEntry, ContextImageEntry } from "./parts/ContextPanel";
 import FindingsPanel from "./parts/FindingsPanel";
@@ -679,7 +679,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   const portraitsAvailable = Boolean(preview?.components.some((component) => component.id === "workflow.portraits.core"));
   const liveProviders = preview?.live_testing?.providers ?? [];
   const hasIntegrations = imageProviders.length > 0 || portraitsAvailable || liveProviders.some((provider) => provider.id === "clausewitz_mcp");
-  const integrationsProblem = liveTestingProblem(live, platform) ?? portraitProblem(portrait) ?? (Object.entries(effectiveImage.route_settings).some(([, settings]) => settings.server_url && !isLoopbackUrl(settings.server_url)) ? "A local image server must use a loopback address such as http://127.0.0.1:8188." : null);
+  const integrationsProblem = liveTestingProblem(live, platform) ?? portraitProblem(portrait) ?? imageChoiceProblem(effectiveImage, imageProviders);
 
   const conventionSuggestions = useMemo(() => {
     if (!analysis) return [] as Array<[string, string]>;

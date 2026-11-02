@@ -220,7 +220,12 @@ impl Source {
                 })
             })
             .collect::<Vec<_>>();
-        let catalog = self.manifest.image_generation.as_ref();
+        let annotated = self
+            .manifest
+            .image_generation
+            .as_ref()
+            .map(hoi4_setup_core::image_backends::annotate_catalog);
+        let catalog = annotated.as_ref();
         let image_providers = catalog
             .and_then(|catalog| catalog.get("providers"))
             .and_then(Value::as_array)
@@ -242,6 +247,8 @@ impl Source {
                     "auth_method": route.get("auth_method"),
                     "api_protocol": route.get("api_protocol"),
                     "supported_models": route.get("supported_models"),
+                    "backends": route.get("backends"),
+                    "replaced_by": provider.get("replaced_by"),
                     "requires_primary_coding_environment": route.get("requires_primary_coding_environment"),
                 })
             })

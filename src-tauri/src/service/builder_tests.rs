@@ -725,3 +725,42 @@ fn a_first_install_with_the_hoi4_imagegen_route_installs_it_and_records_the_rece
         .unwrap();
     assert_eq!(tree, recorded);
 }
+
+#[test]
+fn the_chosen_hoi4_imagegen_backend_is_recorded_in_the_plan_and_the_lock() {
+    let targets = crate::imagegen_tests::armed_release_targets("0.2.0");
+    let mut hosted = hosted_with(SourceFixture::with_hoi4_imagegen("0.2.0", targets));
+    hosted.service = hosted
+        .service
+        .clone()
+        .with_post_install_runner(crate::imagegen_tests::fake_release_runner);
+    let session = hosted.session();
+    let root = existing_project(&hosted);
+    let mut state = fixture::planning_state("existing", &root, None, None);
+    state["imageGeneration"] = serde_json::json!({
+        "primary_provider": "hoi4_imagegen",
+        "additional_providers": [],
+        "route_settings": {"hoi4_imagegen": {"backend": "openai"}},
+        "credential_references": {},
+    });
+    analyze_existing(&session, &hosted.latest(), &root, &mut state);
+
+    let plan = session.build_plan(&state).unwrap();
+
+    let image = plan.image_generation.as_ref().unwrap();
+    assert_eq!(image.primary_provider, "hoi4_imagegen");
+    assert_eq!(image.route_settings["hoi4_imagegen"]["backend"], "openai");
+    // The choice is written into the project's hoi4-imagegen settings.
+    let config = plan
+        .operations
+        .iter()
+        .find(|operation| operation.destination == ".hoi4-imagegen/config.toml")
+        .expect("the backend choice is planned as a file");
+    assert_eq!(config.component_id, "image_generation.project_config");
+
+    // A backend the package does not publish is refused before any file is
+    // downloaded.
+    state["imageGeneration"]["route_settings"]["hoi4_imagegen"]["backend"] =
+        serde_json::json!("midjourney");
+    assert!(session.build_plan(&state).is_err());
+}

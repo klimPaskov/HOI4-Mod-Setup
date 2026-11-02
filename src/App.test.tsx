@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { CopyDiagnosticsButton, analysisBrief, CodingEnvironments, Components, ContextAttachments, contextEvidence, Conflict, DryRun, Findings, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, integrationReviewNeeded, maintenanceReviewScreen, nextScreen, previousScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, runAgentSetupResult, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, checkInstallationRequirements, confirmCodexAnalysis, draftModDescription, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickContextDocuments, pickContextImages, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult, readDiagnostics } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, runAgentSetupResult, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, checkInstallationRequirements, confirmCodexAnalysis, draftModDescription, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, moveImageGenerationCredential, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickContextDocuments, pickContextImages, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult, readDiagnostics } from "./lib/tauri";
 import type { AiAccountStatus, AiProviderId, CodexAnalysisResult, ContextDocument, ContextImage, FolderSelection, InstallationPlan, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { renderCoverPng, renderReferenceJpeg } from "./lib/images";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
@@ -12,7 +12,7 @@ vi.mock("./free-assistant.json", () => ({ default: { endpoint: null, model: "nvi
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), buildMaintenancePlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), checkInstallationRequirements: vi.fn(), runAgentSetupResult: vi.fn(), confirmCodexAnalysis: vi.fn(), draftModDescription: vi.fn(), findInterruptedTransaction: vi.fn(), forgetContextAttachment: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickContextDocuments: vi.fn(), pickContextImages: vi.fn(), pickProjectFolder: vi.fn(), readDiagnostics: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), buildMaintenancePlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), checkInstallationRequirements: vi.fn(), runAgentSetupResult: vi.fn(), confirmCodexAnalysis: vi.fn(), draftModDescription: vi.fn(), findInterruptedTransaction: vi.fn(), forgetContextAttachment: vi.fn(), installAppUpdate: vi.fn(), moveImageGenerationCredential: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickContextDocuments: vi.fn(), pickContextImages: vi.fn(), pickProjectFolder: vi.fn(), readDiagnostics: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
 });
 
 // jsdom has no canvas; the context image rendering is exercised in images.test.ts.
@@ -250,7 +250,7 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.queryByText(/To-do: add HOI4 Agent Tools/)).not.toBeInTheDocument();
   });
 
-  it("shows the default image route and keeps the primary separate from optional routes", () => {
+  it("offers only hoi4-imagegen, with the ChatGPT sign-in pre-selected and the other backends beside it", () => {
     window.history.replaceState({}, "", "/?screenshot=image-generation");
     const fixture = documentationFixture(readyState());
     function ControlledImageStep() {
@@ -258,16 +258,109 @@ describe("HOI4 Mod Setup wizard", () => {
       return <ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
     }
     render(<ControlledImageStep />);
-    expect(screen.getByRole("radio", { name: /ChatGPT sign-in and API keys \(hoi4-imagegen\)/ })).toBeChecked();
-    expect(screen.getByRole("radio", { name: /OpenAI Images API/ })).not.toBeChecked();
-    expect(screen.getAllByLabelText("Add as an optional provider", { selector: "input" })[0]).toBeChecked();
-    expect(screen.getByText(/ChatGPT plan limits/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Model")).toHaveValue("gpt-image-2.5-sunburst");
-    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "gpt-image-2" } });
-    expect(screen.getByLabelText("Model")).toHaveValue("gpt-image-2");
-    fireEvent.click(screen.getByRole("radio", { name: /OpenAI Images API/ }));
-    expect(screen.getByRole("radio", { name: /OpenAI Images API/ })).toBeChecked();
-    expect(screen.getByRole("radio", { name: /ChatGPT sign-in and API keys \(hoi4-imagegen\)/ })).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: /Use hoi4-imagegen/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^None, I make art myself/ })).not.toBeChecked();
+    const backends = screen.getAllByRole("radio", { name: /ChatGPT sign-in|^OpenAI|^Gemini|^fal\.ai|^ComfyUI/ });
+    expect(backends.map((radio) => radio.getAttribute("value"))).toEqual(["chatgpt_login", "openai", "gemini", "fal", "comfyui"]);
+    expect(backends[0]).toBeChecked();
+    // The separate provider cards and the optional-provider choice are gone.
+    expect(screen.queryByText("Add as an optional provider")).toBeNull();
+    expect(screen.queryByRole("radio", { name: /OpenAI Images API/ })).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: /^OpenAI/ }));
+    expect(screen.getByRole("radio", { name: /^OpenAI/ })).toBeChecked();
+    expect(screen.getByLabelText("OpenAI API key")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Gemini API key")).toBeNull();
+  });
+
+  it("selects the hoi4-imagegen component with the choice and leaves no image component behind for none", () => {
+    window.history.replaceState({}, "", "/?screenshot=image-generation");
+    const fixture = documentationFixture(readyState());
+    function ControlledImageStep() {
+      const [state, setState] = useState({ ...fixture, selectedComponents: [] as string[] });
+      return <><ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} /><output aria-label="selected image components">{state.selectedComponents.join(",")}</output><output aria-label="image choice">{state.imageGeneration.primary_provider}</output></>;
+    }
+    render(<ControlledImageStep />);
+    expect(imageGenerationComponentIds(fixture.imageGeneration, fixture.manifestPreview)).toContain("imagegen.hoi4_imagegen");
+    expect(screen.getByLabelText("selected image components")).toHaveTextContent("imagegen.hoi4_imagegen");
+    fireEvent.click(screen.getByRole("radio", { name: /^None, I make art myself/ }));
+    expect(screen.getByLabelText("image choice")).toHaveTextContent("none");
+    expect(screen.getByLabelText("selected image components")).not.toHaveTextContent("imagegen");
+    expect(screen.queryByText("Generate with")).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: /Use hoi4-imagegen/ }));
+    expect(screen.getByLabelText("selected image components")).toHaveTextContent("imagegen.hoi4_imagegen");
+  });
+
+  it("keeps a recorded older provider working and moves it, with its key, only when asked", async () => {
+    window.history.replaceState({}, "", "/?screenshot=image-generation");
+    const fixture = documentationFixture(readyState());
+    vi.mocked(moveImageGenerationCredential).mockResolvedValue({ name: "IMAGE_GENERATION_API_KEY", provider: "windows_credential_manager", reference: "credential://image_generation_api_key/hoi4_imagegen_openai_api_key", provider_id: "hoi4_imagegen_openai_api_key" });
+    function ControlledImageStep() {
+      const [state, setState] = useState<WizardState>({ ...fixture, imageGeneration: { primary_provider: "openai_api", additional_providers: [], route_settings: { openai_api: { model: "gpt-image-2" } }, credential_references: { "openai_api.api_key": "credential://image_generation_api_key/openai_api_api_key" } } });
+      return <><ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} /><output aria-label="selection">{JSON.stringify(state.imageGeneration)}</output></>;
+    }
+    render(<ControlledImageStep />);
+    expect(screen.getByText(/It keeps working/)).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Use hoi4-imagegen/ })).toBeNull();
+    expect(moveImageGenerationCredential).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /Move to hoi4-imagegen \(OpenAI\)/ }));
+    await waitFor(() => expect(moveImageGenerationCredential).toHaveBeenCalledWith("openai_api", "api_key", "openai_api_key"));
+    await waitFor(() => expect(JSON.parse(screen.getByLabelText("selection").textContent!)).toEqual({
+      primary_provider: "hoi4_imagegen",
+      additional_providers: [],
+      route_settings: { hoi4_imagegen: { backend: "openai" } },
+      credential_references: { "hoi4_imagegen.openai_api_key": "credential://image_generation_api_key/hoi4_imagegen_openai_api_key" },
+    }));
+  });
+
+  it("asks for the settings the chosen backend declares and drops them when the backend changes", () => {
+    window.history.replaceState({}, "", "/?screenshot=image-generation");
+    const fixture = documentationFixture(readyState());
+    function ControlledImageStep() {
+      const [state, setState] = useState(fixture);
+      return <><ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} /><output aria-label="route settings">{JSON.stringify(state.imageGeneration.route_settings)}</output></>;
+    }
+    render(<ControlledImageStep />);
+    expect(screen.queryByLabelText(/^Endpoint/)).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: /^ComfyUI/ }));
+    fireEvent.change(screen.getByLabelText("Endpoint"), { target: { value: "http://127.0.0.1:9000" } });
+    fireEvent.change(screen.getByLabelText("Workflow (optional)"), { target: { value: "workflows/portrait.json" } });
+    expect(JSON.parse(screen.getByLabelText("route settings").textContent!)).toEqual({ hoi4_imagegen: { backend: "comfyui", "providers.comfyui.endpoint": "http://127.0.0.1:9000", "providers.comfyui.workflow": "workflows/portrait.json" } });
+    // An address outside this computer over plain http is flagged before anything is planned.
+    fireEvent.change(screen.getByLabelText("Endpoint"), { target: { value: "http://192.168.1.4:8188" } });
+    expect(screen.getByRole("alert")).toHaveTextContent(/must use https/);
+    fireEvent.click(screen.getByRole("radio", { name: /^OpenAI/ }));
+    expect(JSON.parse(screen.getByLabelText("route settings").textContent!)).toEqual({ hoi4_imagegen: { backend: "openai" } });
+  });
+
+  it("changes nothing when the key move fails", async () => {
+    window.history.replaceState({}, "", "/?screenshot=image-generation");
+    const fixture = documentationFixture(readyState());
+    vi.mocked(moveImageGenerationCredential).mockResolvedValue(null);
+    const selection = { primary_provider: "openai_api", additional_providers: [] as string[], route_settings: {}, credential_references: { "openai_api.api_key": "credential://image_generation_api_key/openai_api_api_key" } };
+    function ControlledImageStep() {
+      const [state, setState] = useState<WizardState>({ ...fixture, imageGeneration: selection });
+      return <><ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} /><output aria-label="selection">{JSON.stringify(state.imageGeneration)}</output></>;
+    }
+    render(<ControlledImageStep />);
+    fireEvent.click(screen.getByRole("button", { name: /Move to hoi4-imagegen/ }));
+    expect(await screen.findByText(/Nothing was changed/)).toBeInTheDocument();
+    expect(JSON.parse(screen.getByLabelText("selection").textContent!)).toEqual(selection);
+  });
+
+  it("leaves a provider no backend covers yet exactly as recorded", () => {
+    window.history.replaceState({}, "", "/?screenshot=image-generation");
+    const fixture = documentationFixture(readyState());
+    render(<ImageGenerationSetup state={{ ...fixture, imageGeneration: { primary_provider: "replicate", additional_providers: [], route_settings: {}, credential_references: {} } }} update={vi.fn()} />);
+    expect(screen.getByText(/does not cover it yet/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Move to hoi4-imagegen/ })).toBeNull();
+  });
+
+  it("keeps the none choice usable with clients the provider table does not list", () => {
+    window.history.replaceState({}, "", "/?screenshot=image-generation");
+    const fixture = { ...documentationFixture(readyState()), primaryCodingEnvironment: "aider", additionalCodingEnvironments: [] as string[] };
+    render(<ImageGenerationSetup state={fixture} update={vi.fn()} />);
+    expect(screen.getByRole("radio", { name: /^None, I make art myself/ })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /Use hoi4-imagegen/ })).toBeDisabled();
   });
 
   it("copies recent diagnostics for a failure report", async () => {
@@ -280,30 +373,6 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Diagnostics copied.");
   });
 
-  it("keeps manual image providers usable with clients the provider table does not list", () => {
-    window.history.replaceState({}, "", "/?screenshot=image-generation");
-    const fixture = { ...documentationFixture(readyState()), primaryCodingEnvironment: "aider", additionalCodingEnvironments: [] as string[] };
-    render(<ImageGenerationSetup state={fixture} update={vi.fn()} />);
-    expect(screen.getByRole("radio", { name: /^None — I will make art myself/ })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: /ChatGPT sign-in and API keys \(hoi4-imagegen\)/ })).toBeDisabled();
-  });
-
-  it("selects the manifest image components when the provider route changes", () => {
-    window.history.replaceState({}, "", "/?screenshot=image-generation");
-    const fixture = documentationFixture(readyState());
-    function ControlledImageStep() {
-      const [state, setState] = useState({ ...fixture, selectedComponents: [] as string[] });
-      return <><ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} /><output aria-label="selected image components">{state.selectedComponents.join(",")}</output></>;
-    }
-
-    render(<ControlledImageStep />);
-    expect(imageGenerationComponentIds(fixture.imageGeneration, fixture.manifestPreview)).toContain("imagegen.hoi4_imagegen");
-    expect(screen.getByLabelText("selected image components")).toHaveTextContent("imagegen.hoi4_imagegen");
-    fireEvent.click(screen.getByRole("radio", { name: /OpenAI Images API/ }));
-    expect(screen.getByLabelText("selected image components")).toHaveTextContent("imagegen.runtime");
-    expect(screen.getByLabelText("selected image components")).not.toHaveTextContent("imagegen.hoi4_imagegen");
-  });
-
   it("sends image API keys to the OS vault bridge and clears the password draft", async () => {
     window.history.replaceState({}, "", "/?screenshot=image-generation");
     const fixture = documentationFixture(readyState());
@@ -313,9 +382,10 @@ describe("HOI4 Mod Setup wizard", () => {
       return <ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
     }
     render(<ControlledImageStep />);
-    const input = screen.getAllByLabelText("OpenAI API key")[0];
+    fireEvent.click(screen.getByRole("radio", { name: /^OpenAI/ }));
+    const input = screen.getByLabelText("OpenAI API key");
     fireEvent.change(input, { target: { value: "sk-test-image-key" } });
-    fireEvent.click(screen.getAllByRole("button", { name: "Store" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Store" }));
     await waitFor(() => expect(storeImageGenerationCredential).toHaveBeenCalledWith("hoi4_imagegen", "openai_api_key", "sk-test-image-key"));
     expect(await screen.findByText(/credential stored on this computer/i)).toBeInTheDocument();
     expect(input).toHaveValue("");

@@ -1,7 +1,10 @@
 // Pure rules for the web edition's integration choices, matching the core's
 // validation so the page never offers a choice the core will refuse.
 
+import { imageSettingLabel, imageSettingProblem, isLoopbackUrl } from "../lib/imageSettings";
 import type { ImageChoice, ImageProvider, LiveTestingChoice, PortraitChoice, SourcePreview } from "./protocol";
+
+export { imageSettingLabel, imageSettingProblem, isLoopbackUrl };
 
 export const NO_IMAGE_PROVIDER = "none";
 export const MAX_ADDITIONAL_IMAGE_PROVIDERS = 8;
@@ -13,35 +16,6 @@ export function availableImageProviders(preview: SourcePreview | null, clients: 
     if (provider.route_kind === "manual") return true;
     return (provider.supported_coding_environments ?? []).some((id) => clients.includes(id));
   });
-}
-
-/** The settings a provider's route accepts, as the core allows them. */
-export function imageSettingKeys(provider: ImageProvider): string[] {
-  switch (provider.api_protocol) {
-    case "comfyui":
-    case "automatic1111":
-      return ["server_url", "checkpoint"];
-    case "microsoft_foundry":
-      return ["deployment_name"];
-    case "aws_bedrock":
-      return ["region", "model"];
-    default:
-      return (provider.supported_models ?? []).length > 0 ? ["model"] : [];
-  }
-}
-
-export function imageSettingLabel(key: string): string {
-  return ({ server_url: "Local server address", checkpoint: "Checkpoint", deployment_name: "Deployment name", region: "Region", model: "Model" } as Record<string, string>)[key] ?? key;
-}
-
-/** A local image server must run on this computer. */
-export function isLoopbackUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return ["http:", "https:"].includes(url.protocol) && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) && !url.username && !url.password;
-  } catch {
-    return false;
-  }
 }
 
 export function defaultImageChoice(preview: SourcePreview | null): ImageChoice {
@@ -62,22 +36,6 @@ export function normalizeImageChoice(choice: ImageChoice, available: ImageProvid
   const keep = new Set([primary, ...additional]);
   const route_settings = Object.fromEntries(Object.entries(choice.route_settings).filter(([id]) => keep.has(id)));
   return { primary_provider: primary, additional_providers: additional, route_settings };
-}
-
-/** What a provider needs before images can be made, in plain words. */
-export function imageProviderNeeds(provider: ImageProvider): string | null {
-  switch (provider.auth_method) {
-    case "api_key_vault":
-    case "cloud_credentials":
-    case "enterprise_credentials":
-      return "Its key is read from the operating-system credential store. A browser cannot save it there; add it later with the desktop app.";
-    case "chatgpt_subscription":
-      return "It uses your ChatGPT sign-in in the provider's own tool.";
-    case "local":
-      return "Its server must run on this computer.";
-    default:
-      return null;
-  }
 }
 
 export const NO_LIVE_TESTING: LiveTestingChoice = { provider: "none", linux_ready: false, wsl_distribution: "", ssh_host: "" };
@@ -104,6 +62,19 @@ export function portraitProblem(choice: PortraitChoice): string | null {
     } catch {
       return "Enter the RunPod address as HTTPS without a user name or query.";
     }
+  }
+  return null;
+}
+
+/** The first problem in the chosen backend's settings, if any. */
+export function imageChoiceProblem(choice: ImageChoice, providers: ImageProvider[]): string | null {
+  const row = providers.find((provider) => provider.route_kind === "release_binary");
+  if (!row || choice.primary_provider !== row.id) return null;
+  const backends = row.backends ?? [];
+  const backend = backends.find((option) => option.id === choice.route_settings[row.id]?.backend) ?? backends.find((option) => option.default) ?? backends[0];
+  for (const setting of backend?.settings ?? []) {
+    const problem = imageSettingProblem(setting.kind, choice.route_settings[row.id]?.[setting.key] ?? "");
+    if (problem) return `${imageSettingLabel(setting.key)}: ${problem}`;
   }
   return null;
 }

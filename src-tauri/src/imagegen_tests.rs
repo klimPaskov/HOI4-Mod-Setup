@@ -1056,3 +1056,39 @@ pub(crate) fn armed_release_targets(version: &str) -> serde_json::Value {
     TRANSACTION_RELEASE.with(|slot| *slot.borrow_mut() = Some((version.into(), release.archive)));
     targets
 }
+
+#[test]
+fn only_key_shaped_variables_ever_reach_hoi4_imagegen() {
+    use crate::imagegen::{credential_field_allowed, credential_variable_allowed};
+    for name in [
+        "OPENAI_API_KEY",
+        "FAL_KEY",
+        "COMFYUI_API_KEY",
+        "STABILITY_TOKEN",
+    ] {
+        assert!(credential_variable_allowed(name), "{name}");
+    }
+    for name in [
+        "PATH",
+        "LD_PRELOAD",
+        "DYLD_INSERT_LIBRARIES",
+        "openai_api_key",
+        "OPENAI KEY",
+        "KEY",
+        "ANTHROPIC_API_KEY",
+        "MESHY_API_KEY",
+        "OPENROUTER_API_KEY",
+        "HOME_KEY=1",
+        "",
+    ] {
+        assert!(!credential_variable_allowed(name), "{name}");
+    }
+    // A backend added later needs no app release as long as its field is
+    // key-shaped.
+    assert!(credential_field_allowed("stability_api_key"));
+    assert!(credential_field_allowed("fal_key"));
+    assert!(!credential_field_allowed("path"));
+    assert!(!credential_field_allowed("Fal_Key"));
+    assert!(!credential_field_allowed("../fal_key"));
+    assert!(!credential_field_allowed("anthropic_api_key"));
+}

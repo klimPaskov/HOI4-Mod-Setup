@@ -83,6 +83,7 @@ interface TauriCommandMap {
   imagegen_login_risk_note: { args: { projectRoot: string }; result: string };
   imagegen_sign_in: { args: { projectRoot: string }; result: ImagegenSignInStatus };
   imagegen_doctor: { args: { projectRoot: string }; result: string };
+  move_image_generation_credential: { args: { fromProvider: string; fromField: string; toField: string }; result: CredentialReference | null };
   remove_image_generation_credential: { args: { provider: string; field: string }; result: boolean };
   ai_analyze: { args: { request: AiAnalysisRequest }; result: CodexAnalysisResult };
   approve_scan_evidence: { args: { projectRoot: string; scanId: string; evidence: Array<{ reference: string; path: string; excerpt: string; excerpt_sha256: string; confidence?: number | null }> }; result: void };
@@ -285,6 +286,11 @@ export async function imagegenDoctor(projectRoot: string): Promise<CommandResult
 
 export async function readImageGenerationCredential(provider: string, field: string): Promise<CredentialReference | null> {
   return invokeCommand("image_generation_credential_status", { provider, field });
+}
+
+/** Move a key saved for an older image provider into hoi4-imagegen. The value never leaves the credential store; only the new reference returns. */
+export async function moveImageGenerationCredential(fromProvider: string, fromField: string, toField: string): Promise<CredentialReference | null> {
+  return (await invokeCommandResult("move_image_generation_credential", { fromProvider, fromField, toField })).value ?? null;
 }
 
 export async function removeImageGenerationCredential(provider: string, field: string): Promise<boolean> {

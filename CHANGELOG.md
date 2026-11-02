@@ -4,6 +4,11 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Offer only hoi4-imagegen in the image step, with a backend picker. The ChatGPT sign-in is pre-selected; the other backends (OpenAI, Gemini, fal, ComfyUI today) come from the setup package's `image_generation` row, so a backend added to hoi4-imagegen appears without an app release. "None, I make art myself" stays. The separate provider entries and the optional-providers choice are gone, on desktop and on the web. The choice is recorded as `route_settings.hoi4_imagegen.backend`.
+- Keep an older image provider working. A project that records one (OpenAI Images, Gemini, fal, Codex image generation, and so on) keeps it through Update and Repair. When a backend now covers it, Update and repair offers to move it to hoi4-imagegen, and a stored key moves inside the credential store without being shown. A provider no backend covers yet is left exactly as recorded.
+- Accept a new backend's key by shape. hoi4-imagegen key fields and variables were a fixed list of four. A key field is now accepted when it is a lower-case id that, in upper case, is a variable ending in `_KEY` or `_TOKEN` (never an Anthropic, OpenRouter, Meshy, Claude or Codex name), so a new backend's key can be stored without an app release.
+- Show the ChatGPT sign-in on the Ready screen only when the default backend is in use.
+
 ## 0.9.1 - 2026-11-02
 
 - Install hoi4-imagegen on a first install. A new project or an import planned no download for the `release_binary` image route, because that route declares no repository command for the manifest scan to find. The plan showed the provider as ready, but nothing was installed, and the project lock held no `installed_release_version` or `installed_release_tree_sha256`, so the ChatGPT sign-in, an update and a removal could not find the install. A first install now plans the same reviewed, hash-checked download that update and repair already planned, and the lock records the version and the hash of the installed files. A project installed with 0.9.0 has no receipt: run **Repair** to install it.

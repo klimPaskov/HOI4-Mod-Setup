@@ -49,6 +49,30 @@ export interface UnavailableCodingEnvironment {
   reason: string;
 }
 
+export interface ImageBackendSetting {
+  key: string;
+  kind: "url" | "project_path" | string;
+  required: boolean;
+  default: string | null;
+}
+
+/** A backend hoi4-imagegen can generate with, as the setup package publishes it. */
+export interface ImageBackend {
+  id: string;
+  display_name: string;
+  default: boolean;
+  credential_field: string | null;
+  /** Values the backend reads from .hoi4-imagegen/config.toml. */
+  settings: ImageBackendSetting[];
+  replaces_providers: string[];
+}
+
+/** How an older image provider maps onto a hoi4-imagegen backend. */
+export interface ImageProviderReplacement {
+  backend: string;
+  credential_moves: Array<{ from_field: string; to_field: string }>;
+}
+
 export interface ImageGenerationProviderDefinition {
   id: string;
   display_name: string;
@@ -60,6 +84,8 @@ export interface ImageGenerationProviderDefinition {
   documentation_url?: string | null;
   models: string[];
   supported_coding_environments: CodingEnvironmentId[];
+  /** Set on an older provider that a hoi4-imagegen backend now covers. */
+  replaced_by?: ImageProviderReplacement;
   route: {
     kind: "stdio_adapter" | "local_package" | "release_binary" | "remote_http" | "native" | "manual" | string;
     auth_method: string;
@@ -74,6 +100,8 @@ export interface ImageGenerationProviderDefinition {
     tool_names?: Record<string, string>;
     tool_arguments?: Record<string, string | null>;
     credential_fields?: Array<{ id: string; display_name: string; environment_name: string }>;
+    /** On the hoi4-imagegen row: the backends it offers, the default first. */
+    backends?: ImageBackend[];
     requires_primary_coding_environment?: CodingEnvironmentId | null;
   };
   capabilities: {

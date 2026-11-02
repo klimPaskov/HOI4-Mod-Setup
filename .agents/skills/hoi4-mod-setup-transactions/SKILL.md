@@ -612,6 +612,12 @@ client. Image and live-testing provider changes are reviewed transaction inputs.
 
 Large adapted asset skills keep a short provider section and read the generated `.tools/image_generation/selected-provider.md` from the project root. Maintain that reference through the same reviewed artifact, backup and removal flow; selected routes must never push a root SKILL.md over the package byte ceiling.
 
+Moving an older image provider into hoi4-imagegen (Update and repair) copies its
+stored key inside the credential store with `credentials::move_image_generation_key`
+and returns only the new reference; the value is never read by the UI. The
+move happens before the plan is built, the lock records
+`route_settings.hoi4_imagegen.backend`, and a failed move changes nothing.
+
 ## Service facade
 
 `src-tauri/src/service/` serves the same gates to a server host with

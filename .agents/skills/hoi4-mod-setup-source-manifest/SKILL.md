@@ -296,7 +296,15 @@ a newer bootstrap.
   derived from version and target, size and SHA-256 are checked before the
   archive opens, only the two declared entries are extracted, and the
   `local_package` GPTImage route is retired (ignored, never installed). Keep the
-  schema in formats 5 and 6 in step with the model.
+  schema in formats 4 to 6 in step with the model.
+- The image step offers hoi4-imagegen or none. The backends come from the
+  route's optional `backends` array, or are derived from its `credential_fields`
+  (`crates/hoi4-setup-core/src/image_backends.rs`, which also maps an older
+  provider row onto a backend through `replaces_providers` or a shared key
+  variable). Never hard-code a backend, a key field or a key variable: a
+  credential field is accepted by shape (`imagegen::credential_field_allowed`),
+  and an older provider no backend covers keeps working untouched. The preview
+  sent to both hosts is `image_backends::annotate_catalog`.
 - Treat image-generation provider and model catalogs the same way: the
   manifest owns provider IDs, model lists, route component IDs, capabilities,
   and credential fields. Newly published catalog entries are consumed from the

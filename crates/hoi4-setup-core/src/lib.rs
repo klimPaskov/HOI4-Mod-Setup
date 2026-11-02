@@ -15,6 +15,7 @@ pub mod descriptors;
 pub mod error;
 pub mod export;
 pub mod free_assistant;
+pub mod image_backends;
 pub mod image_generation;
 #[cfg(test)]
 mod image_generation_tests;

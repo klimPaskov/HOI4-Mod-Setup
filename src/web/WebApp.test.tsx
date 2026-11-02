@@ -31,10 +31,15 @@ const integrationsPreview: SourcePreview = {
     { id: "workflow.portraits.core", display_name: "Portrait contract", description: null, category: "workflow", optional: true, coding_environment: null, platforms: ["all"], dependencies: [], file_count: 1, total_size: 1 },
   ],
   image_generation: {
-    default_provider: "none",
+    default_provider: "hoi4_imagegen",
     providers: [
+      { id: "hoi4_imagegen", display_name: "HOI4 image generation (hoi4-imagegen)", description: "One tool for every asset family.", route_kind: "release_binary", auth_method: "chatgpt_login", supported_coding_environments: ["claude_code", "codex"], backends: [
+        { id: "chatgpt_login", display_name: "ChatGPT sign-in", default: true, credential_field: null, settings: [] },
+        { id: "openai", display_name: "OpenAI", default: false, credential_field: "openai_api_key", settings: [] },
+        { id: "comfyui", display_name: "ComfyUI", default: false, credential_field: "comfyui_api_key", settings: [{ key: "providers.comfyui.endpoint", kind: "url", required: true, default: "http://127.0.0.1:8188" }, { key: "providers.comfyui.workflow", kind: "project_path", required: false, default: null }] },
+      ] },
       { id: "none", display_name: "No image provider", route_kind: "manual", supported_coding_environments: ["claude_code", "codex"] },
-      { id: "openai_api", display_name: "OpenAI Images", route_kind: "stdio_adapter", auth_method: "api_key_vault", supported_models: ["gpt-image-2"], supported_coding_environments: ["claude_code", "codex"], requirements: ["An OpenAI API key saved in the operating-system credential store."] },
+      { id: "openai_api", display_name: "OpenAI Images", route_kind: "stdio_adapter", auth_method: "api_key_vault", supported_models: ["gpt-image-2"], supported_coding_environments: ["claude_code", "codex"], replaced_by: { backend: "openai" } },
       { id: "codex_native", display_name: "Codex image generation", route_kind: "native", requires_primary_coding_environment: "codex", supported_coding_environments: ["codex"] },
     ],
   },
@@ -600,11 +605,13 @@ describe("web edition", () => {
     await screen.findByRole("heading", { name: "Choose components" });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("heading", { name: "Choose integrations" })).toBeInTheDocument();
-    // A provider for another primary client is not offered.
-    expect(within(screen.getByLabelText("Main image provider")).queryByText("Codex image generation")).toBeNull();
-    fireEvent.change(screen.getByLabelText("Main image provider"), { target: { value: "openai_api" } });
+    // One choice, with the ChatGPT sign-in pre-selected; older providers are not listed.
+    expect(screen.getByRole("radio", { name: /Use hoi4-imagegen/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /ChatGPT sign-in/ })).toBeChecked();
+    expect(screen.queryByText("Codex image generation")).toBeNull();
+    expect(screen.queryByText(/More image providers/)).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "OpenAI" }));
     expect(screen.getByText(/A browser cannot save it there/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "gpt-image-2" } });
     fireEvent.click(screen.getByRole("radio", { name: "Comfy Cloud" }));
     fireEvent.click(screen.getByRole("radio", { name: "Clausewitz MCP" }));
     expect(screen.getByRole("radio", { name: /HOI4 Live Tools/ })).toBeDisabled();
@@ -612,14 +619,14 @@ describe("web edition", () => {
     fireEvent.click(screen.getByRole("button", { name: "Download and review" }));
     await screen.findByRole("heading", { name: "Review the changes" });
     const select = calls.find((call) => call.op === "select")!.args as CoreOperations["select"]["args"];
-    expect(select.request.imageGeneration).toEqual({ primary_provider: "openai_api", additional_providers: [], route_settings: { openai_api: { model: "gpt-image-2" } } });
+    expect(select.request.imageGeneration).toEqual({ primary_provider: "hoi4_imagegen", additional_providers: [], route_settings: { hoi4_imagegen: { backend: "openai" } } });
     expect(select.request.portrait).toMatchObject({ provider: "cloud" });
     expect(select.request.liveTesting).toMatchObject({ provider: "clausewitz_mcp", linux_ready: true });
   });
 
   it("refuses an unsafe local image server address before downloading", async () => {
     stubGitHub();
-    const comfy: SourcePreview = { ...integrationsPreview, image_generation: { default_provider: "none", providers: [{ id: "none", display_name: "No image provider", route_kind: "manual" }, { id: "comfyui_local", display_name: "ComfyUI", route_kind: "stdio_adapter", api_protocol: "comfyui", auth_method: "local", supported_coding_environments: ["claude_code"] }] } };
+    const comfy: SourcePreview = integrationsPreview;
     const { client, calls } = fakeCore({ preview: () => comfy });
     render(<WebApp client={client} />);
     await describeNewMod();
@@ -627,8 +634,8 @@ describe("web edition", () => {
     await screen.findByRole("heading", { name: "Choose components" });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await screen.findByRole("heading", { name: "Choose integrations" });
-    fireEvent.change(screen.getByLabelText("Main image provider"), { target: { value: "comfyui_local" } });
-    fireEvent.change(screen.getByLabelText("Local server address"), { target: { value: "http://192.168.1.4:8188" } });
+    fireEvent.click(screen.getByRole("radio", { name: "ComfyUI" }));
+    fireEvent.change(screen.getByLabelText("Endpoint"), { target: { value: "http://192.168.1.4:8188" } });
     expect(screen.getByRole("button", { name: "Download and review" })).toBeDisabled();
     expect(calls.some((call) => call.op === "select")).toBe(false);
   });
