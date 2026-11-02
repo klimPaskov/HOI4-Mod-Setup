@@ -33,7 +33,20 @@ const REWRITABLE_EXACT: &[&str] = &[
     ".claude/agent-map.md",
     ".tools/quality_baseline.json",
 ];
-const REWRITABLE_PREFIXES: &[&str] = &[".codex/", ".cursor/", ".opencode/", ".qoder/", ".agents/"];
+const REWRITABLE_PREFIXES: &[&str] = &[
+    ".codex/",
+    ".cursor/",
+    ".opencode/",
+    ".qoder/",
+    ".agents/",
+    ".gemini/",
+    ".kilo/",
+    ".kiro/",
+    ".qwen/",
+    ".devin/",
+    ".augment/",
+    ".grok/",
+];
 
 pub fn rewritable(path: &str) -> bool {
     let path = path.replace('\\', "/");
@@ -299,6 +312,13 @@ mod tests {
             ".tools/quality_baseline.json",
             ".codex/agents/x.toml",
             ".agents/skills/x/SKILL.md",
+            ".gemini/agents/x.md",
+            ".kilo/agents/x.md",
+            ".kiro/skills/x/SKILL.md",
+            ".qwen/agents/x.md",
+            ".devin/agents/x.md",
+            ".augment/agents/x.md",
+            ".grok/skills/x/SKILL.md",
         ] {
             assert!(rewritable(path), "{path}");
         }

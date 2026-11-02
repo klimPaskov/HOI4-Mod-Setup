@@ -153,14 +153,16 @@ async function commonSetup() {
   if (fresh) {
     await expect(imageRoute === "hoi4_imagegen" ? imagegenRadio : gptimageRadio).toBeChecked();
   } else {
-    await page.getByRole("radio", { name: /^fal\.ai / }).check();
-    await page.getByRole("combobox", { name: "Model", exact: true }).selectOption({ label: "Ideogram V3 Transparent" });
+    // hoi4-imagegen stays the provider; the user picks its fal backend.
+    await page.getByRole("radio", { name: /^fal(\.ai)?(\s|$)/ }).check();
   }
   await record("image-provider"); await next();
   await at("Choose what to install");
-  await expect(page.getByRole("button", { name: /Image provider MCP adapter/ })).toHaveAttribute("aria-pressed", fresh ? "false" : "true");
+  // The image route is always hoi4-imagegen now; a backend choice does not swap the component.
+  const imagegenInstalled = imageRoute === "hoi4_imagegen" || fresh;
+  await expect(page.getByRole("button", { name: /Image provider MCP adapter/ })).toHaveAttribute("aria-pressed", "false");
   const imageComponent = imageRoute === "hoi4_imagegen" ? /hoi4-imagegen image server/ : /GPTImage MCP source/;
-  await expect(page.getByRole("button", { name: imageComponent })).toHaveAttribute("aria-pressed", fresh ? "true" : "false");
+  await expect(page.getByRole("button", { name: imageComponent })).toHaveAttribute("aria-pressed", imagegenInstalled ? "true" : "false");
   await record("selected-components"); await next();
   await at("Optional workflows");
   await expect(page.getByRole("switch", { name: /^HOI4 Live Tools/ })).toBeVisible();
@@ -545,8 +547,11 @@ try {
     } else {
       result.preservation = await assertOriginals(project, original, { gitignoreText });
       assert.equal(readiness.checks.find((check) => check.id === "launcher.registration").status, "not_selected");
-      assert.equal(lock.image_generation.primary_provider, "fal_ai");
-      assert.match(lock.image_generation.route_settings.fal_ai.model, /ideogram.*transparent/);
+      assert.equal(lock.image_generation.primary_provider, "hoi4_imagegen");
+      assert.equal(lock.image_generation.route_settings.hoi4_imagegen.backend, "fal");
+      assert.ok(lock.image_generation.installed_release_tree_sha256);
+      // The chosen backend reaches the project's hoi4-imagegen settings.
+      assert.match(await readFile(join(project, ".hoi4-imagegen", "config.toml"), "utf8"), /provider\s*=\s*"fal"/);
     }
     if (scenario === "clients") await clientPackagesFlow();
     const repairFile = scenario === "clients" ? undefined : lock.files.find((file) => !file.external && !file.preserved_local && file.path.startsWith(".agents/skills/") && file.path.endsWith("/SKILL.md"));

@@ -18,9 +18,14 @@ export function availableImageProviders(preview: SourcePreview | null, clients: 
   });
 }
 
+/** A new mod starts on hoi4-imagegen, or on none when the package does not offer it; an older provider is only ever one the project already records. */
 export function defaultImageChoice(preview: SourcePreview | null): ImageChoice {
+  const catalog = preview?.image_generation;
+  const imagegen = catalog?.providers.find((provider) => provider.route_kind === "release_binary");
+  const named = catalog?.providers.find((provider) => provider.id === catalog.default_provider);
+  const usable = named && (named.route_kind === "release_binary" || named.id === NO_IMAGE_PROVIDER) ? named.id : imagegen?.id;
   return {
-    primary_provider: preview?.image_generation?.default_provider ?? NO_IMAGE_PROVIDER,
+    primary_provider: usable ?? NO_IMAGE_PROVIDER,
     additional_providers: [],
     route_settings: {},
   };
@@ -28,8 +33,12 @@ export function defaultImageChoice(preview: SourcePreview | null): ImageChoice {
 
 /** Keep only choices the current clients can use; fall back to none. */
 export function normalizeImageChoice(choice: ImageChoice, available: ImageProvider[]): ImageChoice {
-  const ids = new Set(available.map((provider) => provider.id));
-  const primary = ids.has(choice.primary_provider) ? choice.primary_provider : ids.has(NO_IMAGE_PROVIDER) ? NO_IMAGE_PROVIDER : available[0]?.id ?? NO_IMAGE_PROVIDER;
+  // The retired GPTImage route (an older package still lists it) is replaced by hoi4-imagegen's ChatGPT sign-in, or by none when the package lacks it, as the desktop does.
+  const retired = new Set(available.filter((provider) => provider.route_kind === "local_package").map((provider) => provider.id));
+  const replacement = available.find((provider) => provider.route_kind === "release_binary")?.id ?? NO_IMAGE_PROVIDER;
+  const ids = new Set(available.filter((provider) => !retired.has(provider.id)).map((provider) => provider.id));
+  const wanted = retired.has(choice.primary_provider) ? replacement : choice.primary_provider;
+  const primary = ids.has(wanted) ? wanted : ids.has(NO_IMAGE_PROVIDER) ? NO_IMAGE_PROVIDER : [...ids][0] ?? NO_IMAGE_PROVIDER;
   const additional = primary === NO_IMAGE_PROVIDER
     ? []
     : choice.additional_providers.filter((id) => id !== primary && ids.has(id) && id !== NO_IMAGE_PROVIDER).slice(0, MAX_ADDITIONAL_IMAGE_PROVIDERS);
