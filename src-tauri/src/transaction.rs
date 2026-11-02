@@ -9875,6 +9875,24 @@ mod tests {
         app_root: &Path,
         installed: &InstallationLock,
     ) -> (InstallationPlan, InstallationLock) {
+        update_wiki_folder(
+            project_root,
+            app_root,
+            installed,
+            "paradox_wiki",
+            "hoi4_wiki",
+        )
+    }
+
+    /// Update an installation whose lock holds `from/` wiki pages against a
+    /// source that ships the same pages under `to/`.
+    fn update_wiki_folder(
+        project_root: &Path,
+        app_root: &Path,
+        installed: &InstallationLock,
+        from: &str,
+        to: &str,
+    ) -> (InstallationPlan, InstallationLock) {
         let mut update = ready_plan_without_wiki_pages(project_root);
         update.plan_id = Uuid::new_v4();
         update.maintenance_mode = Some("update".into());
@@ -9883,8 +9901,8 @@ mod tests {
             .iter()
             .cloned()
             .map(|mut file| {
-                if let Some(rest) = file.path.strip_prefix("paradox_wiki/") {
-                    file.path = format!("hoi4_wiki/{rest}");
+                if let Some(rest) = file.path.strip_prefix(&format!("{from}/")) {
+                    file.path = format!("{to}/{rest}");
                 }
                 file
             })
@@ -9964,6 +9982,40 @@ mod tests {
             crate::readiness::wiki_folder(project.path()),
             "hoi4_wiki",
             "readiness reads the new folder"
+        );
+    }
+
+    /// A maintenance move to an older kit revision ships the wiki under the
+    /// legacy `paradox_wiki/` again. The unedited `hoi4_wiki/` folder goes and
+    /// readiness reads the legacy folder that now holds the pages.
+    #[test]
+    fn moving_back_to_the_paradox_wiki_folder_replaces_the_hoi4_wiki_folder() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let installed = install_wiki_pages(project.path(), app.path(), "hoi4_wiki");
+
+        let (_, lock) = update_wiki_folder(
+            project.path(),
+            app.path(),
+            &installed,
+            "hoi4_wiki",
+            "paradox_wiki",
+        );
+
+        for page in wiki_page_names() {
+            assert!(
+                project.path().join("paradox_wiki").join(&page).is_file(),
+                "{page}"
+            );
+        }
+        assert!(!project.path().join("hoi4_wiki").exists());
+        assert!(!lock
+            .files
+            .iter()
+            .any(|file| file.path.starts_with("hoi4_wiki/")));
+        assert_eq!(
+            crate::readiness::wiki_folder(project.path()),
+            "paradox_wiki"
         );
     }
 
