@@ -894,7 +894,7 @@ fn a_provider_key_reaches_only_the_doctor_process() {
     let root = root(&dir);
     let imagegen = installed(&root);
     let store = MemoryCredentialStore::default();
-    let secret = "sk-test-secret-value-1234567890";
+    let secret = "synthetic-imagegen-provider-value";
     let reference =
         save_image_generation_key(&store, "hoi4_imagegen", "openai_api_key", secret).unwrap();
     let mut chosen = selection("hoi4_imagegen");

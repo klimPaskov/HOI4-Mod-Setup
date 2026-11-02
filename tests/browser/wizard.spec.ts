@@ -90,7 +90,7 @@ test("image-generation setup displays provider costs and lets the user add anoth
   await page.goto("/?screenshot=image-generation");
   await expect(page.getByRole("heading", { name: "Image generation" })).toBeVisible();
   await expect(page.getByText(/ChatGPT plan limits/)).toBeVisible();
-  const subscription = page.getByRole("radio", { name: /ChatGPT subscription \(GPTImage\)/ });
+  const subscription = page.getByRole("radio", { name: /ChatGPT sign-in and API keys \(hoi4-imagegen\)/ });
   const openAi = page.getByRole("radio", { name: /OpenAI Images API/ });
   await expect(subscription).toBeChecked();
   await expect(page.locator(".image-provider-card").nth(1).locator("input[type=checkbox]")).toBeChecked();
