@@ -79,6 +79,10 @@ interface TauriCommandMap {
   draft_mod_description: { args: { provider: string; model: string; reasoningEffort: string; endpoint: string; note: string }; result: string };
   store_image_generation_credential: { args: { provider: string; field: string; value: string }; result: CredentialReference };
   image_generation_credential_status: { args: { provider: string; field: string }; result: CredentialReference | null };
+  imagegen_sign_in_status: { args: { projectRoot: string }; result: ImagegenSignInStatus };
+  imagegen_login_risk_note: { args: { projectRoot: string }; result: string };
+  imagegen_sign_in: { args: { projectRoot: string }; result: ImagegenSignInStatus };
+  imagegen_doctor: { args: { projectRoot: string }; result: string };
   remove_image_generation_credential: { args: { provider: string; field: string }; result: boolean };
   ai_analyze: { args: { request: AiAnalysisRequest }; result: CodexAnalysisResult };
   approve_scan_evidence: { args: { projectRoot: string; scanId: string; evidence: Array<{ reference: string; path: string; excerpt: string; excerpt_sha256: string; confidence?: number | null }> }; result: void };
@@ -253,6 +257,30 @@ export async function draftModDescription(provider: string, model: string, reaso
 export async function storeImageGenerationCredential(provider: string, field: string, value: string): Promise<CredentialReference | null> {
   if (!value.trim()) return null;
   return invokeCommand("store_image_generation_credential", { provider, field, value });
+}
+
+/** What hoi4-imagegen reports for its ChatGPT sign-in. Setup never sees the tokens. */
+export interface ImagegenSignInStatus {
+  signed_in: boolean;
+  detail: string;
+}
+
+export async function imagegenSignInStatus(projectRoot: string): Promise<CommandResult<ImagegenSignInStatus>> {
+  return invokeCommandResult("imagegen_sign_in_status", { projectRoot });
+}
+
+/** The risk note text the user must confirm before signing in. */
+export async function imagegenLoginRiskNote(projectRoot: string): Promise<CommandResult<string>> {
+  return invokeCommandResult("imagegen_login_risk_note", { projectRoot });
+}
+
+/** Launches `hoi4-imagegen login --accept-risk` after the user confirmed the note; the binary opens the browser itself. */
+export async function imagegenSignIn(projectRoot: string): Promise<CommandResult<ImagegenSignInStatus>> {
+  return invokeCommandResult("imagegen_sign_in", { projectRoot });
+}
+
+export async function imagegenDoctor(projectRoot: string): Promise<CommandResult<string>> {
+  return invokeCommandResult("imagegen_doctor", { projectRoot });
 }
 
 export async function readImageGenerationCredential(provider: string, field: string): Promise<CredentialReference | null> {

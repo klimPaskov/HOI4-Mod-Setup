@@ -61,7 +61,7 @@ export interface ImageGenerationProviderDefinition {
   models: string[];
   supported_coding_environments: CodingEnvironmentId[];
   route: {
-    kind: "stdio_adapter" | "local_package" | "remote_http" | "native" | "manual" | string;
+    kind: "stdio_adapter" | "local_package" | "release_binary" | "remote_http" | "native" | "manual" | string;
     auth_method: string;
     server_id?: string | null;
     url?: string | null;
@@ -101,6 +101,8 @@ export interface ImageGenerationSelection {
   credential_references: Record<string, string>;
   installed_package_tree_sha256?: string | null;
   installed_package_lock_sha256?: string | null;
+  installed_release_version?: string | null;
+  installed_release_tree_sha256?: string | null;
 }
 
 export interface CodingEnvironmentSelection {

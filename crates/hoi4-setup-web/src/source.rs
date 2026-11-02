@@ -398,7 +398,7 @@ fn image_selection(
         .and_then(Value::as_str)
         .unwrap_or("none")
         .to_owned();
-    match choice {
+    let selection = match choice {
         Some(choice) => ImageGenerationSelection {
             primary_provider: if choice.primary_provider.trim().is_empty() {
                 default_provider
@@ -413,7 +413,10 @@ fn image_selection(
             primary_provider: default_provider,
             ..Default::default()
         },
-    }
+    };
+    // The retired GPTImage route becomes hoi4-imagegen, or none for an older
+    // source that lacks it.
+    hoi4_setup_core::image_generation::replace_retired_provider(&selection, manifest).0
 }
 
 /// The live-testing route. HOI4 Live Tools installs a server, which only the

@@ -14,6 +14,10 @@ pub mod credentials;
 pub mod descriptors;
 pub mod flatten;
 pub mod git;
+pub mod imagegen;
+pub mod imagegen_actions;
+#[cfg(test)]
+mod imagegen_tests;
 #[cfg(any(target_os = "linux", test))]
 mod linux_trust;
 pub mod local_source;
@@ -30,6 +34,7 @@ pub mod process;
 mod project_profile;
 pub mod python_lookup;
 pub mod readiness;
+pub mod release_install;
 mod safe_fs;
 pub mod scanner;
 pub use hoi4_setup_core::schemas;

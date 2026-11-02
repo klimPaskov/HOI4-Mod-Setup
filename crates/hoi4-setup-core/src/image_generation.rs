@@ -238,6 +238,17 @@ pub fn merge_toml_tables_preserving_local(
     }
 }
 
+/// The client server id Setup registers for an image provider.
+pub fn image_server_id(provider: &Value) -> Option<String> {
+    let id = provider.get("id").and_then(Value::as_str)?;
+    if crate::release_binary::is_release_binary_provider(provider) {
+        return crate::release_binary::server_id(provider);
+    }
+    Some(format!("hoi4_image_{id}"))
+}
+
+/// Every client entry Setup owns for images: one per catalog provider plus the
+/// retired GPTImage entry, which an update replaces instead of keeping.
 pub fn managed_image_server_ids(manifest: &RemoteManifest) -> std::collections::HashSet<String> {
     manifest
         .image_generation
@@ -246,8 +257,12 @@ pub fn managed_image_server_ids(manifest: &RemoteManifest) -> std::collections::
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|provider| provider.get("id").and_then(Value::as_str))
-        .map(|id| format!("hoi4_image_{id}"))
+        .filter_map(image_server_id)
+        .chain(
+            crate::release_binary::RETIRED_SERVER_IDS
+                .iter()
+                .map(|id| (*id).to_owned()),
+        )
         .collect()
 }
 
@@ -299,10 +314,11 @@ pub fn image_server_route_for(provider: &Value, windows: bool) -> Option<Value> 
                 id.into(),
             ],
         ),
-        "local_package" if id == "gptimage" => (
-            "node".into(),
-            vec![".tools/image_generation/providers/gptimage/src/server.js".into()],
-        ),
+        // The retired GPTImage `local_package` route installs nothing and
+        // registers nothing; only the kinds above and below are ever launched.
+        crate::release_binary::ROUTE_KIND => {
+            return crate::release_binary::client_route(provider, windows)
+        }
         _ => return None,
     };
     Some(serde_json::json!({
@@ -363,10 +379,9 @@ pub fn adapt_image_only_client_config_for(
             {
                 continue;
             }
-            let id = provider
-                .get("id")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let Some(server_id) = image_server_id(provider) else {
+                continue;
+            };
             let Some(route) = image_server_route_for(provider, windows) else {
                 continue;
             };
@@ -391,7 +406,7 @@ pub fn adapt_image_only_client_config_for(
             if environment == coding_environment::CODEX {
                 fields.insert("enabled".into(), toml::Value::Boolean(true));
             }
-            mcp.insert(format!("hoi4_image_{id}"), toml::Value::Table(fields));
+            mcp.insert(server_id, toml::Value::Table(fields));
         }
         if mcp.is_empty() {
             table.remove("mcp_servers");
@@ -431,14 +446,12 @@ pub fn adapt_image_only_client_config_for(
         {
             continue;
         }
-        let id = provider
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let Some(server_id) = image_server_id(provider) else {
+            continue;
+        };
         let Some(route) = image_server_route_for(provider, windows) else {
             continue;
         };
-        let server_id = format!("hoi4_image_{id}");
         if mcp_format == crate::native_mcp::McpFormat::VscodeServers {
             // VS Code resolves the relative adapter path from the workspace.
             routes.insert(
@@ -735,8 +748,8 @@ pub fn image_client_config_update(
             && image_server_route_for(provider, windows).is_some()
     });
     let has_managed_image_route = source_bytes
-        .windows(b"hoi4_image_".len())
-        .any(|window| window == b"hoi4_image_");
+        .windows(b"hoi4_image".len())
+        .any(|window| window == b"hoi4_image");
     let has_live_route = crate::live_testing::route(live_selection, platform)?.is_some();
     let has_managed_live_route = source_bytes
         .windows(b"clausewitz_linux".len())
@@ -768,6 +781,75 @@ pub fn image_client_config_update(
     Ok(Some(adapted))
 }
 
+/// The provider id of the retired GPTImage route in older source manifests.
+pub const RETIRED_PROVIDER_ID: &str = "gptimage";
+
+/// Replace a saved GPTImage choice, which Setup no longer installs.
+///
+/// With a source manifest that offers hoi4-imagegen the choice becomes
+/// hoi4-imagegen (the primary keeps its place, an additional provider is
+/// dropped when hoi4-imagegen is already selected). With an older manifest
+/// that lacks it, the choice is dropped so nothing is installed or registered
+/// for it. The note says what happened and is shown to the user.
+pub fn replace_retired_provider(
+    selection: &ImageGenerationSelection,
+    manifest: &RemoteManifest,
+) -> (ImageGenerationSelection, Option<String>) {
+    let providers = manifest
+        .image_generation
+        .as_ref()
+        .and_then(|catalog| catalog.get("providers"))
+        .and_then(Value::as_array);
+    let listed = |id: &str| {
+        providers.is_some_and(|rows| {
+            rows.iter()
+                .any(|row| row.get("id").and_then(Value::as_str) == Some(id))
+        })
+    };
+    let retired = |id: &str| {
+        id == RETIRED_PROVIDER_ID
+            && (!listed(id)
+                || providers.is_some_and(|rows| {
+                    rows.iter().any(|row| {
+                        row.get("id").and_then(Value::as_str) == Some(id)
+                            && crate::release_binary::is_retired_provider(row)
+                    })
+                }))
+    };
+    let mut next = selection.clone();
+    let mut changed = false;
+    let replacement = if listed(crate::release_binary::PROVIDER_ID) {
+        crate::release_binary::PROVIDER_ID
+    } else {
+        "none"
+    };
+    if retired(&next.primary_provider) {
+        next.primary_provider = replacement.to_owned();
+        changed = true;
+    }
+    let before = next.additional_providers.len();
+    next.additional_providers.retain(|id| !retired(id));
+    changed |= next.additional_providers.len() != before;
+    if changed {
+        next.additional_providers
+            .retain(|id| id != &next.primary_provider);
+        next.route_settings.remove(RETIRED_PROVIDER_ID);
+        next.credential_references
+            .retain(|key, _| !key.starts_with("gptimage."));
+        if replacement == "none" {
+            next.additional_providers.clear();
+        }
+    }
+    let note = changed.then(|| {
+        if replacement == "none" {
+            "GPTImage is retired and this setup package does not offer its replacement yet, so no image provider is installed. Update the setup package to get hoi4-imagegen.".to_owned()
+        } else {
+            "GPTImage is retired. Setup replaces it with the ChatGPT sign-in and other providers in hoi4-imagegen.".to_owned()
+        }
+    });
+    (next, note)
+}
+
 /// Check an image provider selection against the verified catalog and the
 /// selected coding clients. Credential references are the host's to check.
 pub fn validate_image_generation_selection(
@@ -796,6 +878,15 @@ pub fn validate_image_generation_selection(
     if find(&selection.primary_provider).is_none() {
         return Err(AppError::InvalidInput(
             "choose an image provider from the verified source list".into(),
+        ));
+    }
+    let retired = |id: &str| find(id).is_some_and(crate::release_binary::is_retired_provider);
+    if std::iter::once(&selection.primary_provider)
+        .chain(selection.additional_providers.iter())
+        .any(|id| retired(id))
+    {
+        return Err(AppError::InvalidInput(
+            "GPTImage is retired. Choose the ChatGPT sign-in through hoi4-imagegen instead".into(),
         ));
     }
     let mut seen = std::collections::HashSet::new();

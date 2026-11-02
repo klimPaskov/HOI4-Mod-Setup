@@ -157,7 +157,7 @@ a newer bootstrap.
 - Run `pnpm test:scratch-live` with an explicit committed source checkout to
   exercise real installations with Claude Code and Codex as primary in turn.
   It uses isolated profiles, verifies all selected skill projections and both
-  clients' registrations, and starts Agent Tools and GPTImage for initialize
+  clients' registrations, and starts Agent Tools for initialize
   and tools/list. Only setup analysis is a fixture. It makes no paid tool calls.
   Test other selected providers separately with their prerequisites available.
 
@@ -290,6 +290,13 @@ a newer bootstrap.
   platform-supported defaults; it preserves prior optional deselection. New
   files under declared skill/subagent trees flow through automatically, while
   a new component still requires an explicit source-owned declaration.
+- A `release_binary` image route (hoi4-imagegen) is validated by
+  `crates/hoi4-setup-core/src/release_binary.rs` and installed by
+  `src-tauri/src/release_install.rs` and `imagegen_actions.rs`: the URL is
+  derived from version and target, size and SHA-256 are checked before the
+  archive opens, only the two declared entries are extracted, and the
+  `local_package` GPTImage route is retired (ignored, never installed). Keep the
+  schema in formats 5 and 6 in step with the model.
 - Treat image-generation provider and model catalogs the same way: the
   manifest owns provider IDs, model lists, route component IDs, capabilities,
   and credential fields. Newly published catalog entries are consumed from the

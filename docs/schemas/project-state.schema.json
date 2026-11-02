@@ -426,6 +426,20 @@
             "null"
           ],
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "installed_release_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "installed_release_tree_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
         }
       }
     }

@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, checkInstallationRequirements, runAgentSetupResult, readDiagnostics, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelOpenRouterSignIn, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, draftModDescription, evaluateReadiness, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, openRouterSignIn, pickContextDocuments, pickContextImages, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, checkInstallationRequirements, runAgentSetupResult, readDiagnostics, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelOpenRouterSignIn, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, draftModDescription, evaluateReadiness, findInterruptedTransaction, forgetContextAttachment, imagegenLoginRiskNote, imagegenSignIn, imagegenSignInStatus, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, openRouterSignIn, pickContextDocuments, pickContextImages, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
 import { base64ByteLength, base64DataUrl, renderCoverPng, renderReferenceJpeg } from "./lib/images";
 import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, ContextDocumentState, ContextImageState, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, McpSupport, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SetupRequirement, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
@@ -359,7 +359,7 @@ export const initialState: WizardState = {
   aiProfiles: undefined,
   primaryCodingEnvironment: DEFAULT_PRIMARY_CODING_ENVIRONMENT,
   additionalCodingEnvironments: [],
-  imageGeneration: { primary_provider: "gptimage", additional_providers: [], route_settings: {}, credential_references: {} },
+  imageGeneration: { primary_provider: "hoi4_imagegen", additional_providers: [], route_settings: {}, credential_references: {} },
   liveTesting: { provider: "clausewitz_mcp", linux_ready: false, wsl_distribution: "", ssh_host: "" },
   imageGenerationCredentialDrafts: {},
   installedCodingEnvironments: [],
@@ -3226,9 +3226,23 @@ export function CodingEnvironments({ state, update }: { state: WizardState; upda
   </div>;
 }
 
+const IMAGEGEN_PROVIDER_ID = "hoi4_imagegen";
+
+/** The retired GPTImage route (an older setup package still lists it). */
+export function isRetiredImageProvider(provider: ImageGenerationProviderDefinition): boolean {
+  return provider.route.kind === "local_package";
+}
+
+/** The provider a new or migrated selection starts with. */
+export function defaultImageProvider(catalog?: { default_provider: string; providers: ImageGenerationProviderDefinition[] } | null): string {
+  const usable = (id: string) => catalog?.providers.some((provider) => provider.id === id && !isRetiredImageProvider(provider)) ?? false;
+  if (catalog && usable(catalog.default_provider)) return catalog.default_provider;
+  return usable(IMAGEGEN_PROVIDER_ID) ? IMAGEGEN_PROVIDER_ID : "none";
+}
+
 function providerAvailableForSelection(id: string, state: WizardState): boolean {
   const provider = state.manifestPreview?.image_generation?.providers.find((candidate) => candidate.id === id);
-  if (!provider) return id === "none" || (!isTauriRuntime() && ["gptimage", "midjourney_manual"].includes(id));
+  if (!provider) return id === "none" || (!isTauriRuntime() && [IMAGEGEN_PROVIDER_ID, "midjourney_manual"].includes(id));
   if (provider.route.requires_primary_coding_environment && provider.route.requires_primary_coding_environment !== state.primaryCodingEnvironment) return false;
   // A manual provider registers nothing, so every coding client can use it.
   if (provider.route.kind === "manual") return true;
@@ -3289,7 +3303,7 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
   const [savingKey, setSavingKey] = useState<string>();
   const [message, setMessage] = useState("");
   const catalog = state.manifestPreview?.image_generation;
-  const selection: ImageGenerationSelection = state.imageGeneration ?? { primary_provider: "gptimage", additional_providers: [], route_settings: {}, credential_references: {} };
+  const selection: ImageGenerationSelection = state.imageGeneration ?? { primary_provider: IMAGEGEN_PROVIDER_ID, additional_providers: [], route_settings: {}, credential_references: {} };
   const drafts = state.imageGenerationCredentialDrafts ?? {};
 
   useEffect(() => {
@@ -3304,8 +3318,9 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
         setLoadMessage(result.error ?? "The provider list could not be loaded. Go back and try again.");
         return;
       }
-      const known = result.value.image_generation?.providers.some((provider) => provider.id === selection.primary_provider);
-      update({ manifestPreview: result.value, imageGeneration: { ...selection, primary_provider: known ? selection.primary_provider : result.value.image_generation?.default_provider ?? "none" } });
+      const loaded = result.value.image_generation;
+      const known = loaded?.providers.some((provider) => provider.id === selection.primary_provider && !isRetiredImageProvider(provider));
+      update({ manifestPreview: result.value, imageGeneration: { ...selection, primary_provider: known ? selection.primary_provider : defaultImageProvider(loaded) } });
       setLoadMessage("Image providers loaded.");
     });
     return () => { active = false; };
@@ -3314,7 +3329,9 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
   const fallbackManual: ImageGenerationProviderDefinition = {
     id: "none", display_name: "None — I will make art myself", description: "Use artwork you create or source yourself.", availability: "supported", requirements: ["No account or install."], good_for: ["Your own artwork"], cost_summary: "No provider charge.", models: [], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "manual", auth_method: "none" }, capabilities: { reference_images: { supported: false, notes: "Add your own files to the project." }, image_edits: false, transparent_background: { native: false, notes: "Check the alpha in the files you add." }, size_limits: { notes: "Use the required asset dimensions." }, one_image_per_call: true, fallback_if_no_alpha: "Edit the image yourself and check its alpha.", fallback_if_no_edits: "Edit the image yourself." },
   };
-  const providers = catalog?.providers ?? [fallbackManual];
+  // The retired GPTImage route can still be listed by an older setup package. It is never offered.
+  const providers = (catalog?.providers ?? [fallbackManual]).filter((provider) => !isRetiredImageProvider(provider));
+  const retiredListed = (catalog?.providers ?? []).some(isRetiredImageProvider);
   const selectedIds = [...new Set([selection.primary_provider, ...selection.additional_providers])];
   const compatible = (provider: ImageGenerationProviderDefinition) => {
     if (provider.route.requires_primary_coding_environment && provider.route.requires_primary_coding_environment !== state.primaryCodingEnvironment) return false;
@@ -3366,6 +3383,13 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
   });
 
   useEffect(() => {
+    // A saved GPTImage choice moves to hoi4-imagegen, or to none for an older package.
+    if (!catalog || providers.some((provider) => provider.id === selection.primary_provider)) return;
+    const replacement = defaultImageProvider(catalog);
+    saveSelection({ ...selection, primary_provider: replacement, additional_providers: selection.additional_providers.filter((id) => id !== replacement && providers.some((provider) => provider.id === id)) });
+  }, [catalog, selection.primary_provider]);
+
+  useEffect(() => {
     if (!catalog) return;
     const expected = syncImageComponents(selection);
     if (expected.join("\u0000") !== state.selectedComponents.join("\u0000")) update({ selectedComponents: expected });
@@ -3402,6 +3426,7 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
         return <article className={`image-provider-card${selected ? " selected" : ""}${!usable ? " unavailable" : ""}`} key={provider.id}>
           <label className="image-provider-choice"><input type="radio" name="primary-image-provider" value={provider.id} checked={selected} disabled={!usable} onChange={() => choosePrimary(provider.id)} /><span><strong>{provider.display_name}</strong><small>{provider.description}</small></span>{selected && <Status label="Primary" tone="info" />}</label>
           <div className="image-provider-details"><span>{provider.cost_summary}</span><span>{provider.good_for.join(" · ")}</span><small>{provider.requirements.join(" ")}</small>{provider.models.length > 0 && <small>Models: {provider.models.join(", ")}</small>}{!usable && <small role="note">This provider needs a coding client that supports it.</small>}{provider.documentation_url && <ExternalLink href={provider.documentation_url}>Provider details <span aria-hidden="true">↗</span></ExternalLink>}</div>
+          {selectedIds.includes(provider.id) && provider.route.kind === "release_binary" && <p className="muted image-provider-secret">Setup downloads this program from its GitHub release, checks its SHA-256, and installs it in this project. After setup you can sign in with ChatGPT on the last screen. Keys below are optional. They stay in this computer's credential store, and the program reads them from there itself, so there is nothing to export.</p>}
           {selectedIds.includes(provider.id) && provider.route.credential_fields?.map((field) => {
             const key = `${provider.id}.${field.id}`;
             const saved = Boolean(selection.credential_references[key]);
@@ -3415,6 +3440,7 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
           {provider.availability === "manual_only" && <p className="muted">Manual use only; no app connection or MCP registration.</p>}
         </article>;
       })}</div>}
+      {retiredListed && <p className="muted" role="note">GPTImage is retired. Setup no longer installs it; use the ChatGPT sign-in in hoi4-imagegen instead.</p>}
       {message && <p role="status" className="muted">{message}</p>}
       <p className="muted" aria-live="polite">{loadMessage}</p>
     </section>
@@ -3979,6 +4005,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const gitHashes = readinessRow(report, ["git.project", "hashes.managed", "conflicts.resolved", "dependencies.core"]);
   const mesh = readinessRow(report, ["workflow.3d"]);
   const superEvents = readinessRow(report, ["workflow.super_events"]);
+  const imagegenSelected = [state.imageGeneration?.primary_provider, ...(state.imageGeneration?.additional_providers ?? [])].includes(IMAGEGEN_PROVIDER_ID);
   const liveSelected = state.liveTesting?.provider !== "none" && state.selectedComponents.some((id) => id === "workflow.live_testing" || id === "workflow.live_tools");
   const liveCheck = report?.checks.find((check) => check.id === "workflow.live_testing");
   const liveStatus = !liveSelected ? "Not selected" : !report ? "Checking" : liveCheck?.status === "pass" ? "Configured" : "To-do";
@@ -4045,6 +4072,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
             <CheckRow label="Super Events workflow" status={superEvents.status} tone={superEvents.tone} /><CheckRow label="Live testing" status={liveStatus} tone={!liveSelected ? "muted" : liveStatus === "To-do" ? "review" : "info"} />
             <CheckRow label="Portrait production" status={portraitPipeline.enabled ? `${portraitProviderLabel}: ${portraits.status}` : "Disabled"} tone={portraitPipeline.enabled ? portraits.tone : "muted"} />
           </div>
+          {coreReady && imagegenSelected && <ImagegenSignIn projectRoot={state.identity.projectRoot} />}
           {coreReady && portraitPipeline.enabled && <div className="portrait-workflow-note"><ExternalLink href={PORTRAIT_REPOSITORY}>Portrait production source and setup guidance <span aria-hidden="true">↗</span></ExternalLink></div>}
           {coreReady && state.selectedComponents.includes("workflow.live_tools") && <div className="portrait-workflow-note"><ExternalLink href={LIVE_TOOLS_GUIDE}>HOI4 Live Tools setup guide <span aria-hidden="true">↗</span></ExternalLink><small className="muted">Setup installs the live-game server for your user and registers it for the coding clients it finds (see Readiness details for the result); restart your coding client afterwards. The guide is also installed in .claude/skills/hoi4-live-playtest.</small></div>}
           <details>
@@ -4060,6 +4088,66 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
       </div>
     </div>
   );
+}
+
+/**
+ * The optional ChatGPT sign-in for hoi4-imagegen. Setup only launches
+ * `hoi4-imagegen login` and reads `login-status`; the program opens the browser
+ * and keeps its tokens in the operating-system keychain.
+ */
+export function ImagegenSignIn({ projectRoot }: { projectRoot: string }) {
+  const [status, setStatus] = useState<{ signed_in: boolean; detail: string }>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const [riskNote, setRiskNote] = useState<string>();
+  useEffect(() => {
+    if (!isTauriRuntime() || !projectRoot) return;
+    let active = true;
+    void imagegenSignInStatus(projectRoot).then((result) => { if (active && result.value) setStatus(result.value); });
+    return () => { active = false; };
+  }, [projectRoot]);
+  if (!isTauriRuntime() || !projectRoot) return null;
+  // Step one shows the program's own risk note; nothing is launched yet.
+  const showRiskNote = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await imagegenLoginRiskNote(projectRoot);
+      if (result.value) setRiskNote(result.value);
+      else setError(result.error ?? "The sign-in notice could not be shown.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Step two runs only after the user confirmed that note.
+  const signIn = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await imagegenSignIn(projectRoot);
+      setRiskNote(undefined);
+      if (result.value) setStatus(result.value);
+      else setError(result.error ?? "Sign-in could not be started.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className="ready-check-list imagegen-sign-in">
+    <CheckRow label="Image sign-in (optional)" status={status?.signed_in ? "Signed in" : status ? "Not signed in" : "Checking"} tone={status?.signed_in ? "pass" : "muted"} />
+    {!status?.signed_in && !riskNote && <button type="button" className="button secondary ready-panel-action" disabled={busy} aria-busy={busy || undefined} onClick={() => void showRiskNote()}>Sign in with ChatGPT</button>}
+    {!status?.signed_in && riskNote && <div className="ready-panel-note" role="group" aria-label="Sign-in notice">
+      <p style={{ whiteSpace: "pre-wrap" }}>{riskNote}</p>
+      <div className="button-row">
+        <button type="button" className="button secondary ready-panel-action" disabled={busy} aria-busy={busy || undefined} onClick={() => void signIn()}>{busy ? "Waiting for the browser sign-in…" : "I understand, continue"}</button>
+        <button type="button" className="text-button" disabled={busy} onClick={() => setRiskNote(undefined)}>Cancel</button>
+      </div>
+    </div>}
+    <p className="ready-panel-note muted">{status?.signed_in ? "hoi4-imagegen can make images with your ChatGPT plan." : "Shows a short notice, then opens your browser. You can skip this and use an OpenAI, Gemini, fal or ComfyUI key instead."}</p>
+    {status && !status.signed_in && status.detail && <p className="ready-panel-note muted" role="status">{status.detail}</p>}
+    {error && <p className="ready-panel-note" role="alert">{error}</p>}
+  </div>;
 }
 
 function readinessRow(report: ReadinessReport | null, ids: string[]): { status: string; tone: StatusTone } {

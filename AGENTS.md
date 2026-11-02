@@ -383,6 +383,23 @@ when the user checks it on Components and run only by the user; no plan
 prepares a `chatgpt_project_sources/` folder. See
 `docs/33_chatgpt_source_packaging.md`.
 
+## 10A. Image provider: hoi4-imagegen
+
+The default image provider is hoi4-imagegen-mcp, a per-platform release binary
+(`release_binary` route; see `docs/04_remote_repository_manifest.md`). Setup
+downloads only the manifest-declared GitHub release URL, verifies size and
+SHA-256 before opening the archive, extracts only the two declared entries, and
+installs them side by side under `.tools/image_generation/hoi4-imagegen/<version>/`.
+A replaced version is removed only after the new one passes
+`hoi4-imagegen --version` and only while its files match the lock. The ChatGPT
+sign-in belongs to the binary: Setup shows `hoi4-imagegen login-risk-note`, and
+only after the user confirms launches `hoi4-imagegen login --accept-risk` with
+an argument array and reads `login-status`; it never sees, stores or logs the
+tokens. Provider keys stay in the OS credential store, where the binary reads
+them itself; Setup also passes them to the `hoi4-imagegen doctor` process
+through the scoped environment. The retired
+GPTImage route is never installed; older manifests that list it are ignored.
+
 ## 11. UI rules
 
 Use the seven grouped phases:

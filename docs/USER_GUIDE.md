@@ -69,8 +69,8 @@ screen links their setup guide; Aider has no MCP support.
 
 ### Choose how to make images
 
-Pick a main image provider and add optional providers. ChatGPT through GPTImage
-is selected by default. The list also includes image APIs, local servers, Codex
+Pick a main image provider and add optional providers. The ChatGPT sign-in through hoi4-imagegen
+is selected by default (Setup installs it; sign in on the last screen). The list also includes image APIs, local servers, Codex
 image generation when Codex is the main client, and a choice to make art yourself.
 The app stores API keys in the operating-system credential store.
 

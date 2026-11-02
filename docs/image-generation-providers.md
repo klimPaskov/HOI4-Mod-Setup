@@ -18,12 +18,11 @@ Keep API keys in Windows Credential Manager, macOS Keychain or the Linux desktop
 
 ## Subscription and account routes
 
-### ChatGPT subscription through GPTImage
+### ChatGPT sign-in through hoi4-imagegen
 
-- **Route and sign-in:** The installed [GPTImage source repository](https://github.com/Connected-Mate/gptimage) is the source for this local MCP and CLI. The user signs in through a browser with their ChatGPT account; no API key is needed. The current source can read GPTImage or Codex local auth state and calls an undocumented ChatGPT/Codex endpoint. This is an independent, unofficial integration; OpenAI does not publish or support this subscription endpoint.
-- **Cost and model:** No separate API image charge. Generation uses the account’s ChatGPT usage limits, which can change or run out. The checked source defaults to a configurable GPT-5.5 route that calls the image-generation tool; do not promise a particular underlying image model.
-- **References, editing, and alpha:** The pinned MCP revision `dfb4948b6877b5b7febf73e1342fcfacd862a1ed` accepts reference-image paths, discovers project images with `list_references`, and saves PNG. It has one generation tool and no separate edit-session tool. Its current tool schema has no transparent-background setting, so treat output as opaque unless the saved pixels prove otherwise.
-- **Limits:** The tool describes requested output sizes with edges up to 3,840 pixels, dimensions divisible by 16, and a ratio no wider than 3:1. The source does not document the maximum reference-image count or input size.
+- **Route and sign-in:** Setup installs the verified [hoi4-imagegen-mcp](https://github.com/klimPaskov/hoi4-imagegen-mcp) release for the computer's platform. `hoi4-imagegen login` opens the browser and keeps the tokens in the operating-system keychain; Setup only launches it and reads `login-status`. This replaces the retired GPTImage route.
+- **Providers:** After sign-in the ChatGPT route is the default. Optional OpenAI, Gemini, fal and ComfyUI keys are stored in Setup's credential store (service `com.klimpaskov.hoi4-mod-setup`, account `credential://image_generation_api_key/hoi4_imagegen_<field>`). `hoi4-imagegen` and `hoi4-imagegen-mcp` read them from there when the matching environment variable (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `FAL_KEY`, `COMFYUI_API_KEY`) is unset, so nothing needs exporting. The sign-in is `hoi4-imagegen login --accept-risk`, run only after the user confirms the risk note from `hoi4-imagegen login-risk-note`.
+- **Cost and limits:** The ChatGPT route uses the account's plan limits. Check the program's own `doctor` output for what is ready.
 
 ### Codex native ImageGen
 
@@ -32,7 +31,7 @@ Keep API keys in Windows Credential Manager, macOS Keychain or the Linux desktop
 - **References, editing, and alpha:** The built-in tool supports generation, edits, and reference images. Its current source accepts up to five reference paths and has a transparent-background flag. A Codex issue reports transparency can fail when references are included; inspect the actual file’s alpha channel before treating it as a cutout.
 - **Limits:** The public built-in tool schema does not state a reliable maximum output size. The API fallback has its own separate sizes, models, key, and price.
 
-Sources: [GPTImage source and README](https://github.com/Connected-Mate/gptimage) · [Codex image tool](https://github.com/openai/codex/blob/main/codex-rs/ext/image-generation/src/tool.rs) · [Codex image skill](https://github.com/openai/codex/blob/main/codex-rs/skills/src/assets/samples/imagegen/SKILL.md) · [Codex plan access](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan) · [transparency issue with references](https://github.com/openai/codex/issues/42743)
+Sources: [hoi4-imagegen-mcp](https://github.com/klimPaskov/hoi4-imagegen-mcp) · [Codex image tool](https://github.com/openai/codex/blob/main/codex-rs/ext/image-generation/src/tool.rs) · [Codex image skill](https://github.com/openai/codex/blob/main/codex-rs/skills/src/assets/samples/imagegen/SKILL.md) · [Codex plan access](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan) · [transparency issue with references](https://github.com/openai/codex/issues/42743)
 
 ## API routes and hosted MCP services
 

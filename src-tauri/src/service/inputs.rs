@@ -208,9 +208,14 @@ pub(crate) fn image_generation_selection_from_state(
     // lock, never renderer input.
     selection.installed_package_tree_sha256 = None;
     selection.installed_package_lock_sha256 = None;
+    selection.installed_release_version = None;
+    selection.installed_release_tree_sha256 = None;
     if selection.primary_provider.trim().is_empty() {
         selection.primary_provider = default_provider.to_owned();
     }
+    // A saved or defaulted GPTImage choice is replaced by hoi4-imagegen, or
+    // dropped when the source manifest predates it.
+    selection = hoi4_setup_core::image_generation::replace_retired_provider(&selection, manifest).0;
     validate_image_generation_selection(&selection, manifest, environments)?;
     let catalog_providers = manifest
         .image_generation
@@ -1121,6 +1126,11 @@ pub(crate) fn image_generation_credential_field_supported(provider: &str, field:
         | "together_ai"
         | "openrouter"
         | "huggingface_inference" => field == "api_key",
+        // hoi4-imagegen reads these from its own process environment.
+        "hoi4_imagegen" => matches!(
+            field,
+            "openai_api_key" | "gemini_api_key" | "fal_key" | "comfyui_api_key"
+        ),
         "adobe_firefly" => matches!(field, "ims_token" | "service_key"),
         "vertex_imagen" => field == "service_account",
         "microsoft_foundry" => matches!(field, "resource_url" | "api_key"),
