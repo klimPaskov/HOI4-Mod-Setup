@@ -147,7 +147,8 @@ async function commonSetup() {
   // the default image route follows the published kit manifest: hoi4-imagegen once the kit offers it, GPTImage before
   const imagegenRadio = page.getByRole("radio", { name: /hoi4-imagegen/ });
   const gptimageRadio = page.getByRole("radio", { name: /^ChatGPT subscription \(GPTImage\)/ });
-  await expect(imagegenRadio.or(gptimageRadio).first()).toBeVisible({ timeout: 180_000 });
+  // the radios are styled inputs that Playwright does not count as visible; attached is enough to tell the routes apart
+  await expect(imagegenRadio.or(gptimageRadio).first()).toBeAttached({ timeout: 180_000 });
   imageRoute = (await imagegenRadio.count()) > 0 ? "hoi4_imagegen" : "gptimage";
   if (fresh) {
     await expect(imageRoute === "hoi4_imagegen" ? imagegenRadio : gptimageRadio).toBeChecked();
