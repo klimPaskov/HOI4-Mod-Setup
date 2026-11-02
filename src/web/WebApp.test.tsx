@@ -580,7 +580,8 @@ describe("web edition", () => {
     expect(leave()).toBe(false);
     pickFolder(container);
     await screen.findByText("demo_mod");
-    expect(leave()).toBe(true);
+    // The handler is registered by an effect that runs just after the page updates.
+    await waitFor(() => expect(leave()).toBe(true));
   });
 
   it("starts the next mod from a clean page, keeping only the assistant choice", async () => {
