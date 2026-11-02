@@ -248,17 +248,14 @@ fn diff3_lines<'a>(
 }
 
 pub fn structured_toml_merge(base: &str, local: &str, incoming: &str) -> Result<String, AppError> {
-    let base_value: toml::Value = base
-        .parse()
-        .map_err(|error| AppError::Merge(format!("base TOML: {error}")))?;
-    let mut local_value: toml::Value = local
-        .parse()
-        .map_err(|error| AppError::Merge(format!("local TOML: {error}")))?;
-    let incoming_value: toml::Value = incoming
-        .parse()
+    let base_value: toml::Value =
+        toml::from_str(base).map_err(|error| AppError::Merge(format!("base TOML: {error}")))?;
+    let mut local_value: toml::Value =
+        toml::from_str(local).map_err(|error| AppError::Merge(format!("local TOML: {error}")))?;
+    let incoming_value: toml::Value = toml::from_str(incoming)
         .map_err(|error| AppError::Merge(format!("incoming TOML: {error}")))?;
     merge_toml_value(&base_value, &mut local_value, &incoming_value, "")?;
-    Ok(local_value.to_string())
+    toml::to_string(&local_value).map_err(|error| AppError::Merge(format!("merged TOML: {error}")))
 }
 
 fn merge_toml_value(
@@ -386,7 +383,7 @@ pub fn validate_merged_result(kind: FileKind, path: &str, bytes: &[u8]) -> Resul
         FileKind::Toml => {
             let text =
                 std::str::from_utf8(bytes).map_err(|error| AppError::Merge(error.to_string()))?;
-            text.parse::<toml::Value>()
+            toml::from_str::<toml::Value>(text)
                 .map_err(|error| AppError::Merge(format!("invalid TOML result: {error}")))?;
         }
         FileKind::Json => {
@@ -495,6 +492,9 @@ mod tests {
         .unwrap();
         assert!(result.contains("b = 2"));
         assert!(result.contains("c = 3"));
+        // A document with its table header, not an inline value.
+        assert!(result.contains("[server]"));
+        assert!(toml::from_str::<toml::Value>(&result).is_ok());
     }
 
     #[test]

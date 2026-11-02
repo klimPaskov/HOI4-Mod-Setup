@@ -36,6 +36,20 @@ Read:
 - Use weekly Dependabot version updates for npm, Cargo, and Actions, grouped to
   at most one open version-update pull request per ecosystem.
 - Review sensitive dependency changes manually.
+- Dependency bumps follow the pinned toolchain and the shared Tauri line:
+  - `rust-toolchain.toml` pins Rust 1.88.0, so lock Cargo updates with
+    `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo update` (and for
+    `fuzz/Cargo.lock`); a crate that needs a newer Rust (the Tauri 2.12 crates,
+    tauri-plugin-dialog 2.8, tauri-plugin-updater 2.14, tauri-build 2.7,
+    uuid 1.29) waits for a toolchain bump in `rust-toolchain.toml` and every
+    workflow.
+  - `@tauri-apps/api`, `@tauri-apps/cli`, the `tauri` crate and its plugins
+    move together on one minor.
+  - `toml` 1.x parses a *value* with `str::parse::<toml::Value>()`; every
+    TOML document goes through `toml::from_str`.
+  - The core's `getrandom` dependency exists only to enable `wasm_js` on the
+    copy that `jsonschema` and `ahash` use; keep it on the same minor as that
+    copy.
 
 ## Git workflow
 

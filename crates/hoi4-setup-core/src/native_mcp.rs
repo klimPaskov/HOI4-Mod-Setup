@@ -150,10 +150,8 @@ fn json_view(format: McpFormat, bytes: &[u8]) -> Result<Value, AppError> {
         return Err(malformed());
     }
     if format.is_toml() {
-        let config: toml::Value = std::str::from_utf8(bytes)
-            .map_err(|_| malformed())?
-            .parse()
-            .map_err(|_| malformed())?;
+        let text = std::str::from_utf8(bytes).map_err(|_| malformed())?;
+        let config: toml::Value = toml::from_str(text).map_err(|_| malformed())?;
         serde_json::to_value(config).map_err(|_| malformed())
     } else {
         parse_json_lenient(bytes).map_err(|_| malformed())
@@ -250,9 +248,9 @@ pub fn remove_servers(
         ));
     }
     if format.is_toml() {
-        let mut config: toml::Value = std::str::from_utf8(bytes)
-            .map_err(|_| AppError::Source("client MCP configuration is not UTF-8".into()))?
-            .parse()
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| AppError::Source("client MCP configuration is not UTF-8".into()))?;
+        let mut config: toml::Value = toml::from_str(text)
             .map_err(|error: toml::de::Error| AppError::Source(error.to_string()))?;
         if let Some(servers) = config
             .get_mut(format.servers_key())
@@ -304,9 +302,9 @@ pub fn retarget(
         ));
     }
     if format.is_toml() {
-        let mut config: toml::Value = std::str::from_utf8(bytes)
-            .map_err(|_| AppError::Source("client MCP configuration is not UTF-8".into()))?
-            .parse()
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| AppError::Source("client MCP configuration is not UTF-8".into()))?;
+        let mut config: toml::Value = toml::from_str(text)
             .map_err(|error: toml::de::Error| AppError::Source(error.to_string()))?;
         if let Some(servers) = config
             .get_mut(format.servers_key())
@@ -371,7 +369,7 @@ command = 'y'
 ";
         assert!(declares_any(McpFormat::TomlMcpServers, toml_bytes, &ids).unwrap());
         let kept = remove_servers(McpFormat::TomlMcpServers, toml_bytes, &ids).unwrap();
-        let kept: toml::Value = std::str::from_utf8(&kept).unwrap().parse().unwrap();
+        let kept: toml::Value = toml::from_str(std::str::from_utf8(&kept).unwrap()).unwrap();
         assert_eq!(kept["model"].as_str(), Some("kept"));
         let servers = kept["mcp_servers"].as_table().unwrap();
         assert_eq!(servers.keys().collect::<Vec<_>>(), ["custom"]);
