@@ -136,14 +136,21 @@ async function approveSuggestions() {
   await page.getByRole("button", { name: "Confirm Local model suggestions", exact: true }).click();
   await expect(page.getByText("Local model suggestions confirmed", { exact: true })).toBeVisible();
 }
+// which default image route the published kit manifest offered (set by commonSetup on a fresh install)
+let imageRoute = "hoi4_imagegen";
 async function commonSetup() {
   await at("Coding environments");
   await page.getByRole("radiogroup", { name: "Primary coding environment" }).getByRole("radio", { name: /^Claude Code/ }).check();
   await page.getByRole("checkbox", { name: /^Codex / }).check();
   await record("coding-environments"); await next();
   await at("Image generation");
+  // the default image route follows the published kit manifest: hoi4-imagegen once the kit offers it, GPTImage before
+  const imagegenRadio = page.getByRole("radio", { name: /hoi4-imagegen/ });
+  const gptimageRadio = page.getByRole("radio", { name: /^ChatGPT subscription \(GPTImage\)/ });
+  await expect(imagegenRadio.or(gptimageRadio).first()).toBeVisible({ timeout: 180_000 });
+  imageRoute = (await imagegenRadio.count()) > 0 ? "hoi4_imagegen" : "gptimage";
   if (fresh) {
-    await expect(page.getByRole("radio", { name: /^ChatGPT subscription \(GPTImage\)/ })).toBeChecked({ timeout: 180_000 });
+    await expect(imageRoute === "hoi4_imagegen" ? imagegenRadio : gptimageRadio).toBeChecked();
   } else {
     await page.getByRole("radio", { name: /^fal\.ai / }).check();
     await page.getByRole("combobox", { name: "Model", exact: true }).selectOption({ label: "Ideogram V3 Transparent" });
@@ -151,7 +158,8 @@ async function commonSetup() {
   await record("image-provider"); await next();
   await at("Choose what to install");
   await expect(page.getByRole("button", { name: /Image provider MCP adapter/ })).toHaveAttribute("aria-pressed", fresh ? "false" : "true");
-  await expect(page.getByRole("button", { name: /hoi4-imagegen image server/ })).toHaveAttribute("aria-pressed", fresh ? "true" : "false");
+  const imageComponent = imageRoute === "hoi4_imagegen" ? /hoi4-imagegen image server/ : /GPTImage MCP source/;
+  await expect(page.getByRole("button", { name: imageComponent })).toHaveAttribute("aria-pressed", fresh ? "true" : "false");
   await record("selected-components"); await next();
   await at("Optional workflows");
   await expect(page.getByRole("switch", { name: /^HOI4 Live Tools/ })).toBeVisible();
@@ -531,8 +539,8 @@ try {
       const dimensions = await page.evaluate(async (base64) => { const image = new Image(); image.src = `data:image/png;base64,${base64}`; await image.decode(); return [image.naturalWidth, image.naturalHeight]; }, png.toString("base64"));
       assert.deepEqual(dimensions, [600, 600]);
       assert.equal(readiness.checks.find((check) => check.id === "launcher.registration").status, "pass");
-      assert.equal(lock.image_generation.primary_provider, "hoi4_imagegen");
-      assert.ok(lock.image_generation.installed_release_tree_sha256);
+      assert.equal(lock.image_generation.primary_provider, imageRoute);
+      assert.ok(imageRoute === "hoi4_imagegen" ? lock.image_generation.installed_release_tree_sha256 : lock.image_generation.installed_package_tree_sha256);
     } else {
       result.preservation = await assertOriginals(project, original, { gitignoreText });
       assert.equal(readiness.checks.find((check) => check.id === "launcher.registration").status, "not_selected");
