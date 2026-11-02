@@ -643,6 +643,14 @@ try {
   failure = error;
   result.error = String(error.message).replace(/(?:sk-|gh[pousr]_)[A-Za-z0-9_-]+/g, "[REDACTED]").slice(0, 2000);
   if (page) { try { await record("failure"); } catch { /* Keep the primary failure. */ } }
+  // Name the checks that blocked, so a red Ready screen is diagnosable from the artifact.
+  try {
+    const latest = (await journals()).at(-1);
+    if (latest) {
+      const report = JSON.parse(await readFile(join(journalRoot, latest.transaction_id, "readiness-report.json"), "utf8"));
+      result.failureReadiness = report.checks.filter((check) => check.status === "block" || check.status === "fail").map((check) => ({ id: check.id, status: check.status, message: String(check.message ?? "").slice(0, 300), evidence: JSON.stringify(check.evidence ?? []).slice(0, 600) }));
+    }
+  } catch { /* The journal may not hold a report yet. */ }
 } finally {
   try { await stop(); } catch (error) { failure ??= error; result.cleanupError = "Owned app shutdown failed."; }
   await planner?.close().catch(() => {});
