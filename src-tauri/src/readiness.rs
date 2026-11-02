@@ -1101,9 +1101,8 @@ fn add_status_check(
 }
 
 /// The kit's HOI4 wiki folder in an installed project: `hoi4_wiki`, or the
-/// `paradox_wiki` name earlier kit versions used when only that exists.
-/// The wiki folder a project reads. A folder that holds a file wins over an
-/// empty one, because a transaction that moves between kit revisions with
+/// `paradox_wiki` name earlier kit versions used. A folder that holds a file
+/// wins over an empty one, because a transaction that moves between kit revisions with
 /// different wiki names leaves the emptied folder (and its subfolders) in
 /// place until it has committed, and readiness runs before that cleanup.
 pub(crate) fn wiki_folder(project_root: &Path) -> &'static str {
