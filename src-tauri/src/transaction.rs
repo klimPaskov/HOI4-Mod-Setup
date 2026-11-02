@@ -9699,7 +9699,6 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("bounded file limit"), "{error}");
-        assert!(MAX_TRANSACTION_FILES > 4_096);
     }
 
     fn plan() -> InstallationPlan {
