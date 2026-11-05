@@ -32,7 +32,7 @@ pub fn credential_variable_allowed(name: &str) -> bool {
             .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
     shaped
         && (name.ends_with("_KEY") || name.ends_with("_TOKEN"))
-        && !["ANTHROPIC_", "OPENROUTER_", "MESHY_", "CLAUDE_", "CODEX_"]
+        && !["ANTHROPIC_", "MESHY_", "CLAUDE_", "CODEX_"]
             .iter()
             .any(|prefix| name.starts_with(prefix))
 }
