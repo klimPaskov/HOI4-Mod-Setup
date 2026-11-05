@@ -125,7 +125,8 @@ test("a new mod downloads verified files and produces a ZIP", async ({ page, bro
   await page.getByRole("button", { name: "Continue" }).click();
   // Format 6 sources offer image, portrait, and live-testing integrations.
   await expect(page.getByRole("heading", { name: "Choose integrations" })).toBeVisible();
-  await page.getByRole("checkbox", { name: /Install hoi4-imagegen/ }).uncheck();
+  // The pinned source predates hoi4-imagegen, so there is nothing to install and the art stays manual.
+  await expect(page.getByText(/no image generator to install/)).toBeVisible();
   await page.getByRole("button", { name: "Download and review" }).click({ timeout: 60_000 });
   await expect(page.getByRole("heading", { name: "Review the changes" })).toBeVisible({ timeout: 180_000 });
   const download = page.waitForEvent("download");

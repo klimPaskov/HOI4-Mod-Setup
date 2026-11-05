@@ -57,6 +57,7 @@ export default function IntegrationsStep({ providers, image, onImage, portraitsA
       {providers.length > 0 && (
         <section className="panel form-panel" aria-labelledby="images-title">
           <h2 id="images-title" className="panel-title">Image generation</h2>
+          {!imagegen && legacy.length === 0 && <p className="muted">This setup version has no image generator to install. You make the art yourself.</p>}
           {imagegen && legacy.length === 0 && (
             <label className="check-row">
               <input type="checkbox" name="web-image-generation" checked={usingImagegen} onChange={(event) => onImage({ ...image, primary_provider: event.target.checked ? imagegen.id : NO_IMAGE_PROVIDER, additional_providers: [] })} />
