@@ -3502,7 +3502,7 @@ fn backup_existing(
             journal.last_checkpoint = format!("backup-file-{}", operation.id);
             append_operation_checkpoint(store, journal, operation_index)?;
             checkpointed += 1;
-            if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
+            if checkpointed.is_multiple_of(OPERATION_CHECKPOINT_BATCH) {
                 compact_operation_checkpoints(store, journal)?;
             }
         }
@@ -3573,7 +3573,7 @@ fn stage_files(
         journal.last_checkpoint = format!("stage-file-{}", operation.id);
         append_operation_checkpoint(store, journal, operation_index)?;
         checkpointed += 1;
-        if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
+        if checkpointed.is_multiple_of(OPERATION_CHECKPOINT_BATCH) {
             compact_operation_checkpoints(store, journal)?;
         }
     }
@@ -7105,7 +7105,7 @@ fn prepare_rollback_transaction(
         rollback.last_checkpoint = format!("rollback-backup-{}", operation.id);
         append_operation_checkpoint(&store, &mut rollback, index)?;
         checkpointed += 1;
-        if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
+        if checkpointed.is_multiple_of(OPERATION_CHECKPOINT_BATCH) {
             compact_operation_checkpoints(&store, &mut rollback)?;
         }
     }
@@ -7448,8 +7448,9 @@ pub fn rollback_transaction(
         let operation_count = journal.operations.len();
         for index in (0..operation_count).rev() {
             let processed = operation_count - 1 - index;
-            let batch_complete = (processed + 1) % OPERATION_CHECKPOINT_BATCH == 0 || index == 0;
-            if processed % OPERATION_INTENT_BATCH == 0 {
+            let batch_complete =
+                (processed + 1).is_multiple_of(OPERATION_CHECKPOINT_BATCH) || index == 0;
+            if processed.is_multiple_of(OPERATION_INTENT_BATCH) {
                 let batch_start = index.saturating_sub(OPERATION_INTENT_BATCH - 1);
                 let intent_indices = (batch_start..=index)
                     .rev()
@@ -10161,7 +10162,7 @@ mod tests {
                 .iter()
                 .map(|operation| operation.destination.clone())
                 .collect::<Vec<_>>();
-            assert_eq!(&destinations, &[incoming.clone()]);
+            assert_eq!(&destinations, std::slice::from_ref(incoming));
             // The check validate_plan makes on every plan.
             hoi4_setup_core::text::validate_destination_set(&destinations).unwrap();
             assert!(operations
@@ -10322,7 +10323,8 @@ my tweak
         // The next update, with the same source, keeps the edit.
         fs::create_dir_all(project.path().join("skills")).unwrap();
         fs::write(project.path().join("skills/SKILL.md"), merged).unwrap();
-        let operations = update_operations(&lock, &[locked.clone()], project.path()).unwrap();
+        let operations =
+            update_operations(&lock, std::slice::from_ref(locked), project.path()).unwrap();
         let operation = operations
             .iter()
             .find(|operation| operation.destination == "skills/SKILL.md")

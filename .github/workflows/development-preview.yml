@@ -58,8 +58,8 @@ jobs:
       - name: Configure Rust
         shell: bash
         run: |
-          rustup toolchain install 1.88.0 --profile minimal
-          rustup default 1.88.0
+          rustup toolchain install 1.90.0 --profile minimal
+          rustup default 1.90.0
       - name: Install Linux native dependencies
         if: runner.os == 'Linux'
         shell: bash

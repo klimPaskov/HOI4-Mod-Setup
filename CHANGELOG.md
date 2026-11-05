@@ -4,6 +4,7 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Build with Rust 1.90 and Tauri 2.12. The Tauri 2.12 crates require rustc 1.90, so the pinned toolchain and every workflow move from 1.88.0; contributors run `rustup toolchain install 1.90.0` as `DEVELOPMENT.md` says. Other crate and npm updates are included, with Playwright held at 1.62.1.
 ## 0.9.2 - 2026-11-05
 
 - Keep a local edit the user chose to keep through the development-tools step. After a client is deselected, an edited file Setup keeps (for example `.kiro/agents/<agent>.md`) sat in a folder the package's `check.py setup` still maintains, and the command regenerated it and discarded the edit. Setup now remembers the kept files before the command runs and puts their bytes back, and says so on the Ready screen.

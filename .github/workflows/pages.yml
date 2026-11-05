@@ -44,9 +44,9 @@ jobs:
       - name: Configure Rust
         shell: bash
         run: |
-          rustup toolchain install 1.88.0 --profile minimal
-          rustup default 1.88.0
-          rustup target add wasm32-unknown-unknown --toolchain 1.88.0
+          rustup toolchain install 1.90.0 --profile minimal
+          rustup default 1.90.0
+          rustup target add wasm32-unknown-unknown --toolchain 1.90.0
       - name: Install the wasm-bindgen CLI that matches Cargo.lock
         shell: bash
         run: |
