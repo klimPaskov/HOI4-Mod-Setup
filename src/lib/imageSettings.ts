@@ -32,9 +32,28 @@ export function imageSettingProblem(kind: string, value: string): string | null 
       return "Enter an http or https address without a user name.";
     }
   }
+  if (kind === "text") return /^[A-Za-z0-9._:/-]+$/.test(value) ? null : "Use letters, digits and . _ : / - only.";
   if (kind === "project_path") {
     const ok = !value.startsWith("/") && !value.includes("\\") && !value.includes(":") && !value.split("/").some((part) => part === ".." || part === "") && value.toLowerCase().endsWith(".json");
     return ok ? null : "Enter a .json path inside the project, with forward slashes.";
   }
   return "This setting kind is not supported.";
+}
+
+interface BackendLike {
+  id: string;
+  default?: boolean;
+  settings: Array<{ key: string; kind: string; required: boolean; default?: string | null }>;
+}
+
+/** The first problem in the chosen backend's settings: a refused value, or a required one left empty. */
+export function backendSettingsProblem(backends: BackendLike[], values: Record<string, string> | undefined): string | null {
+  const backend = backends.find((option) => option.id === values?.backend) ?? backends.find((option) => option.default) ?? backends[0];
+  for (const setting of backend?.settings ?? []) {
+    const value = values?.[setting.key] ?? "";
+    if (!value && setting.required && !setting.default) return `${imageSettingLabel(setting.key)} is required.`;
+    const problem = imageSettingProblem(setting.kind, value);
+    if (problem) return `${imageSettingLabel(setting.key)}: ${problem}`;
+  }
+  return null;
 }

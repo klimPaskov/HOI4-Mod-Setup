@@ -105,6 +105,7 @@ export interface ImageBackend {
   id: string;
   display_name: string;
   default: boolean;
+  live_verified?: boolean;
   credential_field: string | null;
   settings: ImageBackendSetting[];
 }

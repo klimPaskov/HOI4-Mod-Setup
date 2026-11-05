@@ -1400,7 +1400,8 @@
                       "type": "string",
                       "enum": [
                         "url",
-                        "project_path"
+                        "project_path",
+                        "text"
                       ]
                     },
                     "required": {
@@ -1412,6 +1413,10 @@
                     }
                   }
                 }
+              },
+              "live_verified": {
+                "type": "boolean",
+                "description": "False when the backend has not been verified against the real service; Setup shows an untested hint."
               }
             }
           }

@@ -1,3 +1,4 @@
+import { backendSettingsProblem } from "./lib/imageSettings";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -330,6 +331,27 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/must use https/);
     fireEvent.click(screen.getByRole("radio", { name: /^OpenAI/ }));
     expect(JSON.parse(screen.getByLabelText("route settings").textContent!)).toEqual({ hoi4_imagegen: { backend: "openai" } });
+  });
+
+  it("marks an untested backend and asks for a required setting before continuing", () => {
+    window.history.replaceState({}, "", "/?screenshot=image-generation");
+    const fixture = structuredClone(documentationFixture(readyState()));
+    const imagegen = fixture.manifestPreview!.image_generation!.providers.find((provider) => provider.route.kind === "release_binary")!;
+    imagegen.route.backends = [
+      ...imagegen.route.backends!,
+      { id: "openai_compatible", display_name: "OpenAI-compatible", default: false, live_verified: false, credential_field: null, replaces_providers: [], settings: [{ key: "providers.openai_compatible.base_url", kind: "url", required: true, default: null }] },
+    ];
+    function ControlledImageStep() {
+      const [state, setState] = useState(fixture);
+      return <><ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} /><output aria-label="settings problem">{backendSettingsProblem(imagegen.route.backends!, state.imageGeneration.route_settings.hoi4_imagegen) ?? "none"}</output></>;
+    }
+    render(<ControlledImageStep />);
+    expect(screen.getByLabelText("settings problem")).toHaveTextContent("none");
+    expect(screen.getAllByText("Untested with the real service.")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("radio", { name: /^OpenAI-compatible/ }));
+    expect(screen.getByLabelText("settings problem")).toHaveTextContent("Base url is required.");
+    fireEvent.change(screen.getByLabelText("Base url"), { target: { value: "https://api.example.com/v1" } });
+    expect(screen.getByLabelText("settings problem")).toHaveTextContent("none");
   });
 
   it("changes nothing when the key move fails", async () => {

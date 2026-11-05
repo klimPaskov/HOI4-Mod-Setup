@@ -1077,7 +1077,6 @@ fn only_key_shaped_variables_ever_reach_hoi4_imagegen() {
         "KEY",
         "ANTHROPIC_API_KEY",
         "MESHY_API_KEY",
-        "OPENROUTER_API_KEY",
         "HOME_KEY=1",
         "",
     ] {
@@ -1091,4 +1090,29 @@ fn only_key_shaped_variables_ever_reach_hoi4_imagegen() {
     assert!(!credential_field_allowed("Fal_Key"));
     assert!(!credential_field_allowed("../fal_key"));
     assert!(!credential_field_allowed("anthropic_api_key"));
+}
+
+#[test]
+fn every_hoi4_imagegen_v0_3_backend_key_is_accepted() {
+    use crate::imagegen::{credential_field_allowed, credential_variable};
+    for (field, variable) in [
+        ("openai_api_key", "OPENAI_API_KEY"),
+        ("gemini_api_key", "GEMINI_API_KEY"),
+        ("fal_key", "FAL_KEY"),
+        ("comfyui_api_key", "COMFYUI_API_KEY"),
+        ("replicate_api_token", "REPLICATE_API_TOKEN"),
+        ("bfl_api_key", "BFL_API_KEY"),
+        ("leonardo_api_key", "LEONARDO_API_KEY"),
+        ("stability_api_key", "STABILITY_API_KEY"),
+        ("ideogram_api_key", "IDEOGRAM_API_KEY"),
+        ("recraft_api_key", "RECRAFT_API_KEY"),
+        ("xai_api_key", "XAI_API_KEY"),
+        ("together_api_key", "TOGETHER_API_KEY"),
+        ("openrouter_api_key", "OPENROUTER_API_KEY"),
+        ("hf_token", "HF_TOKEN"),
+        ("openai_compatible_api_key", "OPENAI_COMPATIBLE_API_KEY"),
+    ] {
+        assert!(credential_field_allowed(field), "{field}");
+        assert_eq!(credential_variable(field), variable);
+    }
 }

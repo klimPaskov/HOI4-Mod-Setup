@@ -1,7 +1,7 @@
 // Pure rules for the web edition's integration choices, matching the core's
 // validation so the page never offers a choice the core will refuse.
 
-import { imageSettingLabel, imageSettingProblem, isLoopbackUrl } from "../lib/imageSettings";
+import { backendSettingsProblem, imageSettingLabel, imageSettingProblem, isLoopbackUrl } from "../lib/imageSettings";
 import type { ImageChoice, ImageProvider, LiveTestingChoice, PortraitChoice, SourcePreview } from "./protocol";
 
 export { imageSettingLabel, imageSettingProblem, isLoopbackUrl };
@@ -79,11 +79,5 @@ export function portraitProblem(choice: PortraitChoice): string | null {
 export function imageChoiceProblem(choice: ImageChoice, providers: ImageProvider[]): string | null {
   const row = providers.find((provider) => provider.route_kind === "release_binary");
   if (!row || choice.primary_provider !== row.id) return null;
-  const backends = row.backends ?? [];
-  const backend = backends.find((option) => option.id === choice.route_settings[row.id]?.backend) ?? backends.find((option) => option.default) ?? backends[0];
-  for (const setting of backend?.settings ?? []) {
-    const problem = imageSettingProblem(setting.kind, choice.route_settings[row.id]?.[setting.key] ?? "");
-    if (problem) return `${imageSettingLabel(setting.key)}: ${problem}`;
-  }
-  return null;
+  return backendSettingsProblem(row.backends ?? [], choice.route_settings[row.id]);
 }

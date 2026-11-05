@@ -78,7 +78,7 @@ export default function IntegrationsStep({ providers, image, onImage, portraitsA
                 {backends.map((option) => (
                   <label className="radio-option" key={option.id}>
                     <input type="radio" name="web-image-backend" value={option.id} checked={backend?.id === option.id} onChange={() => chooseBackend(option.id)} />
-                    <span><strong>{option.display_name}</strong>{option.default && <small>Default. Signs in with your ChatGPT account.</small>}</span>
+                    <span><strong>{option.display_name}</strong>{option.default && <small>Default. Signs in with your ChatGPT account.</small>}{option.live_verified === false && <small>Untested with the real service.</small>}</span>
                   </label>
                 ))}
               </div>

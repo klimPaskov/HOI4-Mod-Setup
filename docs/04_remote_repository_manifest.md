@@ -291,8 +291,12 @@ appears in Setup without an app release. The route may carry an optional
   `.hoi4-imagegen/config.toml`. `key` is the dotted TOML path (it starts with
   `providers.`, so `policy`, `profiles` and `templates` are never touched) and
   `kind` is `url` (https anywhere, or http on this computer, with no user
-  name) or `project_path` (a `.json` path inside the project). Setup asks for
+  name), `project_path` (a `.json` path inside the project) or `text` (letters,
+  digits and `. _ : / -`, such as a model name). A `required` setting without a
+  `default` must be filled in before setup continues. Setup asks for
   each one beside the backend and writes it there.
+- `live_verified: false` marks a backend not yet verified against the real
+  service; the picker shows an "untested" hint.
 - `replaces_providers` lists older provider rows the backend covers. Update and
   repair offer to move a project that records one of them, and the stored key
   of a row with one key moves to `credential_field` without being shown.
@@ -302,7 +306,7 @@ A package that omits `backends` still works: Setup derives the list from
 and maps an older provider onto the backend whose key is read from the same
 environment variable. A credential field must be a lower-case id that, in upper
 case, is a variable name ending in `_KEY` or `_TOKEN` (not an Anthropic,
-OpenRouter, Meshy, Claude or Codex name), so a package can name a new backend's
+Meshy, Claude or Codex name), so a package can name a new backend's
 key without being able to name any other variable.
 
 When the user picks a backend, Setup merges it into the project's

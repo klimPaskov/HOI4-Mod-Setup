@@ -61,6 +61,8 @@ export interface ImageBackend {
   id: string;
   display_name: string;
   default: boolean;
+  /** False until the backend has been verified against the real service. */
+  live_verified?: boolean;
   credential_field: string | null;
   /** Values the backend reads from .hoi4-imagegen/config.toml. */
   settings: ImageBackendSetting[];

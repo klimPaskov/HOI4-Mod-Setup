@@ -32,6 +32,8 @@ pub struct Backend {
     pub id: String,
     pub display_name: String,
     pub default: bool,
+    /// Whether the backend has been verified against the real service. Shown as a hint.
+    pub live_verified: bool,
     /// The `credential_fields` entry that holds this backend's key, if any.
     pub credential_field: Option<String>,
     /// Settings the backend reads from the project's `.hoi4-imagegen/config.toml`.
@@ -113,8 +115,8 @@ fn setting_key_like(key: &str) -> bool {
 
 fn listed_setting(entry: &Value) -> Option<BackendSetting> {
     let key = text(entry, "key").filter(|key| setting_key_like(key))?;
-    let kind =
-        text(entry, "kind").filter(|kind| matches!(kind.as_str(), "url" | "project_path"))?;
+    let kind = text(entry, "kind")
+        .filter(|kind| matches!(kind.as_str(), "url" | "project_path" | "text"))?;
     Some(BackendSetting {
         key,
         kind,
@@ -145,6 +147,12 @@ pub fn setting_value_problem(kind: &str, value: &str) -> Option<&'static str> {
             } else {
                 None
             }
+        }
+        "text" => {
+            let plain = value.bytes().all(|b| {
+                b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'/' | b'-')
+            });
+            (!plain).then_some("use letters, digits and . _ : / - only")
         }
         "project_path" => {
             let relative =
@@ -214,6 +222,12 @@ pub fn project_config_content(
             .map(String::as_str)
             .filter(|value| !value.is_empty())
             .or(setting.default.as_deref().filter(|_| setting.required));
+        if value.is_none() && setting.required {
+            return Err(crate::AppError::InvalidInput(format!(
+                "{}: this setting is required",
+                setting.key
+            )));
+        }
         if let Some(value) = value {
             if let Some(problem) = setting_value_problem(&setting.kind, value) {
                 return Err(crate::AppError::InvalidInput(format!(
@@ -244,6 +258,7 @@ fn derived_backend(field_id: &str, display_name: &str) -> Option<Backend> {
         id: id.to_owned(),
         display_name: display.to_owned(),
         default: false,
+        live_verified: false,
         credential_field: Some(field_id.to_owned()),
         settings: Vec::new(),
         replaces_providers: Vec::new(),
@@ -264,6 +279,7 @@ fn listed_backend(entry: &Value, fields: &[(String, String, String)]) -> Option<
         id,
         display_name,
         default: entry.get("default").and_then(Value::as_bool) == Some(true),
+        live_verified: entry.get("live_verified").and_then(Value::as_bool) != Some(false),
         credential_field,
         settings: entry
             .get("settings")
@@ -311,6 +327,7 @@ pub fn backends(provider: &Value) -> Vec<Backend> {
             id: DEFAULT_BACKEND_ID.into(),
             display_name: "ChatGPT sign-in".into(),
             default: true,
+            live_verified: true,
             credential_field: None,
             settings: Vec::new(),
             replaces_providers: Vec::new(),
@@ -625,6 +642,81 @@ mod tests {
             setting_value_problem("project_path", "workflows/a.json"),
             None
         );
+    }
+
+    fn compatible_row() -> Value {
+        route(json!({"credential_fields": [
+            {"id": "openai_compatible_api_key", "display_name": "Key", "environment_name": "OPENAI_COMPATIBLE_API_KEY"}
+        ], "backends": [
+            {"id": "chatgpt_login", "display_name": "ChatGPT sign-in", "default": true},
+            {"id": "openai_compatible", "display_name": "OpenAI-compatible", "credential_field": "openai_compatible_api_key", "live_verified": false, "settings": [
+                {"key": "providers.openai_compatible.base_url", "kind": "url", "required": true},
+                {"key": "providers.openai_compatible.model", "kind": "text", "required": true}
+            ]}
+        ]}))
+    }
+
+    #[test]
+    fn a_required_setting_without_a_default_must_be_filled_in() {
+        let none = chosen("openai_compatible", &[]);
+        assert!(project_config_content(&compatible_row(), Some(&none), None).is_err());
+        let only_url = chosen(
+            "openai_compatible",
+            &[(
+                "providers.openai_compatible.base_url",
+                "https://api.example.com/v1",
+            )],
+        );
+        assert!(project_config_content(&compatible_row(), Some(&only_url), None).is_err());
+        let both = chosen(
+            "openai_compatible",
+            &[
+                (
+                    "providers.openai_compatible.base_url",
+                    "https://api.example.com/v1",
+                ),
+                ("providers.openai_compatible.model", "gpt-image-1"),
+            ],
+        );
+        let written = project_config_content(&compatible_row(), Some(&both), None)
+            .unwrap()
+            .unwrap();
+        let table = written.parse::<toml::Table>().unwrap();
+        assert_eq!(
+            table["providers"]["openai_compatible"]["model"].as_str(),
+            Some("gpt-image-1")
+        );
+        assert_eq!(
+            table["defaults"]["provider"].as_str(),
+            Some("openai_compatible")
+        );
+    }
+
+    #[test]
+    fn a_text_setting_accepts_a_model_name_and_refuses_anything_else() {
+        for ok in ["gpt-image-1", "black-forest-labs/flux-1.1", "model:2025_01"] {
+            assert_eq!(setting_value_problem("text", ok), None, "{ok}");
+        }
+        for bad in [
+            "has space",
+            "semi;colon",
+            "quote\"x",
+            "new
+line",
+            "",
+        ] {
+            assert!(setting_value_problem("text", bad).is_some(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_unverified_backend_is_marked_and_the_default_is_not() {
+        let offered = backends(&compatible_row());
+        assert!(offered[0].live_verified);
+        assert!(!offered[1].live_verified);
+        // Derived backends have not been verified either.
+        let derived = backends(&route(json!({})));
+        assert!(derived[0].live_verified && !derived[1].live_verified);
     }
 
     #[test]
