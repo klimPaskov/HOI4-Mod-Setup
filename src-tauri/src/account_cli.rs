@@ -860,7 +860,7 @@ fn runtime(provider: &str) -> Result<Runtime, AppError> {
             timeout_seconds: 5,
             max_output_bytes: 128,
         }
-        .run_reviewed_tool(&[node.clone()], &[], None, None, true)?;
+        .run_reviewed_tool(std::slice::from_ref(&node), &[], None, None, true)?;
         if version.timed_out
             || version.status_code != Some(0)
             || version.stdout_truncated
@@ -1123,7 +1123,7 @@ fn run(
     };
     runtime.tree.verify()?;
     let result = spec.run_reviewed_tool(
-        &[runtime.executable.clone()],
+        std::slice::from_ref(&runtime.executable),
         &environment(provider, &home, &root, false),
         stdin,
         should_stop,
@@ -2476,7 +2476,7 @@ fn run_interactive(provider: &str, id: Uuid, logout: bool) -> Result<(), AppErro
         timeout_seconds: 600,
         max_output_bytes: MAX_RESPONSE,
     };
-    spec.validate(&[runtime.executable.clone()])?;
+    spec.validate(std::slice::from_ref(&runtime.executable))?;
     let mut command = Command::new(&runtime.executable);
     configure_command(&mut command, provider, &home, &root, &workspace, true);
     command
@@ -3455,7 +3455,7 @@ mod tests {
             };
             let result = spec
                 .run_reviewed_tool(
-                    &[executable.clone()],
+                    std::slice::from_ref(&executable),
                     &environment(provider, &home, root.path(), false),
                     None,
                     None,

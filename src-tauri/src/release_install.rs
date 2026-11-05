@@ -234,7 +234,7 @@ fn extract_zip(bytes: &[u8], wanted: &BTreeSet<&str>) -> Result<Vec<ExtractedFil
             + le16(bytes, local_offset + 26)? as usize
             + le16(bytes, local_offset + 28)? as usize;
         let data = bytes
-            .get(data_start..data_start.checked_add(compressed).unwrap_or(usize::MAX))
+            .get(data_start..data_start.saturating_add(compressed))
             .ok_or_else(|| refused("truncated zip entry"))?;
         let content = match method {
             0 => {

@@ -1544,7 +1544,9 @@ process.stdout.write(JSON.stringify(Object.fromEntries(names.map((name) => [name
             max_output_bytes: 1024 * 1024,
         };
         assert_eq!(
-            init.run_git_read_only(&[git.clone()]).unwrap().status_code,
+            init.run_git_read_only(std::slice::from_ref(&git))
+                .unwrap()
+                .status_code,
             Some(0)
         );
         fs::write(

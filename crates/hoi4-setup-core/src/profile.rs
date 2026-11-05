@@ -517,7 +517,7 @@ impl Profiler {
                 self.result.problems.insert("group_limit");
             }
         }
-        FileRecord::Recorded(self.result.stats.files_indexed % 256 == 0)
+        FileRecord::Recorded(self.result.stats.files_indexed.is_multiple_of(256))
     }
 
     /// Read the scheduled samples through `read` (first `PREFIX_BYTES` and the

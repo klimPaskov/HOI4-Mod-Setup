@@ -7,7 +7,7 @@ This document is for contributors building HOI4 Mod Setup from source. End users
 - Git
 - Node.js 22 or the version declared by the repository toolchain file
 - Corepack and pnpm
-- Rust 1.88.0 toolchain from `rust-toolchain.toml`
+- Rust 1.90.0 toolchain from `rust-toolchain.toml`
 - Tauri platform prerequisites
 - Python 3.13 or the version declared by repository automation for planning and schema validation
 
@@ -20,9 +20,9 @@ git clone https://github.com/klimPaskov/HOI4-Mod-Setup.git
 cd HOI4-Mod-Setup
 corepack enable
 pnpm install --frozen-lockfile
-rustup toolchain install 1.88.0 --profile minimal
-rustup default 1.88.0
-rustup component add rustfmt clippy --toolchain 1.88.0
+rustup toolchain install 1.90.0 --profile minimal
+rustup default 1.90.0
+rustup component add rustfmt clippy --toolchain 1.90.0
 ```
 
 `pnpm-workspace.yaml` explicitly permits the reviewed `esbuild` install

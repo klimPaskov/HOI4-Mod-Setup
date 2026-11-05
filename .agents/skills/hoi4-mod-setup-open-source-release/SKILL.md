@@ -37,7 +37,7 @@ Read:
   at most one open version-update pull request per ecosystem.
 - Review sensitive dependency changes manually.
 - Dependency bumps follow the pinned toolchain and the shared Tauri line:
-  - `rust-toolchain.toml` pins Rust 1.88.0, so lock Cargo updates with
+  - `rust-toolchain.toml` pins Rust 1.90.0, so lock Cargo updates with
     `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo update` (and for
     `fuzz/Cargo.lock`); a crate that needs a newer Rust (the Tauri 2.12 crates,
     tauri-plugin-dialog 2.8, tauri-plugin-updater 2.14, tauri-build 2.7,

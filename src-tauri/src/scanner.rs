@@ -1341,7 +1341,7 @@ impl<'a> ProjectWalk<'a> {
             self.timed_out(current);
             return SetupStep::End;
         }
-        if entry_index % 128 == 0
+        if entry_index.is_multiple_of(128)
             && (!scan_path_identity_matches(root, self.root_identity)
                 || !scan_path_identity_matches(current, directory_identity))
         {
@@ -1559,7 +1559,7 @@ impl<'a> ProjectWalk<'a> {
             bytes,
             is_symlink: false,
         });
-        if self.observations.len() == 1 || self.observations.len() % 128 == 0 {
+        if self.observations.len() == 1 || self.observations.len().is_multiple_of(128) {
             emit_progress(
                 &mut self.progress,
                 "discovering_files",
