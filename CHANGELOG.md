@@ -4,12 +4,15 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.9.2 - 2026-11-05
+
 - Keep a local edit the user chose to keep through the development-tools step. After a client is deselected, an edited file Setup keeps (for example `.kiro/agents/<agent>.md`) sat in a folder the package's `check.py setup` still maintains, and the command regenerated it and discarded the edit. Setup now remembers the kept files before the command runs and puts their bytes back, and says so on the Ready screen.
 - Allow an install that adds several coding clients. One transaction was limited to 4,096 files, but each client with its own skills copy (Codex, Qwen Code, Kiro, Grok Build) is about 890 files, so selecting several of them stopped before applying with "prepared transaction payload exceeds the bounded file limit". The limit now follows the manifest's own aggregate bound (20,000 selected files plus generated files).
 - Make the hoi4-imagegen install one checkbox and open its sign-in by itself. The image step is a single "Install hoi4-imagegen" checkbox (unchecked means none) with the other backends behind **Use another backend**, on desktop and web. After setup the Ready screen opens the ChatGPT sign-in once per project and session, shows the program's notice as information, and treats a completed sign-in as acceptance: there is no typed answer and no confirmation screen. A failed or cancelled sign-in offers **Try again**. This replaces the confirm-then-launch step.
 - Offer only hoi4-imagegen in the image step, with a backend picker. The ChatGPT sign-in is pre-selected; the other backends (OpenAI, Gemini, fal, ComfyUI today) come from the setup package's `image_generation` row, so a backend added to hoi4-imagegen appears without an app release. "None, I make art myself" stays. The separate provider entries and the optional-providers choice are gone, on desktop and on the web. The choice is recorded as `route_settings.hoi4_imagegen.backend`.
 - Keep an older image provider working. A project that records one (OpenAI Images, Gemini, fal, Codex image generation, and so on) keeps it through Update and Repair. When a backend now covers it, Update and repair offers to move it to hoi4-imagegen, and a stored key moves inside the credential store without being shown. A provider no backend covers yet is left exactly as recorded.
 - Accept a new backend's key by shape. hoi4-imagegen key fields and variables were a fixed list of four. A key field is now accepted when it is a lower-case id that, in upper case, is a variable ending in `_KEY` or `_TOKEN` (never an Anthropic, Meshy, Claude or Codex name), so a new backend's key can be stored without an app release.
+- Say so on the web image step when the source version has no image generator, instead of showing an empty panel.
 - Show the ChatGPT sign-in on the Ready screen only when the default backend is in use.
 - Read a backend's `live_verified: false` as an "untested" hint in the picker, accept a `text` setting kind (for example a model name), and require a backend's `required` settings that have no default before setup continues. OpenRouter is accepted as a backend key name.
 
