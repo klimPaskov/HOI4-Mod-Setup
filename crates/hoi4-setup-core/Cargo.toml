@@ -33,4 +33,4 @@ uuid = { version = "1.17", features = ["serde"] }
 # jsonschema hashes with ahash, which seeds from getrandom; in the browser that
 # randomness comes from the Web Crypto API.
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
