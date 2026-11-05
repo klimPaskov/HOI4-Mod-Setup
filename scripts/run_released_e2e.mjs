@@ -651,6 +651,15 @@ try {
       result.failureReadiness = report.checks.filter((check) => check.status === "block" || check.status === "fail").map((check) => ({ id: check.id, status: check.status, message: String(check.message ?? "").slice(0, 300), evidence: JSON.stringify(check.evidence ?? []).slice(0, 600) }));
     }
   } catch { /* The journal may not hold a report yet. */ }
+  // The Ready screen re-evaluates readiness from the project on disk; ask the app the same question.
+  try {
+    const live = await page.evaluate(async (root) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      if (!invoke) return null;
+      return invoke("evaluate_readiness", { input: { project_root: root, project_id: root.split(/[\/]/).pop(), workflow_3d_state: "not_selected", notes: [] } });
+    }, project);
+    if (live?.checks) result.failureLiveReadiness = live.checks.filter((check) => check.status === "block" || check.status === "warn").map((check) => ({ id: check.id, status: check.status, blocking: check.blocking, message: String(check.message ?? "").slice(0, 300), evidence: JSON.stringify(check.evidence ?? []).slice(0, 800) }));
+  } catch (error) { result.failureLiveReadiness = `unavailable: ${String(error?.message ?? error).slice(0, 200)}`; }
 } finally {
   try { await stop(); } catch (error) { failure ??= error; result.cleanupError = "Owned app shutdown failed."; }
   await planner?.close().catch(() => {});
