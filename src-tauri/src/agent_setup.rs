@@ -33,7 +33,20 @@ const REWRITABLE_EXACT: &[&str] = &[
     ".claude/agent-map.md",
     ".tools/quality_baseline.json",
 ];
-const REWRITABLE_PREFIXES: &[&str] = &[".codex/", ".cursor/", ".opencode/", ".qoder/", ".agents/"];
+const REWRITABLE_PREFIXES: &[&str] = &[
+    ".codex/",
+    ".cursor/",
+    ".opencode/",
+    ".qoder/",
+    ".agents/",
+    ".gemini/",
+    ".kilo/",
+    ".kiro/",
+    ".qwen/",
+    ".devin/",
+    ".augment/",
+    ".grok/",
+];
 
 pub fn rewritable(path: &str) -> bool {
     let path = path.replace('\\', "/");
@@ -199,6 +212,63 @@ pub fn snapshot(
     Ok(hashes)
 }
 
+const MAX_KEPT_FILES: usize = 256;
+const MAX_KEPT_FILE_BYTES: u64 = 4 * 1024 * 1024;
+
+/// The files the user chose to keep in this transaction (a modified file the
+/// plan skips), with the bytes they have now. The setup command regenerates
+/// whole projection folders, so it can rewrite a kept edit without the lock
+/// noticing: the file is no longer tracked. Setup puts these bytes back.
+pub fn kept_files(
+    root: &Path,
+    plan: &InstallationPlan,
+) -> Result<Vec<(String, Vec<u8>)>, AppError> {
+    let mut kept = Vec::new();
+    for operation in plan.operations.iter().filter(|operation| {
+        !operation.external
+            && operation.action == OperationAction::Skip
+            && operation.local_state == LocalState::Modified
+    }) {
+        if kept.len() >= MAX_KEPT_FILES {
+            break;
+        }
+        let path = crate::security::safe_join(root, &operation.destination)?;
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata)
+                if metadata.is_file()
+                    && !crate::security::is_link_metadata(&metadata)
+                    && metadata.len() <= MAX_KEPT_FILE_BYTES =>
+            {
+                kept.push((
+                    operation.destination.clone(),
+                    crate::flatten::read_regular_file_no_follow_under_root(
+                        root,
+                        &operation.destination,
+                    )?,
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(kept)
+}
+
+/// Put back every kept file the setup command changed or removed. Returns the
+/// paths that were restored.
+pub fn restore_kept(root: &Path, kept: &[(String, Vec<u8>)]) -> Result<Vec<String>, AppError> {
+    let mut restored = Vec::new();
+    for (relative, bytes) in kept {
+        let path = crate::security::safe_join(root, relative)?;
+        let unchanged = path.is_file()
+            && crate::security::sha256_file(&path)? == crate::security::sha256_bytes(bytes);
+        if !unchanged {
+            crate::security::atomic_write(&path, bytes)?;
+            restored.push(relative.clone());
+        }
+    }
+    Ok(restored)
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Changes {
     /// Tracked, allowed files whose bytes changed: path, new hash, new size.
@@ -299,6 +369,13 @@ mod tests {
             ".tools/quality_baseline.json",
             ".codex/agents/x.toml",
             ".agents/skills/x/SKILL.md",
+            ".gemini/agents/x.md",
+            ".kilo/agents/x.md",
+            ".kiro/skills/x/SKILL.md",
+            ".qwen/agents/x.md",
+            ".devin/agents/x.md",
+            ".augment/agents/x.md",
+            ".grok/skills/x/SKILL.md",
         ] {
             assert!(rewritable(path), "{path}");
         }
@@ -395,6 +472,74 @@ mod tests {
         plan.operations[0].destination = "other.py".into();
         add_to_plan(&mut plan, Some("C:/g"));
         assert!(plan.external_actions.is_empty());
+    }
+
+    #[test]
+    fn a_kept_edit_survives_the_setup_command_and_nothing_else_is_restored() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".kiro/agents")).unwrap();
+        std::fs::write(
+            root.path().join(".kiro/agents/kept.md"),
+            b"generated
+my note
+",
+        )
+        .unwrap();
+        std::fs::write(root.path().join(".kiro/agents/plain.md"), b"generated").unwrap();
+        let mut plan: InstallationPlan = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-plan.example.json"
+        ))
+        .unwrap();
+        let template = plan.operations[0].clone();
+        let operation = |destination: &str, action, local_state| PlanOperation {
+            id: format!("op-{destination}"),
+            destination: destination.into(),
+            action,
+            local_state,
+            external: false,
+            ..template.clone()
+        };
+        plan.operations = vec![
+            operation(
+                ".kiro/agents/kept.md",
+                OperationAction::Skip,
+                LocalState::Modified,
+            ),
+            // An unmodified, replaced or generated file is not the user's to keep.
+            operation(
+                ".kiro/agents/plain.md",
+                OperationAction::Replace,
+                LocalState::Unmodified,
+            ),
+        ];
+        let kept = kept_files(root.path(), &plan).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0, ".kiro/agents/kept.md");
+
+        // The setup command regenerates both projections.
+        std::fs::write(
+            root.path().join(".kiro/agents/kept.md"),
+            b"generated
+",
+        )
+        .unwrap();
+        std::fs::write(root.path().join(".kiro/agents/plain.md"), b"generated v2").unwrap();
+        let restored = restore_kept(root.path(), &kept).unwrap();
+        assert_eq!(restored, vec![".kiro/agents/kept.md".to_string()]);
+        assert_eq!(
+            std::fs::read(root.path().join(".kiro/agents/kept.md")).unwrap(),
+            b"generated
+my note
+"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join(".kiro/agents/plain.md")).unwrap(),
+            b"generated v2"
+        );
+        // A file the command removed comes back too, and an untouched one is left alone.
+        std::fs::remove_file(root.path().join(".kiro/agents/kept.md")).unwrap();
+        assert_eq!(restore_kept(root.path(), &kept).unwrap().len(), 1);
+        assert!(restore_kept(root.path(), &kept).unwrap().is_empty());
     }
 
     #[test]

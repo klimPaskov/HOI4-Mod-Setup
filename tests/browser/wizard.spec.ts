@@ -86,23 +86,24 @@ test("each coding environment can be primary without becoming an additional choi
   await expect(radios.nth(1)).toBeChecked();
 });
 
-test("image-generation setup displays provider costs and lets the user add another route", async ({ page }) => {
+test("image-generation setup offers hoi4-imagegen with the ChatGPT sign-in first and the other backends beside it", async ({ page }) => {
   await page.goto("/?screenshot=image-generation");
   await expect(page.getByRole("heading", { name: "Image generation" })).toBeVisible();
-  await expect(page.getByText(/ChatGPT plan limits/)).toBeVisible();
-  const subscription = page.getByRole("radio", { name: /ChatGPT sign-in and API keys \(hoi4-imagegen\)/ });
-  const openAi = page.getByRole("radio", { name: /OpenAI Images API/ });
-  await expect(subscription).toBeChecked();
-  await expect(page.locator(".image-provider-card").nth(1).locator("input[type=checkbox]")).toBeChecked();
+  await expect(page.getByRole("radio", { name: /Use hoi4-imagegen/ })).toBeChecked();
+  const backends = page.getByRole("radio", { name: /ChatGPT sign-in|^OpenAI|^Gemini|^fal\.ai|^ComfyUI/ });
+  await expect(backends).toHaveCount(5);
+  await expect(backends.first()).toBeChecked();
   await expect(page.getByText("Transparent images")).toBeVisible();
-  await openAi.check();
-  await expect(openAi).toBeChecked();
-  await expect(subscription).not.toBeChecked();
-  await page.getByLabel("Add as an optional provider", { exact: true }).first().uncheck();
-  await expect(page.getByLabel("Add as an optional provider", { exact: true }).first()).not.toBeChecked();
+  // The separate provider cards and the optional-provider choice are gone.
+  await expect(page.getByLabel("Add as an optional provider", { exact: true })).toHaveCount(0);
+  await page.getByRole("radio", { name: /^OpenAI/ }).check();
+  await expect(page.getByLabel("OpenAI API key")).toBeVisible();
+  await expect(backends.first()).not.toBeChecked();
+  await page.getByRole("radio", { name: /^None, I make art myself/ }).check();
+  await expect(backends).toHaveCount(0);
 });
 
-test("maintenance repair sends the changed image provider in its reviewed plan request", async ({ page }) => {
+test("maintenance repair sends the changed image backend in its reviewed plan request", async ({ page }) => {
   await page.addInitScript(() => {
     const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
     (window as unknown as Record<string, unknown>).__HOI4_TEST_COMMANDS__ = calls;
@@ -116,7 +117,7 @@ test("maintenance repair sends the changed image provider in its reviewed plan r
     };
   });
   await page.goto("/?screenshot=maintenance");
-  const openAi = page.getByRole("radio", { name: /OpenAI Images API/ });
+  const openAi = page.getByRole("radio", { name: /^OpenAI/ });
   await openAi.check();
   await expect(openAi).toBeChecked();
 
@@ -132,8 +133,9 @@ test("maintenance repair sends the changed image provider in its reviewed plan r
   const order = await page.evaluate(() => (window as unknown as { __HOI4_TEST_COMMANDS__: Array<{ command: string }> }).__HOI4_TEST_COMMANDS__.map((entry) => entry.command));
   expect(order.indexOf("scan_project")).toBeLessThan(order.indexOf("build_maintenance_plan"));
   expect(call?.args.imageGeneration).toMatchObject({
-    primary_provider: "openai_api",
+    primary_provider: "hoi4_imagegen",
     additional_providers: [],
+    route_settings: { hoi4_imagegen: { backend: "openai" } },
   });
 });
 

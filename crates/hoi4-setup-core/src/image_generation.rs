@@ -956,14 +956,48 @@ pub fn validate_image_generation_selection(
                 .flatten()
                 .filter_map(Value::as_str)
                 .collect::<Vec<_>>();
-            let allowed = match protocol {
-                "comfyui" | "automatic1111" => &["server_url", "checkpoint"][..],
-                "microsoft_foundry" => &["deployment_name"][..],
-                "aws_bedrock" => &["region", "model"][..],
-                _ if !supported_models.is_empty() => &["model"][..],
-                _ => &[][..],
-            };
-            if settings.keys().any(|key| !allowed.contains(&key.as_str())) {
+            let allowed: Vec<String> =
+                if crate::release_binary::is_release_binary_provider(provider) {
+                    let offered = crate::image_backends::backends(provider);
+                    if let Some(id) = settings.get(crate::image_backends::BACKEND_SETTING) {
+                        if !offered.iter().any(|backend| &backend.id == id) {
+                            return Err(AppError::InvalidInput(
+                                "choose an image backend from the list the setup package publishes"
+                                    .into(),
+                            ));
+                        }
+                    }
+                    let backend = crate::image_backends::chosen_backend(&offered, Some(settings));
+                    let mut keys = vec![crate::image_backends::BACKEND_SETTING.to_owned()];
+                    keys.extend(
+                        backend
+                            .into_iter()
+                            .flat_map(|backend| backend.settings.iter().map(|s| s.key.clone())),
+                    );
+                    for (key, value) in settings {
+                        if let Some(setting) = backend
+                            .and_then(|backend| crate::image_backends::setting_for(backend, key))
+                        {
+                            if let Some(problem) =
+                                crate::image_backends::setting_value_problem(&setting.kind, value)
+                            {
+                                return Err(AppError::InvalidInput(format!("{key}: {problem}")));
+                            }
+                        }
+                    }
+                    keys
+                } else {
+                    match protocol {
+                        "comfyui" | "automatic1111" => {
+                            vec!["server_url".to_owned(), "checkpoint".to_owned()]
+                        }
+                        "microsoft_foundry" => vec!["deployment_name".to_owned()],
+                        "aws_bedrock" => vec!["region".to_owned(), "model".to_owned()],
+                        _ if !supported_models.is_empty() => vec!["model".to_owned()],
+                        _ => Vec::new(),
+                    }
+                };
+            if settings.keys().any(|key| !allowed.contains(key)) {
                 return Err(AppError::InvalidInput(format!(
                     "{} has a setting that is not supported by this model route",
                     provider

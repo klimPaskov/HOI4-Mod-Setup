@@ -2930,13 +2930,20 @@ fn stage_complete(
     persist_journal(store, journal)
 }
 
+/// The most files one transaction may prepare, and the most evidence entries
+/// one stage may record (one per file). It follows the manifest's aggregate
+/// limit on selected files plus room for generated files: a project with
+/// several coding clients installs hundreds of skill files per client.
+pub(crate) const MAX_TRANSACTION_FILES: usize =
+    hoi4_setup_core::manifest::MAX_SELECTED_FILES + 1024;
+
 fn add_stage_evidence(
     journal: &mut TransactionJournal,
     index: usize,
     evidence: Vec<String>,
     store: &TransactionStore,
 ) -> Result<(), AppError> {
-    if evidence.len() > 4096 || evidence.iter().any(|item| item.len() > 1024) {
+    if evidence.len() > MAX_TRANSACTION_FILES || evidence.iter().any(|item| item.len() > 1024) {
         return Err(AppError::Transaction(
             "transaction stage evidence exceeds the bounded limit".into(),
         ));
@@ -2957,7 +2964,7 @@ fn validate_prepared_files(
     plan: &InstallationPlan,
     prepared_files: &[PreparedFile],
 ) -> Result<Vec<String>, AppError> {
-    if prepared_files.len() > 4096 {
+    if prepared_files.len() > MAX_TRANSACTION_FILES {
         return Err(AppError::Transaction(
             "prepared transaction payload exceeds the bounded file limit".into(),
         ));
@@ -9670,6 +9677,28 @@ mod tests {
             source_revision: Some("599497ea2f93612d9094461c6fde114fc87a5c0f".into()),
             source_manifest_sha256: Some("a".repeat(64)),
         }
+    }
+
+    #[test]
+    fn a_install_with_several_coding_clients_stays_inside_the_file_bound() {
+        // Skill trees are about 890 files each, so five clients prepare more
+        // than the old 4,096 limit; the bound now follows the manifest's own.
+        let file = |index: usize| PreparedFile {
+            operation_id: format!("op-{index}"),
+            destination: format!("f{index}"),
+            bytes: Vec::new(),
+            expected_sha256: String::new(),
+        };
+        let many = (0..5_000).map(file).collect::<Vec<_>>();
+        let error = validate_prepared_files(&plan(), &many)
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("bounded file limit"), "{error}");
+        let too_many = (0..=MAX_TRANSACTION_FILES).map(file).collect::<Vec<_>>();
+        let error = validate_prepared_files(&plan(), &too_many)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("bounded file limit"), "{error}");
     }
 
     fn plan() -> InstallationPlan {

@@ -26,7 +26,7 @@
     }
   },
   "clientPackages": {
-    "sourceRevision": "0b124ad9d3121fda5eb3cc5ff365f74a28db0f8f",
-    "note": "Format 6 coding-client packages in klimPaskov/Agentic-HOI4-Modding pull request 26."
+    "sourceRevision": "3a59cd4b6e1f88d67ee45c345777def9da0a3814",
+    "note": "Format 6 coding-client packages as merged on klimPaskov/Agentic-HOI4-Modding main (pull request 58, which superseded 26) with the live-tools skill dependency fixed in pull request 61."
   }
 }

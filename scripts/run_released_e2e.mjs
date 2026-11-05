@@ -153,14 +153,16 @@ async function commonSetup() {
   if (fresh) {
     await expect(imageRoute === "hoi4_imagegen" ? imagegenRadio : gptimageRadio).toBeChecked();
   } else {
-    await page.getByRole("radio", { name: /^fal\.ai / }).check();
-    await page.getByRole("combobox", { name: "Model", exact: true }).selectOption({ label: "Ideogram V3 Transparent" });
+    // hoi4-imagegen stays the provider; the user picks its fal backend.
+    await page.getByRole("radio", { name: /^fal(\.ai)?(\s|$)/ }).check();
   }
   await record("image-provider"); await next();
   await at("Choose what to install");
-  await expect(page.getByRole("button", { name: /Image provider MCP adapter/ })).toHaveAttribute("aria-pressed", fresh ? "false" : "true");
+  // The image route is always hoi4-imagegen now; a backend choice does not swap the component.
+  const imagegenInstalled = imageRoute === "hoi4_imagegen" || fresh;
+  await expect(page.getByRole("button", { name: /Image provider MCP adapter/ })).toHaveAttribute("aria-pressed", "false");
   const imageComponent = imageRoute === "hoi4_imagegen" ? /hoi4-imagegen image server/ : /GPTImage MCP source/;
-  await expect(page.getByRole("button", { name: imageComponent })).toHaveAttribute("aria-pressed", fresh ? "true" : "false");
+  await expect(page.getByRole("button", { name: imageComponent })).toHaveAttribute("aria-pressed", imagegenInstalled ? "true" : "false");
   await record("selected-components"); await next();
   await at("Optional workflows");
   await expect(page.getByRole("switch", { name: /^HOI4 Live Tools/ })).toBeVisible();
@@ -354,8 +356,9 @@ async function clientPackagesFlow() {
   assert.ok(!reduced.additional_coding_environments.includes("kiro"));
   assert.ok(!reduced.additional_coding_environments.includes("github_copilot"));
   assert.equal(await readFile(join(project, keptAgent), "utf8"), keptAgentText);
-  assert.ok(!existsSync(join(project, ".kiro/agents/hoi4-skill-maintainer.md")), "unchanged Kiro agents are removed");
-  assert.ok(!existsSync(join(project, ".kiro/skills/hoi4-ai-strategies/SKILL.md")), "the unchanged Kiro skill copy is removed");
+  // The user kept an edited Kiro agent, so the package's sync still maintains .kiro/agents and may
+  // regenerate the unchanged agents on disk; Setup no longer manages any of them.
+  assert.ok(!reduced.files.some((file) => !file.external && file.path.startsWith(".kiro/agents/")), "no Kiro agent stays managed");
   assert.ok(!existsSync(join(project, ".github/instructions/hoi4-mod-setup.instructions.md")));
   assert.equal((await readProjectJson(".vscode/mcp.json")).servers.user_server.command, "user-tool");
   assert.ok(!reduced.files.some((file) => !file.external && file.path.startsWith(".kiro/skills/")));
@@ -384,10 +387,10 @@ async function clientPackagesFlow() {
   assert.equal(await fileHash(join(project, repaired.path)), repaired.installed_sha256);
   assert.deepEqual((await readLock()).source, reduced.source);
 
-  // 4. Latest (format 5) cannot keep the new clients, so it refuses before
-  // planning any removal and the project stays unchanged.
+  // 4. A format 5 source cannot keep the new clients (the kit's latest is format 6 now, so pin the
+  // last format 5 revision), so it refuses before planning any removal and the project stays unchanged.
   const before = await readLock();
-  await openMaintenance("latest");
+  await openMaintenance("pinned_commit", pins.candidate.sourceRevision);
   await reviewProject();
   await expect(page.getByText(/Installed but not in this source version:/)).toBeVisible({ timeout: 180_000 });
   await record("clients-unavailable-in-latest");
@@ -545,8 +548,11 @@ try {
     } else {
       result.preservation = await assertOriginals(project, original, { gitignoreText });
       assert.equal(readiness.checks.find((check) => check.id === "launcher.registration").status, "not_selected");
-      assert.equal(lock.image_generation.primary_provider, "fal_ai");
-      assert.match(lock.image_generation.route_settings.fal_ai.model, /ideogram.*transparent/);
+      assert.equal(lock.image_generation.primary_provider, "hoi4_imagegen");
+      assert.equal(lock.image_generation.route_settings.hoi4_imagegen.backend, "fal");
+      assert.ok(lock.image_generation.installed_release_tree_sha256);
+      // The chosen backend reaches the project's hoi4-imagegen settings.
+      assert.match(await readFile(join(project, ".hoi4-imagegen", "config.toml"), "utf8"), /provider\s*=\s*"fal"/);
     }
     if (scenario === "clients") await clientPackagesFlow();
     const repairFile = scenario === "clients" ? undefined : lock.files.find((file) => !file.external && !file.preserved_local && file.path.startsWith(".agents/skills/") && file.path.endsWith("/SKILL.md"));
@@ -638,6 +644,23 @@ try {
   failure = error;
   result.error = String(error.message).replace(/(?:sk-|gh[pousr]_)[A-Za-z0-9_-]+/g, "[REDACTED]").slice(0, 2000);
   if (page) { try { await record("failure"); } catch { /* Keep the primary failure. */ } }
+  // Name the checks that blocked, so a red Ready screen is diagnosable from the artifact.
+  try {
+    const latest = (await journals()).at(-1);
+    if (latest) {
+      const report = JSON.parse(await readFile(join(journalRoot, latest.transaction_id, "readiness-report.json"), "utf8"));
+      result.failureReadiness = report.checks.filter((check) => check.status === "block" || check.status === "fail").map((check) => ({ id: check.id, status: check.status, message: String(check.message ?? "").slice(0, 300), evidence: JSON.stringify(check.evidence ?? []).slice(0, 600) }));
+    }
+  } catch { /* The journal may not hold a report yet. */ }
+  // The Ready screen re-evaluates readiness from the project on disk; ask the app the same question.
+  try {
+    const live = await page.evaluate(async (root) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      if (!invoke) return null;
+      return invoke("evaluate_readiness", { input: { project_root: root, project_id: root.split(/[\/]/).pop(), workflow_3d_state: "not_selected", notes: [] } });
+    }, project);
+    if (live?.checks) result.failureLiveReadiness = live.checks.filter((check) => check.status === "block" || check.status === "warn").map((check) => ({ id: check.id, status: check.status, blocking: check.blocking, message: String(check.message ?? "").slice(0, 300), evidence: JSON.stringify(check.evidence ?? []).slice(0, 800) }));
+  } catch (error) { result.failureLiveReadiness = `unavailable: ${String(error?.message ?? error).slice(0, 200)}`; }
 } finally {
   try { await stop(); } catch (error) { failure ??= error; result.cleanupError = "Owned app shutdown failed."; }
   await planner?.close().catch(() => {});

@@ -2,7 +2,7 @@
 // choices, minus anything only the desktop can install or store.
 
 import type { ImageChoice, ImageProvider, LiveTestingChoice, LiveTestingProvider, Platform, PortraitChoice } from "../protocol";
-import { imageProviderNeeds, imageSettingKeys, imageSettingLabel, MAX_ADDITIONAL_IMAGE_PROVIDERS, NO_IMAGE_PROVIDER } from "../integrations";
+import { imageSettingLabel, NO_IMAGE_PROVIDER } from "../integrations";
 
 interface Props {
   providers: ImageProvider[];
@@ -18,13 +18,38 @@ interface Props {
 }
 
 export default function IntegrationsStep({ providers, image, onImage, portraitsAvailable, portrait, onPortrait, liveProviders, live, onLive, platform }: Props) {
-  const primary = providers.find((provider) => provider.id === image.primary_provider);
+  const imagegen = providers.find((provider) => provider.route_kind === "release_binary");
+  const backends = imagegen?.backends ?? [];
+  const recorded = imagegen ? image.route_settings[imagegen.id]?.backend : undefined;
+  const backend = backends.find((option) => option.id === recorded) ?? backends.find((option) => option.default) ?? backends[0];
   const selected = [image.primary_provider, ...image.additional_providers].filter((id) => id !== NO_IMAGE_PROVIDER);
+  const legacy = selected.map((id) => providers.find((provider) => provider.id === id)).filter((provider): provider is ImageProvider => Boolean(provider) && provider!.id !== imagegen?.id);
+  const usingImagegen = Boolean(imagegen) && image.primary_provider === imagegen!.id;
   const setSetting = (id: string, key: string, value: string) => {
     const current = { ...(image.route_settings[id] ?? {}) };
     if (value) current[key] = value;
     else delete current[key];
     onImage({ ...image, route_settings: { ...image.route_settings, [id]: current } });
+  };
+  const chooseBackend = (id: string) => {
+    if (!imagegen) return;
+    const current: Record<string, string> = { ...(image.route_settings[imagegen.id] ?? {}), backend: id };
+    // A setting belongs to the backend that declared it.
+    const keep = new Set(backends.find((option) => option.id === id)?.settings.map((setting) => setting.key));
+    for (const key of Object.keys(current)) if (key !== "backend" && !keep.has(key)) delete current[key];
+    onImage({ ...image, route_settings: { ...image.route_settings, [imagegen.id]: current } });
+  };
+  const moveToImagegen = (legacyId: string, backendId: string) => {
+    if (!imagegen) return;
+    const settings = { ...image.route_settings };
+    delete settings[legacyId];
+    settings[imagegen.id] = { ...(settings[imagegen.id] ?? {}), backend: backendId };
+    const wasPrimary = image.primary_provider === legacyId;
+    onImage({
+      primary_provider: wasPrimary ? imagegen.id : image.primary_provider,
+      additional_providers: [...new Set([...image.additional_providers.filter((id) => id !== legacyId), ...(wasPrimary ? [] : [imagegen.id])])].filter((id) => id !== (wasPrimary ? imagegen.id : image.primary_provider)),
+      route_settings: settings,
+    });
   };
   const clausewitz = liveProviders.find((provider) => provider.id === "clausewitz_mcp");
   return (
@@ -32,59 +57,52 @@ export default function IntegrationsStep({ providers, image, onImage, portraitsA
       {providers.length > 0 && (
         <section className="panel form-panel" aria-labelledby="images-title">
           <h2 id="images-title" className="panel-title">Image generation</h2>
-          <label className="field">
-            <span className="field-label">Main image provider</span>
-            <select className="text-input" value={image.primary_provider} onChange={(event) => onImage({ ...image, primary_provider: event.target.value, additional_providers: event.target.value === NO_IMAGE_PROVIDER ? [] : image.additional_providers.filter((id) => id !== event.target.value) })}>
-              {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}
-            </select>
-          </label>
-          {primary && (
-            <div className="web-provider-detail">
-              {primary.description && <p className="muted">{primary.description}</p>}
-              {(primary.requirements ?? []).length > 0 && <ul className="web-requirements">{primary.requirements!.map((item) => <li key={item}>{item}</li>)}</ul>}
-              {imageProviderNeeds(primary) && <p className="status-review web-needs"><span className="status-symbol" aria-hidden="true">!</span> {imageProviderNeeds(primary)}</p>}
-              {primary.documentation_url && <a className="external-link" href={primary.documentation_url} target="_blank" rel="noreferrer noopener">{primary.display_name} documentation</a>}
+          {legacy.length === 0 && (
+            <div className="radio-row" role="radiogroup" aria-labelledby="images-title">
+              {imagegen && (
+                <label className="radio-option">
+                  <input type="radio" name="web-image-generation" checked={usingImagegen} onChange={() => onImage({ ...image, primary_provider: imagegen.id, additional_providers: [] })} />
+                  <span><strong>Use hoi4-imagegen</strong>{imagegen.description && <small>{imagegen.description}</small>}</span>
+                </label>
+              )}
+              <label className="radio-option">
+                <input type="radio" name="web-image-generation" checked={!usingImagegen} onChange={() => onImage({ ...image, primary_provider: NO_IMAGE_PROVIDER, additional_providers: [] })} />
+                <span><strong>None, I make art myself</strong></span>
+              </label>
             </div>
           )}
-          {image.primary_provider !== NO_IMAGE_PROVIDER && (
-            <details className="web-additional">
-              <summary className="details">More image providers{image.additional_providers.length > 0 ? ` (${image.additional_providers.length})` : ""}</summary>
-              {providers.filter((provider) => provider.id !== image.primary_provider && provider.id !== NO_IMAGE_PROVIDER).map((provider) => {
-                const checked = image.additional_providers.includes(provider.id);
-                const full = !checked && image.additional_providers.length >= MAX_ADDITIONAL_IMAGE_PROVIDERS;
-                return (
-                  <label key={provider.id} className="check-row">
-                    <input type="checkbox" checked={checked} disabled={full} onChange={(event) => onImage({ ...image, additional_providers: event.target.checked ? [...image.additional_providers, provider.id] : image.additional_providers.filter((id) => id !== provider.id) })} />
-                    {provider.display_name}
+          {imagegen && usingImagegen && legacy.length === 0 && backends.length > 0 && (
+            <div className="web-provider-detail">
+              <span className="field-label" id="web-image-backend-label">Generate with</span>
+              <div className="radio-row" role="radiogroup" aria-labelledby="web-image-backend-label">
+                {backends.map((option) => (
+                  <label className="radio-option" key={option.id}>
+                    <input type="radio" name="web-image-backend" value={option.id} checked={backend?.id === option.id} onChange={() => chooseBackend(option.id)} />
+                    <span><strong>{option.display_name}</strong>{option.default && <small>Default. Signs in with your ChatGPT account.</small>}{option.live_verified === false && <small>Untested with the real service.</small>}</span>
                   </label>
-                );
-              })}
-            </details>
+                ))}
+              </div>
+              {backend && backend.credential_field && <p className="status-review web-needs"><span className="status-symbol" aria-hidden="true">!</span> Its key is read from the operating-system credential store. A browser cannot save it there; add it later with the desktop app.</p>}
+              {backend?.settings.map((setting) => (
+                <label className="field" key={setting.key}>
+                  <span className="field-label">{imageSettingLabel(setting.key)}{setting.required ? "" : " (optional)"}</span>
+                  <input className="text-input mono" value={image.route_settings[imagegen.id]?.[setting.key] ?? ""} placeholder={setting.default ?? undefined} onChange={(event) => setSetting(imagegen.id, setting.key, event.target.value.trim())} />
+                </label>
+              ))}
+            </div>
           )}
-          {selected.map((id) => {
-            const provider = providers.find((item) => item.id === id);
-            const keys = provider ? imageSettingKeys(provider) : [];
-            if (!provider || keys.length === 0) return null;
+          {legacy.map((provider) => {
+            const target = provider.replaced_by ? backends.find((option) => option.id === provider.replaced_by?.backend) : undefined;
             return (
-              <fieldset key={id} className="web-provider-settings">
-                <legend className="field-label">{provider.display_name} settings</legend>
-                <div className="form-grid">
-                  {keys.map((key) => key === "model" && (provider.supported_models ?? []).length > 0 ? (
-                    <label key={key} className="field">
-                      <span className="field-label">{imageSettingLabel(key)}</span>
-                      <select className="text-input" value={image.route_settings[id]?.model ?? ""} onChange={(event) => setSetting(id, key, event.target.value)}>
-                        <option value="">Provider default</option>
-                        {provider.supported_models!.map((model) => <option key={model} value={model}>{model}</option>)}
-                      </select>
-                    </label>
-                  ) : (
-                    <label key={key} className="field">
-                      <span className="field-label">{imageSettingLabel(key)}</span>
-                      <input className="text-input mono" value={image.route_settings[id]?.[key] ?? ""} placeholder={key === "server_url" ? "http://127.0.0.1:8188" : undefined} onChange={(event) => setSetting(id, key, event.target.value.trim())} />
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
+              <div className="web-provider-detail" key={provider.id} role="group" aria-label={`${provider.display_name} image provider`}>
+                <p><strong>{provider.display_name}</strong> is set up in this project. It keeps working.</p>
+                {imagegen && target
+                  ? <>
+                    <p className="muted">hoi4-imagegen now covers it with the {target.display_name} backend. Its key stays where it is; add it for hoi4-imagegen with the desktop app.</p>
+                    <button type="button" className="button secondary" onClick={() => moveToImagegen(provider.id, target.id)}>Move to hoi4-imagegen ({target.display_name})</button>
+                  </>
+                  : <p className="muted">hoi4-imagegen does not cover it yet. Nothing changes until it does.</p>}
+              </div>
             );
           })}
         </section>

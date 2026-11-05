@@ -171,7 +171,11 @@ The pre-implementation draft of this document contained errors that the
   manual provider.
 - A file of a deselected client that the user changed and kept is released
   from management: it stays on disk untouched and no longer counts as a local
-  modification.
+  modification. The package's `check.py setup` maintains every agent folder
+  that still exists, so a folder holding a kept edit keeps being regenerated:
+  Setup restores the kept file's bytes after the command, but the other
+  generated agents of that client may reappear on disk, unmanaged. Remove the
+  folder to drop the client completely.
 - A deselected client's MCP file that the installer merged with content the
   user already had keeps the setup's own non-route keys (for example a
   `context` setting) when the installer's routes are removed: the lock

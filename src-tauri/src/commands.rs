@@ -10,9 +10,9 @@ use crate::codex::{
 };
 use crate::coding_environment;
 use crate::credentials::{
-    discover_meshy_credential_reference, image_generation_credential_reference, provider_name,
-    save_ai_provider_key, save_image_generation_key, save_meshy_key,
-    validate_ai_provider_credential_for, validate_credential_reference,
+    discover_meshy_credential_reference, image_generation_credential_reference,
+    move_image_generation_key, provider_name, save_ai_provider_key, save_image_generation_key,
+    save_meshy_key, validate_ai_provider_credential_for, validate_credential_reference,
     validate_image_generation_credential_for, CredentialStore, OsCredentialStore,
     ScopedSecretEnvironment, MESHY_ENVIRONMENT_NAME,
 };
@@ -50,11 +50,12 @@ use crate::service::inputs::{
     ai_credential_reference, image_client_config_artifacts_with_launch,
     image_client_config_ownership, image_generation_config_artifact,
     image_generation_credential_field_supported, image_generation_guidance_artifact,
-    image_generation_selection_from_state, is_image_generation_client_config_path,
-    manifest_external_actions, merge_existing_image_client_config, path_file_kind,
-    portrait_component_ids, portrait_pipeline_from_state, project_conventions_from_state,
-    project_conventions_from_value, project_identity_from_state, project_root_from_state,
-    source_request_from_state, validate_analysis_source_binding, LauncherPolicy,
+    image_generation_selection_from_state, imagegen_project_config_artifact,
+    is_image_generation_client_config_path, manifest_external_actions,
+    merge_existing_image_client_config, path_file_kind, portrait_component_ids,
+    portrait_pipeline_from_state, project_conventions_from_state, project_conventions_from_value,
+    project_identity_from_state, project_root_from_state, source_request_from_state,
+    validate_analysis_source_binding, LauncherPolicy,
 };
 #[cfg(test)]
 use crate::service::inputs::{
@@ -899,6 +900,7 @@ pub fn run() {
             remove_ai_provider_credential,
             store_image_generation_credential,
             image_generation_credential_status,
+            move_image_generation_credential,
             remove_image_generation_credential,
             imagegen_sign_in_status,
             imagegen_sign_in,
@@ -1218,6 +1220,32 @@ fn store_image_generation_credential(
     save_image_generation_key(&OsCredentialStore, provider, field, &value).map_err(command_error)
 }
 
+/// Move a key saved for an older image provider into hoi4-imagegen. The value
+/// stays inside the credential store; only the new reference comes back.
+#[tauri::command(async)]
+fn move_image_generation_credential(
+    from_provider: String,
+    from_field: String,
+    to_field: String,
+) -> Result<Option<CredentialReference>, String> {
+    let (from_provider, from_field, to_field) =
+        (from_provider.trim(), from_field.trim(), to_field.trim());
+    if from_provider == "hoi4_imagegen"
+        || !image_generation_credential_field_supported(from_provider, from_field)
+        || !image_generation_credential_field_supported("hoi4_imagegen", to_field)
+    {
+        return Err("That image provider credential cannot be moved.".into());
+    }
+    move_image_generation_key(
+        &OsCredentialStore,
+        from_provider,
+        from_field,
+        "hoi4_imagegen",
+        to_field,
+    )
+    .map_err(command_error)
+}
+
 #[tauri::command(async)]
 fn image_generation_credential_status(
     provider: String,
@@ -1291,9 +1319,18 @@ async fn imagegen_doctor(project_root: String) -> Result<String, String> {
             lock.image_generation.as_ref(),
         )
         .ok_or_else(|| "hoi4-imagegen is not installed in this project yet.".to_string())?;
-        let fields = crate::imagegen::CREDENTIAL_FIELDS
+        let fields = lock
+            .image_generation
             .iter()
-            .map(|(field, name)| ((*field).to_owned(), (*name).to_owned()))
+            .flat_map(|selection| selection.credential_references.keys())
+            .filter_map(|key| key.strip_prefix("hoi4_imagegen."))
+            .filter(|field| crate::imagegen::credential_field_allowed(field))
+            .map(|field| {
+                (
+                    field.to_owned(),
+                    crate::imagegen::credential_variable(field),
+                )
+            })
             .collect::<Vec<_>>();
         let environment = match lock.image_generation.as_ref() {
             Some(selection) => {
@@ -4018,7 +4055,11 @@ fn preview_source_manifest_blocking(
         profiles: resolution.manifest.profiles,
         coding_environments,
         unavailable_coding_environments,
-        image_generation: resolution.manifest.image_generation.clone(),
+        image_generation: resolution
+            .manifest
+            .image_generation
+            .as_ref()
+            .map(hoi4_setup_core::image_backends::annotate_catalog),
         live_testing: resolution.manifest.live_testing.clone(),
         local_source: crate::local_source::configured_repository()
             .map(|root| root.display().to_string()),
@@ -6570,6 +6611,32 @@ fn build_maintenance_plan_blocking(
                     &obsolete, &root,
                 )?);
             }
+            if let Some(artifact) = imagegen_project_config_artifact(&root, manifest, selection)? {
+                append_maintenance_image_client_config_operations(
+                    std::slice::from_ref(&artifact),
+                    &mut operations,
+                    &mut prepared,
+                    &lock,
+                    &root,
+                )?;
+                generated_artifacts.push(artifact);
+            } else if let Some(previous) = lock.files.iter().find(|file| {
+                file.component_id == "image_generation.project_config" && !file.external
+            }) {
+                // No backend is recorded any more: remove only what Setup
+                // wrote, and only while it is unchanged.
+                let obsolete = InstallationLock {
+                    files: vec![previous.clone()],
+                    ..lock.clone()
+                };
+                operations.retain(|operation| {
+                    operation.external || operation.destination != previous.path
+                });
+                prepared.retain(|file| file.destination != previous.path);
+                operations.extend(crate::transaction::managed_removal_operations(
+                    &obsolete, &root,
+                )?);
+            }
             if let Some(artifact) = image_generation_config_artifact(manifest, selection)? {
                 append_maintenance_image_client_config_operations(
                     std::slice::from_ref(&artifact),
@@ -7108,6 +7175,7 @@ fn run_agent_setup_blocking(
         });
     };
     let before = crate::agent_setup::snapshot(root, &lock)?;
+    let kept = crate::agent_setup::kept_files(root, plan)?;
     let mut args = vec!["-B".to_string()];
     args.extend(action.arguments.iter().cloned());
     let spec = crate::process::ProcessSpec {
@@ -7121,6 +7189,8 @@ fn run_agent_setup_blocking(
         max_output_bytes: 2 * 1024 * 1024,
     };
     let run = spec.run(&[python], None);
+    // A file the user chose to keep stays exactly as they left it.
+    let restored = crate::agent_setup::restore_kept(root, &kept)?;
     let changes = crate::agent_setup::changes_since(root, &before)?;
     let (state, detail) = match &run {
         _ if !changes.unexpected.is_empty() => (
@@ -7130,9 +7200,17 @@ fn run_agent_setup_blocking(
                 changes.unexpected.join(", ")
             ),
         ),
-        Ok(result) if result.status_code == Some(0) && !result.timed_out => {
-            ("ready", String::new())
-        }
+        Ok(result) if result.status_code == Some(0) && !result.timed_out => (
+            "ready",
+            if restored.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "Kept your edits to {}; the setup command had regenerated them.",
+                    restored.join(", ")
+                )
+            },
+        ),
         Ok(result) if result.timed_out => (
             "incomplete",
             "The setup command took too long and was stopped; run Repair to try again.".into(),

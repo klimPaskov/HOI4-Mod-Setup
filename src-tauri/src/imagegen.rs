@@ -19,21 +19,38 @@ use hoi4_setup_core::release_binary::{self as route, PROVIDER_ID};
 use serde::Serialize;
 use std::path::PathBuf;
 
-/// The only variables Setup ever passes to hoi4-imagegen.
-pub const ENVIRONMENT_NAMES: [&str; 4] = [
-    "OPENAI_API_KEY",
-    "GEMINI_API_KEY",
-    "FAL_KEY",
-    "COMFYUI_API_KEY",
-];
+/// Whether a variable name may carry a key to hoi4-imagegen. The setup
+/// package names each backend's key variable, and a new backend needs no app
+/// release, but only an upper-case name that ends in `_KEY` or `_TOKEN` is
+/// ever passed, so a package can never name PATH, a loader variable or a
+/// credential that belongs to another tool.
+pub fn credential_variable_allowed(name: &str) -> bool {
+    let shaped = (3..=48).contains(&name.len())
+        && name.starts_with(|c: char| c.is_ascii_uppercase())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
+    shaped
+        && (name.ends_with("_KEY") || name.ends_with("_TOKEN"))
+        && !["ANTHROPIC_", "MESHY_", "CLAUDE_", "CODEX_"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+}
 
-/// The credential fields hoi4-imagegen accepts and the variable each becomes.
-pub const CREDENTIAL_FIELDS: [(&str, &str); 4] = [
-    ("openai_api_key", "OPENAI_API_KEY"),
-    ("gemini_api_key", "GEMINI_API_KEY"),
-    ("fal_key", "FAL_KEY"),
-    ("comfyui_api_key", "COMFYUI_API_KEY"),
-];
+/// A credential field id of the hoi4-imagegen route, such as `fal_key`. The
+/// variable it becomes is the same name in upper case (`FAL_KEY`).
+pub fn credential_field_allowed(field: &str) -> bool {
+    field.starts_with(|c: char| c.is_ascii_lowercase())
+        && field
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        && credential_variable_allowed(&field.to_ascii_uppercase())
+}
+
+/// The variable a credential field becomes.
+pub fn credential_variable(field: &str) -> String {
+    field.to_ascii_uppercase()
+}
 
 const VERSION_TIMEOUT_SECONDS: u64 = 30;
 const STATUS_TIMEOUT_SECONDS: u64 = 60;
@@ -236,8 +253,8 @@ impl InstalledImagegen {
 }
 
 /// The selected provider keys as a scoped environment for one process, or
-/// `None` when no key is saved. `fields` is the route's
-/// `credential_fields`: (field id, environment variable name).
+/// `None` when no key is saved. `fields` is (field id, environment variable
+/// name); only fields the selection holds a key for are read.
 pub fn scoped_environment<S: CredentialStore>(
     store: &S,
     selection: &ImageGenerationSelection,
@@ -260,5 +277,6 @@ pub fn scoped_environment<S: CredentialStore>(
     if entries.is_empty() {
         return Ok(None);
     }
-    ScopedSecretEnvironment::from_image_credentials(store, &entries, &ENVIRONMENT_NAMES).map(Some)
+    ScopedSecretEnvironment::from_image_credentials(store, &entries, credential_variable_allowed)
+        .map(Some)
 }

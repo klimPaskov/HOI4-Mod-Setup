@@ -722,6 +722,59 @@ pub(crate) fn image_generation_config_artifact(
     )
 }
 
+/// The project's `.hoi4-imagegen/config.toml` carrying the chosen hoi4-imagegen
+/// backend and its settings, merged into whatever the project already has
+/// there. `None` when the project records no backend choice.
+pub(crate) fn imagegen_project_config_artifact(
+    root: &Path,
+    manifest: &RemoteManifest,
+    selection: &ImageGenerationSelection,
+) -> Result<Option<GeneratedArtifact>, AppError> {
+    use hoi4_setup_core::image_backends::{project_config_content, PROJECT_CONFIG_PATH};
+    let Some(row) = image_generation_provider_rows(manifest, selection)?
+        .into_iter()
+        .find(|row| hoi4_setup_core::release_binary::is_release_binary_provider(row))
+    else {
+        return Ok(None);
+    };
+    let path = safe_join(root, PROJECT_CONFIG_PATH)?;
+    let existing = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => {
+            if crate::security::is_link_metadata(&metadata) || !metadata.is_file() {
+                return Err(AppError::PathSecurity(format!(
+                    "{PROJECT_CONFIG_PATH} is not a regular file"
+                )));
+            }
+            let bytes =
+                crate::flatten::read_regular_file_no_follow_under_root(root, PROJECT_CONFIG_PATH)?;
+            Some(String::from_utf8(bytes).map_err(|error| {
+                AppError::Source(format!("{PROJECT_CONFIG_PATH} is not UTF-8: {error}"))
+            })?)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(AppError::Transaction(format!(
+                "could not inspect {PROJECT_CONFIG_PATH}: {error}"
+            )))
+        }
+    };
+    let settings = selection
+        .route_settings
+        .get(hoi4_setup_core::release_binary::PROVIDER_ID);
+    Ok(
+        project_config_content(row, settings, existing.as_deref())?.map(|content| {
+            GeneratedArtifact {
+                component_id: "image_generation.project_config".into(),
+                destination: PROJECT_CONFIG_PATH.into(),
+                expected_sha256: sha256_bytes(content.as_bytes()),
+                content,
+                external: false,
+                bytes: None,
+            }
+        }),
+    )
+}
+
 pub(crate) fn image_client_config_path(environment: &str) -> Option<&'static str> {
     coding_environment::image_and_live_config_path(environment)
 }
@@ -1127,10 +1180,7 @@ pub(crate) fn image_generation_credential_field_supported(provider: &str, field:
         | "openrouter"
         | "huggingface_inference" => field == "api_key",
         // hoi4-imagegen reads these from its own process environment.
-        "hoi4_imagegen" => matches!(
-            field,
-            "openai_api_key" | "gemini_api_key" | "fal_key" | "comfyui_api_key"
-        ),
+        "hoi4_imagegen" => crate::imagegen::credential_field_allowed(field),
         "adobe_firefly" => matches!(field, "ims_token" | "service_key"),
         "vertex_imagen" => field == "service_account",
         "microsoft_foundry" => matches!(field, "resource_url" | "api_key"),

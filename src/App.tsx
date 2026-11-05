@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, checkInstallationRequirements, runAgentSetupResult, readDiagnostics, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelOpenRouterSignIn, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, draftModDescription, evaluateReadiness, findInterruptedTransaction, forgetContextAttachment, imagegenLoginRiskNote, imagegenSignIn, imagegenSignInStatus, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, openRouterSignIn, pickContextDocuments, pickContextImages, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, checkInstallationRequirements, runAgentSetupResult, readDiagnostics, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelOpenRouterSignIn, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, draftModDescription, evaluateReadiness, findInterruptedTransaction, forgetContextAttachment, imagegenLoginRiskNote, imagegenSignIn, imagegenSignInStatus, installAppUpdate, moveImageGenerationCredential, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, openRouterSignIn, pickContextDocuments, pickContextImages, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
 import { base64ByteLength, base64DataUrl, renderCoverPng, renderReferenceJpeg } from "./lib/images";
+import { backendSettingsProblem, imageSettingLabel, imageSettingProblem } from "./lib/imageSettings";
 import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, ContextDocumentState, ContextImageState, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, McpSupport, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SetupRequirement, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 import claudeModels from "./claude-models.json";
@@ -2197,7 +2198,9 @@ function canAdvanceFromScreen(
     case "image-generation":
       return Boolean(state.imageGeneration?.primary_provider)
         && [...new Set([state.imageGeneration.primary_provider, ...state.imageGeneration.additional_providers])]
-          .every((id) => providerAvailableForSelection(id, state));
+          .every((id) => providerAvailableForSelection(id, state))
+        && (state.imageGeneration.primary_provider !== IMAGEGEN_PROVIDER_ID
+          || !backendSettingsProblem(state.manifestPreview?.image_generation?.providers.find((provider) => provider.route.kind === "release_binary")?.route.backends ?? [], state.imageGeneration.route_settings[IMAGEGEN_PROVIDER_ID]));
     case "components":
       return planningReady
         && Boolean(state.manifestPreview || !isTauriRuntime())
@@ -3344,11 +3347,6 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
     return Array.from(new Set([...retained, ...imageGenerationComponentIds(next, state.manifestPreview)]));
   };
   const saveSelection = (next: ImageGenerationSelection) => update({ imageGeneration: next, selectedComponents: syncImageComponents(next), plan: undefined, transactionError: undefined });
-  const choosePrimary = (id: string) => saveSelection({ ...selection, primary_provider: id, additional_providers: id === "none" ? [] : selection.additional_providers.filter((candidate) => candidate !== id) });
-  const toggleExtra = (id: string, checked: boolean) => {
-    const extras = checked ? [...new Set([...selection.additional_providers, id])] : selection.additional_providers.filter((candidate) => candidate !== id);
-    saveSelection({ ...selection, additional_providers: selection.primary_provider === "none" ? [] : extras.filter((candidate) => candidate !== selection.primary_provider) });
-  };
   const saveCredential = async (provider: ImageGenerationProviderDefinition, fieldId: string) => {
     const key = `${provider.id}.${fieldId}`;
     const value = drafts[key]?.trim();
@@ -3415,31 +3413,79 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
   }, [catalog, selectedIds.join(","), selection.credential_references]);
 
   const primary = providers.find((provider) => provider.id === selection.primary_provider);
+  const imagegen = providers.find((provider) => provider.route.kind === "release_binary");
+  const backends = imagegen?.route.backends ?? [];
+  const recorded = selection.route_settings[IMAGEGEN_PROVIDER_ID]?.backend;
+  const backend = backends.find((candidate) => candidate.id === recorded) ?? backends.find((candidate) => candidate.default) ?? backends[0];
+  const legacyIds = selectedIds.filter((id) => id !== IMAGEGEN_PROVIDER_ID && id !== "none");
+  const usingImagegen = selection.primary_provider === IMAGEGEN_PROVIDER_ID;
+  const chooseImagegen = (use: boolean) => saveSelection({ ...selection, primary_provider: use ? IMAGEGEN_PROVIDER_ID : "none", additional_providers: [] });
+  const chooseBackend = (id: string) => {
+    // A setting belongs to the backend that declared it.
+    const settings: Record<string, string> = { ...selection.route_settings[IMAGEGEN_PROVIDER_ID], backend: id };
+    const keep = new Set(backends.find((candidate) => candidate.id === id)?.settings.map((setting) => setting.key));
+    for (const key of Object.keys(settings)) if (key !== "backend" && !keep.has(key)) delete settings[key];
+    saveSelection({ ...selection, route_settings: { ...selection.route_settings, [IMAGEGEN_PROVIDER_ID]: settings } });
+  };
+  const moveToImagegen = async (legacy: ImageGenerationProviderDefinition) => {
+    const replacement = legacy.replaced_by;
+    if (!imagegen || !replacement) return;
+    const references = { ...selection.credential_references };
+    for (const move of replacement.credential_moves) {
+      const key = `${legacy.id}.${move.from_field}`;
+      if (!references[key]) continue;
+      const moved = await moveImageGenerationCredential(legacy.id, move.from_field, move.to_field);
+      if (!moved) {
+        setMessage(`Could not move the ${legacy.display_name} key. Nothing was changed.`);
+        return;
+      }
+      delete references[key];
+      references[`${IMAGEGEN_PROVIDER_ID}.${move.to_field}`] = moved.reference;
+    }
+    const settings = { ...selection.route_settings };
+    delete settings[legacy.id];
+    settings[IMAGEGEN_PROVIDER_ID] = { ...settings[IMAGEGEN_PROVIDER_ID], backend: replacement.backend };
+    const wasPrimary = selection.primary_provider === legacy.id;
+    saveSelection({
+      ...selection,
+      primary_provider: wasPrimary ? IMAGEGEN_PROVIDER_ID : selection.primary_provider,
+      additional_providers: Array.from(new Set([
+        ...selection.additional_providers.filter((id) => id !== legacy.id),
+        ...(wasPrimary ? [] : [IMAGEGEN_PROVIDER_ID]),
+      ])).filter((id) => id !== (wasPrimary ? IMAGEGEN_PROVIDER_ID : selection.primary_provider)),
+      route_settings: settings,
+      credential_references: references,
+    });
+    setMessage(`${legacy.display_name} moved to hoi4-imagegen. Its key stayed in this computer's credential store.`);
+  };
+  const backendField = imagegen?.route.credential_fields?.find((field) => field.id === backend?.credential_field);
+  const backendKey = backendField ? `${IMAGEGEN_PROVIDER_ID}.${backendField.id}` : "";
+  const backendKeySaved = Boolean(backendKey && selection.credential_references[backendKey]);
   return <div className="stack narrow">
     <section className="panel">
-      <PanelTitle title="Choose an image provider" />
-      <p className="muted">Pick one main provider. Add others for different models or switch later in Update and repair. Keys stay in this computer's credential store.</p>
+      <PanelTitle title="Where images are made" />
+      <p className="muted">hoi4-imagegen makes the artwork. Pick where it generates it. A key stays in this computer's credential store, never in your project.</p>
       {!catalog && <p className="muted" role="status">{loadMessage}</p>}
-      {catalog && <div className="image-provider-list" role="radiogroup" aria-label="Primary image provider">{providers.map((provider) => {
-        const usable = compatible(provider);
-        const selected = selection.primary_provider === provider.id;
-        return <article className={`image-provider-card${selected ? " selected" : ""}${!usable ? " unavailable" : ""}`} key={provider.id}>
-          <label className="image-provider-choice"><input type="radio" name="primary-image-provider" value={provider.id} checked={selected} disabled={!usable} onChange={() => choosePrimary(provider.id)} /><span><strong>{provider.display_name}</strong><small>{provider.description}</small></span>{selected && <Status label="Primary" tone="info" />}</label>
-          <div className="image-provider-details"><span>{provider.cost_summary}</span><span>{provider.good_for.join(" · ")}</span><small>{provider.requirements.join(" ")}</small>{provider.models.length > 0 && <small>Models: {provider.models.join(", ")}</small>}{!usable && <small role="note">This provider needs a coding client that supports it.</small>}{provider.documentation_url && <ExternalLink href={provider.documentation_url}>Provider details <span aria-hidden="true">↗</span></ExternalLink>}</div>
-          {selectedIds.includes(provider.id) && provider.route.kind === "release_binary" && <p className="muted image-provider-secret">Setup downloads this program from its GitHub release, checks its SHA-256, and installs it in this project. After setup you can sign in with ChatGPT on the last screen. Keys below are optional. They stay in this computer's credential store, and the program reads them from there itself, so there is nothing to export.</p>}
-          {selectedIds.includes(provider.id) && provider.route.credential_fields?.map((field) => {
-            const key = `${provider.id}.${field.id}`;
-            const saved = Boolean(selection.credential_references[key]);
-            return <div className="image-provider-secret" key={field.id}><label className="field-label" htmlFor={`image-secret-${key}`}>{field.display_name}</label><div className="input-with-action"><input id={`image-secret-${key}`} className="text-input" type="password" autoComplete="off" value={drafts[key] ?? ""} onChange={(event) => update({ imageGenerationCredentialDrafts: { ...drafts, [key]: event.target.value } })} /><button type="button" className="input-action" disabled={!drafts[key]?.trim() || savingKey === key} onClick={() => void saveCredential(provider, field.id)}>{savingKey === key ? "Saving…" : "Store"}</button>{saved && <button type="button" className="text-button" onClick={() => void deleteCredential(provider, field.id)}>Delete</button>}</div><small className="muted">{saved ? "Stored in the operating-system credential vault." : "Needed only for this provider. The key is not added to project files."}</small></div>;
-          })}
-          {selectedIds.includes(provider.id) && ["comfyui", "automatic1111"].includes(provider.route.api_protocol ?? "") && <div className="image-provider-secret"><Field label="Local image server" value={selection.route_settings[provider.id]?.server_url ?? provider.route.api_base_url ?? ""} onChange={(value) => setRouteSetting(provider.id, "server_url", value)} placeholder={provider.route.api_base_url ?? "http://127.0.0.1:8188"} mono /><Field label="Model or checkpoint (optional)" value={selection.route_settings[provider.id]?.checkpoint ?? ""} onChange={(value) => setRouteSetting(provider.id, "checkpoint", value)} /></div>}
-          {selectedIds.includes(provider.id) && provider.route.api_protocol === "microsoft_foundry" && <div className="image-provider-secret"><Field label="Deployment name" value={selection.route_settings[provider.id]?.deployment_name ?? ""} onChange={(value) => setRouteSetting(provider.id, "deployment_name", value)} /></div>}
-          {selectedIds.includes(provider.id) && provider.route.api_protocol === "aws_bedrock" && <div className="image-provider-secret"><Field label="AWS region" value={selection.route_settings[provider.id]?.region ?? "us-west-2"} onChange={(value) => setRouteSetting(provider.id, "region", value)} placeholder="us-west-2" /></div>}
-          {selectedIds.includes(provider.id) && (provider.route.supported_models?.length ?? 0) > 0 && <label className="field image-provider-secret"><span className="field-label">Model</span><select className="text-input" value={selection.route_settings[provider.id]?.model ?? provider.route.default_model ?? provider.route.supported_models?.[0] ?? ""} onChange={(event) => setRouteSetting(provider.id, "model", event.target.value)}>{provider.route.supported_models?.map((model, index) => <option key={model} value={model}>{provider.models[index] ?? model}</option>)}</select></label>}
-          {!selected && provider.id !== "none" && provider.availability !== "manual_only" && <label className="image-provider-extra"><input type="checkbox" checked={selection.additional_providers.includes(provider.id)} disabled={!usable || selection.primary_provider === "none"} onChange={(event) => toggleExtra(provider.id, event.target.checked)} /><span>Add as an optional provider</span></label>}
-          {provider.availability === "manual_only" && <p className="muted">Manual use only; no app connection or MCP registration.</p>}
-        </article>;
-      })}</div>}
+      {catalog && legacyIds.length === 0 && <div className="coding-environment-options" role="radiogroup" aria-label="Image generation">
+        {imagegen && <label className="coding-environment-option"><input type="radio" name="image-generation" checked={usingImagegen} disabled={!compatible(imagegen)} onChange={() => chooseImagegen(true)} /><span className="coding-environment-copy"><strong>Use hoi4-imagegen</strong><small>{imagegen.description}</small></span></label>}
+        <label className="coding-environment-option"><input type="radio" name="image-generation" checked={!usingImagegen} onChange={() => chooseImagegen(false)} /><span className="coding-environment-copy"><strong>None, I make art myself</strong><small>Use artwork you create or source yourself.</small></span></label>
+      </div>}
+      {catalog && imagegen && usingImagegen && legacyIds.length === 0 && backends.length > 0 && <div className="image-backend-panel">
+        <span className="field-label" id="image-backend-label">Generate with</span>
+        <div className="coding-environment-options" role="radiogroup" aria-labelledby="image-backend-label">{backends.map((option) => <label className="coding-environment-option" key={option.id}><input type="radio" name="image-backend" value={option.id} checked={backend?.id === option.id} onChange={() => chooseBackend(option.id)} /><span className="coding-environment-copy"><strong>{option.display_name}</strong>{option.default && <small>Default. Signs in with your ChatGPT account after setup.</small>}{option.live_verified === false && <small>Untested with the real service.</small>}</span></label>)}</div>
+        <p className="muted">Setup downloads hoi4-imagegen from its GitHub release, checks its SHA-256, and installs it in this project.{backend?.default ? " After setup you can sign in with ChatGPT on the last screen." : ""}</p>
+        {backendField && <div className="image-provider-secret" key={backendField.id}><label className="field-label" htmlFor={`image-secret-${backendKey}`}>{backendField.display_name}</label><div className="input-with-action"><input id={`image-secret-${backendKey}`} className="text-input" type="password" autoComplete="off" value={drafts[backendKey] ?? ""} onChange={(event) => update({ imageGenerationCredentialDrafts: { ...drafts, [backendKey]: event.target.value } })} /><button type="button" className="input-action" disabled={!drafts[backendKey]?.trim() || savingKey === backendKey} onClick={() => imagegen && void saveCredential(imagegen, backendField.id)}>{savingKey === backendKey ? "Saving…" : "Store"}</button>{backendKeySaved && <button type="button" className="text-button" onClick={() => imagegen && void deleteCredential(imagegen, backendField.id)}>Delete</button>}</div><small className="muted">{backendKeySaved ? "Stored in the operating-system credential vault." : "Needed only for this backend. The key is not added to project files."}</small></div>}
+        {backend?.settings.map((setting) => { const value = selection.route_settings[IMAGEGEN_PROVIDER_ID]?.[setting.key] ?? ""; const problem = imageSettingProblem(setting.kind, value); return <div className="image-provider-secret" key={setting.key}><Field label={`${imageSettingLabel(setting.key)}${setting.required ? "" : " (optional)"}`} value={value} onChange={(next) => setRouteSetting(IMAGEGEN_PROVIDER_ID, setting.key, next.trim())} placeholder={setting.default ?? undefined} />{problem && <small className="status-review" role="alert">{problem}</small>}</div>; })}
+      </div>}
+      {catalog && legacyIds.map((id) => {
+        const legacy = catalog.providers.find((candidate) => candidate.id === id);
+        const name = legacy?.display_name ?? id;
+        const target = legacy?.replaced_by ? backends.find((candidate) => candidate.id === legacy.replaced_by?.backend) : undefined;
+        return <div className="image-backend-panel" key={id} role="group" aria-label={`${name} image provider`}>
+          <p><strong>{name}</strong> is set up in this project. It keeps working.</p>
+          {legacy && target ? <><p className="muted">hoi4-imagegen now covers it with the {target.display_name} backend.{legacy.replaced_by?.credential_moves.length ? " Moving keeps your saved key in this computer's credential store." : ""}</p><button type="button" className="button secondary" onClick={() => void moveToImagegen(legacy)}>Move to hoi4-imagegen ({target.display_name})</button></> : <p className="muted">hoi4-imagegen does not cover it yet. Nothing changes until it does.</p>}
+        </div>;
+      })}
       {retiredListed && <p className="muted" role="note">GPTImage is retired. Setup no longer installs it; use the ChatGPT sign-in in hoi4-imagegen instead.</p>}
       {message && <p role="status" className="muted">{message}</p>}
       <p className="muted" aria-live="polite">{loadMessage}</p>
@@ -4005,7 +4051,12 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const gitHashes = readinessRow(report, ["git.project", "hashes.managed", "conflicts.resolved", "dependencies.core"]);
   const mesh = readinessRow(report, ["workflow.3d"]);
   const superEvents = readinessRow(report, ["workflow.super_events"]);
-  const imagegenSelected = [state.imageGeneration?.primary_provider, ...(state.imageGeneration?.additional_providers ?? [])].includes(IMAGEGEN_PROVIDER_ID);
+  const imagegenRow = state.manifestPreview?.image_generation?.providers.find((provider) => provider.route.kind === "release_binary");
+  const recordedBackend = state.imageGeneration?.route_settings?.[IMAGEGEN_PROVIDER_ID]?.backend;
+  const defaultBackend = imagegenRow?.route.backends?.find((backend) => backend.default)?.id;
+  // The ChatGPT sign-in belongs to the default backend; another backend uses its own key.
+  const imagegenSelected = [state.imageGeneration?.primary_provider, ...(state.imageGeneration?.additional_providers ?? [])].includes(IMAGEGEN_PROVIDER_ID)
+    && (!recordedBackend || !defaultBackend || recordedBackend === defaultBackend);
   const liveSelected = state.liveTesting?.provider !== "none" && state.selectedComponents.some((id) => id === "workflow.live_testing" || id === "workflow.live_tools");
   const liveCheck = report?.checks.find((check) => check.id === "workflow.live_testing");
   const liveStatus = !liveSelected ? "Not selected" : !report ? "Checking" : liveCheck?.status === "pass" ? "Configured" : "To-do";
@@ -4144,7 +4195,7 @@ export function ImagegenSignIn({ projectRoot }: { projectRoot: string }) {
         <button type="button" className="text-button" disabled={busy} onClick={() => setRiskNote(undefined)}>Cancel</button>
       </div>
     </div>}
-    <p className="ready-panel-note muted">{status?.signed_in ? "hoi4-imagegen can make images with your ChatGPT plan." : "Shows a short notice, then opens your browser. You can skip this and use an OpenAI, Gemini, fal or ComfyUI key instead."}</p>
+    <p className="ready-panel-note muted">{status?.signed_in ? "hoi4-imagegen can make images with your ChatGPT plan." : "Shows a short notice, then opens your browser. You can skip this and pick another backend later in Update and repair."}</p>
     {status && !status.signed_in && status.detail && <p className="ready-panel-note muted" role="status">{status.detail}</p>}
     {error && <p className="ready-panel-note" role="alert">{error}</p>}
   </div>;

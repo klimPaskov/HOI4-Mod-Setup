@@ -1056,3 +1056,63 @@ pub(crate) fn armed_release_targets(version: &str) -> serde_json::Value {
     TRANSACTION_RELEASE.with(|slot| *slot.borrow_mut() = Some((version.into(), release.archive)));
     targets
 }
+
+#[test]
+fn only_key_shaped_variables_ever_reach_hoi4_imagegen() {
+    use crate::imagegen::{credential_field_allowed, credential_variable_allowed};
+    for name in [
+        "OPENAI_API_KEY",
+        "FAL_KEY",
+        "COMFYUI_API_KEY",
+        "STABILITY_TOKEN",
+    ] {
+        assert!(credential_variable_allowed(name), "{name}");
+    }
+    for name in [
+        "PATH",
+        "LD_PRELOAD",
+        "DYLD_INSERT_LIBRARIES",
+        "openai_api_key",
+        "OPENAI KEY",
+        "KEY",
+        "ANTHROPIC_API_KEY",
+        "MESHY_API_KEY",
+        "HOME_KEY=1",
+        "",
+    ] {
+        assert!(!credential_variable_allowed(name), "{name}");
+    }
+    // A backend added later needs no app release as long as its field is
+    // key-shaped.
+    assert!(credential_field_allowed("stability_api_key"));
+    assert!(credential_field_allowed("fal_key"));
+    assert!(!credential_field_allowed("path"));
+    assert!(!credential_field_allowed("Fal_Key"));
+    assert!(!credential_field_allowed("../fal_key"));
+    assert!(!credential_field_allowed("anthropic_api_key"));
+}
+
+#[test]
+fn every_hoi4_imagegen_v0_3_backend_key_is_accepted() {
+    use crate::imagegen::{credential_field_allowed, credential_variable};
+    for (field, variable) in [
+        ("openai_api_key", "OPENAI_API_KEY"),
+        ("gemini_api_key", "GEMINI_API_KEY"),
+        ("fal_key", "FAL_KEY"),
+        ("comfyui_api_key", "COMFYUI_API_KEY"),
+        ("replicate_api_token", "REPLICATE_API_TOKEN"),
+        ("bfl_api_key", "BFL_API_KEY"),
+        ("leonardo_api_key", "LEONARDO_API_KEY"),
+        ("stability_api_key", "STABILITY_API_KEY"),
+        ("ideogram_api_key", "IDEOGRAM_API_KEY"),
+        ("recraft_api_key", "RECRAFT_API_KEY"),
+        ("xai_api_key", "XAI_API_KEY"),
+        ("together_api_key", "TOGETHER_API_KEY"),
+        ("openrouter_api_key", "OPENROUTER_API_KEY"),
+        ("hf_token", "HF_TOKEN"),
+        ("openai_compatible_api_key", "OPENAI_COMPATIBLE_API_KEY"),
+    ] {
+        assert!(credential_field_allowed(field), "{field}");
+        assert_eq!(credential_variable(field), variable);
+    }
+}

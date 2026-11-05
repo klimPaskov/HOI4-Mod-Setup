@@ -148,6 +148,13 @@ function hoi4ImagegenFixture(): NonNullable<SourceManifestPreview["image_generat
       { id: "fal_key", display_name: "fal key", environment_name: "FAL_KEY" },
       { id: "comfyui_api_key", display_name: "ComfyUI API key", environment_name: "COMFYUI_API_KEY" },
     ],
+    backends: [
+      { id: "chatgpt_login", display_name: "ChatGPT sign-in", default: true, credential_field: null, settings: [], replaces_providers: ["codex_native"] },
+      { id: "openai", display_name: "OpenAI", default: false, credential_field: "openai_api_key", settings: [], replaces_providers: ["openai_api"] },
+      { id: "gemini", display_name: "Gemini", default: false, credential_field: "gemini_api_key", settings: [], replaces_providers: ["gemini_api"] },
+      { id: "fal", display_name: "fal.ai", default: false, credential_field: "fal_key", settings: [], replaces_providers: ["fal_ai"] },
+      { id: "comfyui", display_name: "ComfyUI", default: false, credential_field: "comfyui_api_key", settings: [{ key: "providers.comfyui.endpoint", kind: "url", required: true, default: "http://127.0.0.1:8188" }, { key: "providers.comfyui.workflow", kind: "project_path", required: false, default: null }], replaces_providers: ["comfyui_local"] },
+    ],
   },
   capabilities: {
     reference_images: { supported: true, max_count: 5, notes: "Pass the image paths and explain what to copy." },
@@ -170,7 +177,12 @@ function fixtureImageGeneration(): NonNullable<SourceManifestPreview["image_gene
   const snapshot = (sourceManifest as unknown as SourceManifestPreview).image_generation;
   return {
     default_provider: "hoi4_imagegen",
-    providers: [hoi4ImagegenFixture(), ...(snapshot?.providers ?? []).filter((provider) => provider.id !== "gptimage")],
+    providers: [
+      hoi4ImagegenFixture(),
+      ...(snapshot?.providers ?? [])
+        .filter((provider) => provider.id !== "gptimage")
+        .map((provider) => provider.id === "openai_api" ? { ...provider, replaced_by: { backend: "openai", credential_moves: [{ from_field: "api_key", to_field: "openai_api_key" }] } } : provider),
+    ],
   };
 }
 
@@ -368,7 +380,7 @@ export function documentationFixture(base: WizardState): WizardState {
   if (scenario === "components") return { ...common, screen: "components" };
   if (scenario === "environments") return { ...common, screen: "environments", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"] };
   if (scenario === "live-testing") return { ...common, screen: "live-testing", selectedComponents: [...common.selectedComponents, "workflow.live_testing"] };
-  if (scenario === "image-generation") return { ...common, screen: "image-generation", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"], imageGeneration: { primary_provider: "hoi4_imagegen", additional_providers: ["openai_api"], route_settings: {}, credential_references: {} } };
+  if (scenario === "image-generation") return { ...common, screen: "image-generation", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"], imageGeneration: { primary_provider: "hoi4_imagegen", additional_providers: [], route_settings: {}, credential_references: {} } };
   if (scenario === "workflows") return { ...common, screen: "workflows", meshSelected: true, superEventsSelected: true, portraitPipeline: runpodPortrait, selectedComponents: [...common.selectedComponents, "workflow.3d", "workflow.super_events", "workflow.live_testing", ...portraitComponentIds] };
   if (scenario === "mcp") return { ...common, screen: "mcp", meshSelected: true, meshKeyStatus: "present", selectedComponents: [...common.selectedComponents, "workflow.3d"] };
   if (scenario === "git") return { ...common, screen: "git", gitOnlineAction: "create_public_github", gitHubRepository: "atlantis-rising" };

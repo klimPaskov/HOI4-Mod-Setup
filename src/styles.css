@@ -437,6 +437,10 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .image-provider-choice small, .image-provider-details small { color: var(--muted, #606977); overflow-wrap: anywhere; }
 .image-provider-details { display: grid; gap: 5px; margin: 11px 0 0 28px; font-size: .9rem; }
 .image-provider-secret { display: grid; gap: 6px; margin: 12px 0 0 28px; }
+.image-backend-panel { display: grid; gap: 12px; margin-top: 14px; min-width: 0; padding: 0 16px 8px; }
+.image-backend-panel .coding-environment-options { padding: 0; }
+.image-backend-panel .image-provider-secret { margin-left: 0; }
+.image-backend-panel p { margin: 0; overflow-wrap: anywhere; }
 .image-provider-extra { display: flex; align-items: center; gap: 8px; margin: 12px 0 0 28px; cursor: pointer; }
 .image-provider-extra input { flex: 0 0 auto; }
 @media (min-width: 960px) { .image-provider-list { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }

@@ -1,7 +1,10 @@
 // Pure rules for the web edition's integration choices, matching the core's
 // validation so the page never offers a choice the core will refuse.
 
+import { backendSettingsProblem, imageSettingLabel, imageSettingProblem, isLoopbackUrl } from "../lib/imageSettings";
 import type { ImageChoice, ImageProvider, LiveTestingChoice, PortraitChoice, SourcePreview } from "./protocol";
+
+export { imageSettingLabel, imageSettingProblem, isLoopbackUrl };
 
 export const NO_IMAGE_PROVIDER = "none";
 export const MAX_ADDITIONAL_IMAGE_PROVIDERS = 8;
@@ -15,38 +18,14 @@ export function availableImageProviders(preview: SourcePreview | null, clients: 
   });
 }
 
-/** The settings a provider's route accepts, as the core allows them. */
-export function imageSettingKeys(provider: ImageProvider): string[] {
-  switch (provider.api_protocol) {
-    case "comfyui":
-    case "automatic1111":
-      return ["server_url", "checkpoint"];
-    case "microsoft_foundry":
-      return ["deployment_name"];
-    case "aws_bedrock":
-      return ["region", "model"];
-    default:
-      return (provider.supported_models ?? []).length > 0 ? ["model"] : [];
-  }
-}
-
-export function imageSettingLabel(key: string): string {
-  return ({ server_url: "Local server address", checkpoint: "Checkpoint", deployment_name: "Deployment name", region: "Region", model: "Model" } as Record<string, string>)[key] ?? key;
-}
-
-/** A local image server must run on this computer. */
-export function isLoopbackUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return ["http:", "https:"].includes(url.protocol) && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) && !url.username && !url.password;
-  } catch {
-    return false;
-  }
-}
-
+/** A new mod starts on hoi4-imagegen, or on none when the package does not offer it; an older provider is only ever one the project already records. */
 export function defaultImageChoice(preview: SourcePreview | null): ImageChoice {
+  const catalog = preview?.image_generation;
+  const imagegen = catalog?.providers.find((provider) => provider.route_kind === "release_binary");
+  const named = catalog?.providers.find((provider) => provider.id === catalog.default_provider);
+  const usable = named && (named.route_kind === "release_binary" || named.id === NO_IMAGE_PROVIDER) ? named.id : imagegen?.id;
   return {
-    primary_provider: preview?.image_generation?.default_provider ?? NO_IMAGE_PROVIDER,
+    primary_provider: usable ?? NO_IMAGE_PROVIDER,
     additional_providers: [],
     route_settings: {},
   };
@@ -54,30 +33,18 @@ export function defaultImageChoice(preview: SourcePreview | null): ImageChoice {
 
 /** Keep only choices the current clients can use; fall back to none. */
 export function normalizeImageChoice(choice: ImageChoice, available: ImageProvider[]): ImageChoice {
-  const ids = new Set(available.map((provider) => provider.id));
-  const primary = ids.has(choice.primary_provider) ? choice.primary_provider : ids.has(NO_IMAGE_PROVIDER) ? NO_IMAGE_PROVIDER : available[0]?.id ?? NO_IMAGE_PROVIDER;
+  // The retired GPTImage route (an older package still lists it) is replaced by hoi4-imagegen's ChatGPT sign-in, or by none when the package lacks it, as the desktop does.
+  const retired = new Set(available.filter((provider) => provider.route_kind === "local_package").map((provider) => provider.id));
+  const replacement = available.find((provider) => provider.route_kind === "release_binary")?.id ?? NO_IMAGE_PROVIDER;
+  const ids = new Set(available.filter((provider) => !retired.has(provider.id)).map((provider) => provider.id));
+  const wanted = retired.has(choice.primary_provider) ? replacement : choice.primary_provider;
+  const primary = ids.has(wanted) ? wanted : ids.has(NO_IMAGE_PROVIDER) ? NO_IMAGE_PROVIDER : [...ids][0] ?? NO_IMAGE_PROVIDER;
   const additional = primary === NO_IMAGE_PROVIDER
     ? []
     : choice.additional_providers.filter((id) => id !== primary && ids.has(id) && id !== NO_IMAGE_PROVIDER).slice(0, MAX_ADDITIONAL_IMAGE_PROVIDERS);
   const keep = new Set([primary, ...additional]);
   const route_settings = Object.fromEntries(Object.entries(choice.route_settings).filter(([id]) => keep.has(id)));
   return { primary_provider: primary, additional_providers: additional, route_settings };
-}
-
-/** What a provider needs before images can be made, in plain words. */
-export function imageProviderNeeds(provider: ImageProvider): string | null {
-  switch (provider.auth_method) {
-    case "api_key_vault":
-    case "cloud_credentials":
-    case "enterprise_credentials":
-      return "Its key is read from the operating-system credential store. A browser cannot save it there; add it later with the desktop app.";
-    case "chatgpt_subscription":
-      return "It uses your ChatGPT sign-in in the provider's own tool.";
-    case "local":
-      return "Its server must run on this computer.";
-    default:
-      return null;
-  }
 }
 
 export const NO_LIVE_TESTING: LiveTestingChoice = { provider: "none", linux_ready: false, wsl_distribution: "", ssh_host: "" };
@@ -106,4 +73,11 @@ export function portraitProblem(choice: PortraitChoice): string | null {
     }
   }
   return null;
+}
+
+/** The first problem in the chosen backend's settings, if any. */
+export function imageChoiceProblem(choice: ImageChoice, providers: ImageProvider[]): string | null {
+  const row = providers.find((provider) => provider.route_kind === "release_binary");
+  if (!row || choice.primary_provider !== row.id) return null;
+  return backendSettingsProblem(row.backends ?? [], choice.route_settings[row.id]);
 }

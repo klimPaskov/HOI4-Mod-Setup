@@ -38,6 +38,7 @@ use hoi4_setup_core::manifest::wiki_install_metadata;
 use hoi4_setup_core::memory_fs::MemoryFs;
 use hoi4_setup_core::models::*;
 use hoi4_setup_core::project_files::{merge_gitignore, project_readme};
+use hoi4_setup_core::release_binary;
 use hoi4_setup_core::text::sha256_bytes;
 use hoi4_setup_core::zip::ZipEntry;
 use hoi4_setup_core::AppError;
@@ -753,6 +754,38 @@ pub(crate) fn prepare(
             content.into_bytes(),
             Ownership::Generated,
         ));
+    }
+    // The chosen hoi4-imagegen backend, merged into the project's own
+    // `.hoi4-imagegen/config.toml` so its profiles and policy are kept.
+    if let Some(row) = image_generation_provider_rows(&source.manifest, &chosen.image)?
+        .into_iter()
+        .find(|row| release_binary::is_release_binary_provider(row))
+    {
+        let existing = read_local(local, hoi4_setup_core::image_backends::PROJECT_CONFIG_PATH)
+            .map(String::from_utf8)
+            .transpose()
+            .map_err(|error| {
+                AppError::Source(format!(
+                    "{} is not UTF-8: {error}",
+                    hoi4_setup_core::image_backends::PROJECT_CONFIG_PATH
+                ))
+            })?;
+        if let Some(content) = hoi4_setup_core::image_backends::project_config_content(
+            row,
+            chosen.image.route_settings.get(release_binary::PROVIDER_ID),
+            existing.as_deref(),
+        )? {
+            incoming.push(generated(
+                hoi4_setup_core::image_backends::PROJECT_CONFIG_PATH,
+                "image_generation.project_config",
+                content.into_bytes(),
+                if existing.is_some() {
+                    Ownership::Merged
+                } else {
+                    Ownership::Generated
+                },
+            ));
+        }
     }
     let shipped = incoming
         .iter()

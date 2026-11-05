@@ -256,6 +256,73 @@ only while its files still hash to what the lock recorded. The retired
 never installed; an older manifest that lists it is accepted and its provider
 is ignored with a message.
 
+#### Backends of the hoi4-imagegen route
+
+The image step offers hoi4-imagegen and, beside it, "None, I make art
+myself". The backend list comes from the route, so a backend the program gains
+appears in Setup without an app release. The route may carry an optional
+`backends` array (schema formats 4 to 6):
+
+```json
+"backends": [
+  { "id": "chatgpt_login", "display_name": "ChatGPT sign-in", "default": true,
+    "replaces_providers": ["codex_native"] },
+  { "id": "openai", "display_name": "OpenAI", "credential_field": "openai_api_key",
+    "replaces_providers": ["openai_api"] },
+  { "id": "comfyui", "display_name": "ComfyUI", "credential_field": "comfyui_api_key",
+    "settings": [
+      { "key": "providers.comfyui.endpoint", "kind": "url", "required": true,
+        "default": "http://127.0.0.1:8188" },
+      { "key": "providers.comfyui.workflow", "kind": "project_path", "required": false }
+    ],
+    "replaces_providers": ["comfyui_local"] }
+]
+```
+
+- `id` is the lower-case name hoi4-imagegen accepts for the backend. Setup
+  records the choice as `route_settings.hoi4_imagegen.backend` and validates it
+  against this list.
+- `default` marks the backend used when none is chosen (exactly one; the
+  ChatGPT sign-in). It is listed first.
+- `credential_field` names an entry of the route's `credential_fields`. Its
+  key is stored in the operating-system credential store and reaches only the
+  hoi4-imagegen process. A backend without one (the ChatGPT sign-in) takes no key.
+- `settings` lists values the backend reads from the project's
+  `.hoi4-imagegen/config.toml`. `key` is the dotted TOML path (it starts with
+  `providers.`, so `policy`, `profiles` and `templates` are never touched) and
+  `kind` is `url` (https anywhere, or http on this computer, with no user
+  name), `project_path` (a `.json` path inside the project) or `text` (letters,
+  digits and `. _ : / -`, such as a model name). A `required` setting without a
+  `default` must be filled in before setup continues. Setup asks for
+  each one beside the backend and writes it there.
+- `live_verified: false` marks a backend not yet verified against the real
+  service; the picker shows an "untested" hint.
+- `replaces_providers` lists older provider rows the backend covers. Update and
+  repair offer to move a project that records one of them, and the stored key
+  of a row with one key moves to `credential_field` without being shown.
+
+A package that omits `backends` still works: Setup derives the list from
+`credential_fields` (one backend per key, the ChatGPT sign-in as the default),
+and maps an older provider onto the backend whose key is read from the same
+environment variable. A credential field must be a lower-case id that, in upper
+case, is a variable name ending in `_KEY` or `_TOKEN` (not an Anthropic,
+Meshy, Claude or Codex name), so a package can name a new backend's
+key without being able to name any other variable.
+
+When the user picks a backend, Setup merges it into the project's
+`.hoi4-imagegen/config.toml` (a reviewed, `generated` file; `merged` when the
+project already had one): it sets `[defaults] provider = "<id>"` and the
+chosen backend's `settings`, and keeps every other table and key (profiles,
+policy, templates). It writes nothing when the project records no backend
+choice, because hoi4-imagegen then picks the first ready provider itself, and
+an explicit choice of the default is written as `provider = "chatgpt_login"` so
+an earlier choice cannot linger. If the backend is later cleared or
+hoi4-imagegen is deselected, the file is removed only while it still matches
+what Setup wrote.
+
+An older provider that no backend covers yet keeps working exactly as the
+project recorded it; Update and repair never remove or change it.
+
 ## Destination ownership
 
 - `managed`: remote file, replace only when local matches installed hash

@@ -552,6 +552,39 @@ pub fn save_image_generation_key<S: CredentialStore>(
     Ok(reference)
 }
 
+/// Copy an image key stored under one provider field to another, then remove
+/// the original. Used when an older image provider moves into hoi4-imagegen:
+/// the value is read and written inside the credential store and never leaves
+/// this function. `None` when nothing is stored under the source field. The
+/// original is removed only after the copy is verified, and a failed removal
+/// leaves a harmless extra entry, never a missing one.
+pub fn move_image_generation_key<S: CredentialStore>(
+    store: &S,
+    from_provider: &str,
+    from_field: &str,
+    to_provider: &str,
+    to_field: &str,
+) -> Result<Option<CredentialReference>, AppError> {
+    let source = image_generation_credential_reference(from_provider, from_field)?;
+    validate_image_generation_credential_for(&source, from_provider, from_field)?;
+    let Ok(value) = store.read(&source) else {
+        return Ok(None);
+    };
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let target = save_image_generation_key(store, to_provider, to_field, &value)?;
+    if store.read(&target).ok().as_deref() != Some(value.as_str()) {
+        return Err(AppError::Credential(
+            "the moved image credential could not be verified".into(),
+        ));
+    }
+    if source.reference != target.reference {
+        let _ = store.delete(&source);
+    }
+    Ok(Some(target))
+}
+
 pub fn validate_secret_input(name: &str, value: &str) -> Result<(), AppError> {
     validate_env_name(name)?;
     if value.trim().is_empty() {
@@ -629,12 +662,12 @@ impl ScopedSecretEnvironment {
     pub fn from_image_credentials<S: CredentialStore>(
         store: &S,
         entries: &[(CredentialReference, String)],
-        allowed: &[&str],
+        allowed: impl Fn(&str) -> bool,
     ) -> Result<Self, AppError> {
         let mut values = BTreeMap::new();
         let mut known_secrets = Vec::new();
         for (reference, environment_name) in entries {
-            if !allowed.contains(&environment_name.as_str()) {
+            if !allowed(environment_name.as_str()) {
                 return Err(AppError::Credential(
                     "that variable may not be passed to the image server".into(),
                 ));
@@ -862,6 +895,39 @@ mod tests {
             validate_image_generation_credential_for(&reference, "openai_api", "service_key")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn an_older_image_key_moves_into_hoi4_imagegen_without_leaving_the_store() {
+        let store = MemoryCredentialStore::default();
+        let secret = "moved-image-secret-value";
+        let old = save_image_generation_key(&store, "openai_api", "api_key", secret).unwrap();
+        let moved = move_image_generation_key(
+            &store,
+            "openai_api",
+            "api_key",
+            "hoi4_imagegen",
+            "openai_api_key",
+        )
+        .unwrap()
+        .expect("a stored key moves");
+        assert_eq!(
+            moved.reference,
+            "credential://image_generation_api_key/hoi4_imagegen_openai_api_key"
+        );
+        assert_eq!(store.read(&moved).unwrap(), secret);
+        assert!(store.read(&old).is_err(), "the original is removed");
+        assert!(!serde_json::to_string(&moved).unwrap().contains(secret));
+        // Nothing stored means nothing moves, and nothing is invented.
+        assert!(move_image_generation_key(
+            &store,
+            "gemini_api",
+            "api_key",
+            "hoi4_imagegen",
+            "gemini_api_key"
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]

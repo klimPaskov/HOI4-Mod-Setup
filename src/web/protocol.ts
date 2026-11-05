@@ -88,6 +88,26 @@ export interface ImageProvider {
   api_protocol?: string | null;
   supported_models?: string[] | null;
   requires_primary_coding_environment?: string | null;
+  /** On the hoi4-imagegen row: the backends it offers, the default first. */
+  backends?: ImageBackend[] | null;
+  /** On an older provider that a hoi4-imagegen backend now covers. */
+  replaced_by?: { backend: string } | null;
+}
+
+export interface ImageBackendSetting {
+  key: string;
+  kind: string;
+  required: boolean;
+  default: string | null;
+}
+
+export interface ImageBackend {
+  id: string;
+  display_name: string;
+  default: boolean;
+  live_verified?: boolean;
+  credential_field: string | null;
+  settings: ImageBackendSetting[];
 }
 
 export interface LiveTestingProvider {

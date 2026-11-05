@@ -280,3 +280,46 @@ fn a_manifest_with_a_malformed_release_route_is_refused() {
         json!("https://github.com/klimPaskov/hoi4-imagegen-mcp/releases/download/v0.2.0/other.zip");
     assert!(crate::manifest::parse_manifest(&serde_json::to_vec(&value).unwrap(), None).is_err());
 }
+
+fn with_backend(backend: &str) -> ImageGenerationSelection {
+    let mut chosen = selection("hoi4_imagegen");
+    chosen.route_settings.insert(
+        "hoi4_imagegen".into(),
+        [("backend".to_string(), backend.to_string())].into(),
+    );
+    chosen
+}
+
+#[test]
+fn the_hoi4_imagegen_backend_must_be_one_the_package_publishes() {
+    let manifest = manifest_with_hoi4_imagegen("0.2.0", synthetic_targets("0.2.0"));
+    for backend in ["chatgpt_login", "openai", "gemini", "fal", "comfyui"] {
+        validate_image_generation_selection(
+            &with_backend(backend),
+            &manifest,
+            &environments("claude_code"),
+        )
+        .unwrap_or_else(|error| panic!("{backend} should be accepted: {error}"));
+    }
+    assert!(validate_image_generation_selection(
+        &with_backend("midjourney"),
+        &manifest,
+        &environments("claude_code"),
+    )
+    .is_err());
+}
+
+#[test]
+fn a_backend_with_no_local_server_takes_no_server_address() {
+    let manifest = manifest_with_hoi4_imagegen("0.2.0", synthetic_targets("0.2.0"));
+    let mut chosen = with_backend("openai");
+    chosen
+        .route_settings
+        .get_mut("hoi4_imagegen")
+        .unwrap()
+        .insert("server_url".into(), "http://127.0.0.1:8188".into());
+    assert!(
+        validate_image_generation_selection(&chosen, &manifest, &environments("claude_code"))
+            .is_err()
+    );
+}

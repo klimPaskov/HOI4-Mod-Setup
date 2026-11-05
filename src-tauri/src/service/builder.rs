@@ -474,6 +474,11 @@ pub(crate) fn build_plan_with(
     {
         generated.push(guidance);
     }
+    if let Some(project_config) =
+        imagegen_project_config_artifact(&root, &resolution.manifest, &image_generation)?
+    {
+        generated.push(project_config);
+    }
     let selected_config_destinations = selections
         .iter()
         .map(|selection| selection.destination.clone())
