@@ -7175,6 +7175,7 @@ fn run_agent_setup_blocking(
         });
     };
     let before = crate::agent_setup::snapshot(root, &lock)?;
+    let kept = crate::agent_setup::kept_files(root, plan)?;
     let mut args = vec!["-B".to_string()];
     args.extend(action.arguments.iter().cloned());
     let spec = crate::process::ProcessSpec {
@@ -7188,6 +7189,8 @@ fn run_agent_setup_blocking(
         max_output_bytes: 2 * 1024 * 1024,
     };
     let run = spec.run(&[python], None);
+    // A file the user chose to keep stays exactly as they left it.
+    let restored = crate::agent_setup::restore_kept(root, &kept)?;
     let changes = crate::agent_setup::changes_since(root, &before)?;
     let (state, detail) = match &run {
         _ if !changes.unexpected.is_empty() => (
@@ -7197,9 +7200,17 @@ fn run_agent_setup_blocking(
                 changes.unexpected.join(", ")
             ),
         ),
-        Ok(result) if result.status_code == Some(0) && !result.timed_out => {
-            ("ready", String::new())
-        }
+        Ok(result) if result.status_code == Some(0) && !result.timed_out => (
+            "ready",
+            if restored.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "Kept your edits to {}; the setup command had regenerated them.",
+                    restored.join(", ")
+                )
+            },
+        ),
         Ok(result) if result.timed_out => (
             "incomplete",
             "The setup command took too long and was stopped; run Repair to try again.".into(),

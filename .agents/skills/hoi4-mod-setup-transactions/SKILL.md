@@ -618,6 +618,8 @@ and returns only the new reference; the value is never read by the UI. The
 move happens before the plan is built, the lock records
 `route_settings.hoi4_imagegen.backend`, and a failed move changes nothing.
 
+The package's `check.py setup` (run once after an apply by `run_agent_setup_blocking`) regenerates whole projection folders for every runtime whose folder exists, so a modified file the user chose to keep (a plan `Skip` with `LocalState::Modified`) can be rewritten without the lock noticing. `agent_setup::kept_files` snapshots those bytes before the command and `restore_kept` puts them back; never let the command overwrite a kept edit.
+
 ## Service facade
 
 `src-tauri/src/service/` serves the same gates to a server host with
