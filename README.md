@@ -63,31 +63,35 @@ Your `descriptor.mod`, `thumbnail.png`, `README.md`, and mod content are never o
 only reads the folder. Updating again shows only the files you edited, and an interrupted install can
 be undone. Details in the [user guide](docs/USER_GUIDE.md#existing-mods-import-reimport-update).
 
-## Images: hoi4-imagegen
+## What it installs
 
-Setup can install [hoi4-imagegen-mcp](https://github.com/klimPaskov/hoi4-imagegen-mcp), a local
-program your AI client uses to make and edit images. On the image step choose **ChatGPT sign-in and
-API keys (hoi4-imagegen)**. Setup downloads the release for your computer, checks its SHA-256, and
-installs it in `.tools/image_generation/hoi4-imagegen/` inside the mod.
+Setup downloads only what you select, checks every file before applying it, and registers the tools
+with your coding client.
 
-- **Sign in:** on the last screen choose **Sign in with ChatGPT**. Setup shows the program's own
-  risk notice; after you confirm it, the program opens your browser (and waits up to five minutes)
-  and keeps the sign-in in your operating-system keychain. Setup never sees or stores it. You can
-  skip this and add an OpenAI, Gemini, fal or ComfyUI key on the image step instead. Saved keys are
-  read from the credential store by the program itself, so there is nothing to export.
-- **First image:** open the mod in your AI client and ask for one, for example "make a 156x210
-  portrait for the Atlantis focus". The tools are named `hoi4.image_*`.
-- **Troubleshooting:** run `hoi4-imagegen doctor` from the install folder to see which providers are
-  ready, and `hoi4-imagegen login-status` to check the sign-in. If Setup says the files changed,
-  run **Repair**. Your mod's other files are never touched.
+- **[Agentic HOI4 Modding](https://github.com/klimPaskov/Agentic-HOI4-Modding)** is the workflow
+  kit: project instructions, skills, subagents, and an offline wiki that teach your AI client how
+  HOI4 modding works.
+- **[HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-tools)** is an MCP server with
+  local references, visual previews, and tools for focus trees, interfaces, and maps.
+- **[hoi4-imagegen](https://github.com/klimPaskov/hoi4-imagegen-mcp)** is an MCP server that makes
+  and edits graphical assets, then processes, validates, and exports them as DDS. Setup installs it
+  with one checkbox. Sign-in, providers, and troubleshooting are in its README.
+- **[HOI4 Live Tools](https://github.com/klimPaskov/HOI4-Live-Tools)** is an experimental MCP server
+  that lets your AI client test the mod and play the game. Stable on Windows. The alternative is
+  [Clausewitz MCP](https://github.com/smerss/Clausewitz-MCP) by smerss, which needs native Linux.
+- **[ComfyUI portraits](https://github.com/klimPaskov/comfyui-hoi4-portraits)** are
+  identity-preserving leader portrait workflows, run on Comfy Cloud, your own ComfyUI, or RunPod.
+- **[3D models workflow](docs/USER_GUIDE.md#add-optional-workflows)** prepares
+  [Meshy](https://www.meshy.ai/) and [Blender](https://www.blender.org/) on Windows. A missing
+  Meshy key leaves only this workflow incomplete.
+- **[Coding clients](docs/36_coding_environment_catalog.md)**: Claude Code, Codex, Cursor, and many
+  more each get their own native package. You pick one primary client and any others.
 
 ## Learn more
 
 - [Quick start with screenshots](docs/QUICKSTART.md) and the [full user guide](docs/USER_GUIDE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md): sign-in, setup source, MCP, interrupted installs
 - [Contributing](CONTRIBUTING.md), [development setup](DEVELOPMENT.md), [releasing](RELEASING.md), [security](SECURITY.md)
-- The workflow comes from [Agentic HOI4 Modding](https://github.com/klimPaskov/Agentic-HOI4-Modding)
-  and [HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-tools)
 
 ## Privacy
 
