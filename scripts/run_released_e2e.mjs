@@ -387,10 +387,10 @@ async function clientPackagesFlow() {
   assert.equal(await fileHash(join(project, repaired.path)), repaired.installed_sha256);
   assert.deepEqual((await readLock()).source, reduced.source);
 
-  // 4. Latest (format 5) cannot keep the new clients, so it refuses before
-  // planning any removal and the project stays unchanged.
+  // 4. A format 5 source cannot keep the new clients (the kit's latest is format 6 now, so pin the
+  // last format 5 revision), so it refuses before planning any removal and the project stays unchanged.
   const before = await readLock();
-  await openMaintenance("latest");
+  await openMaintenance("pinned_commit", pins.candidate.sourceRevision);
   await reviewProject();
   await expect(page.getByText(/Installed but not in this source version:/)).toBeVisible({ timeout: 180_000 });
   await record("clients-unavailable-in-latest");
