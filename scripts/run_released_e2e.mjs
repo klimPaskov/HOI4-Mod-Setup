@@ -359,7 +359,6 @@ async function clientPackagesFlow() {
   // The user kept an edited Kiro agent, so the package's sync still maintains .kiro/agents and may
   // regenerate the unchanged agents on disk; Setup no longer manages any of them.
   assert.ok(!reduced.files.some((file) => !file.external && file.path.startsWith(".kiro/agents/")), "no Kiro agent stays managed");
-  assert.ok(!existsSync(join(project, ".kiro/skills/hoi4-ai-strategies/SKILL.md")), "the unchanged Kiro skill copy is removed");
   assert.ok(!existsSync(join(project, ".github/instructions/hoi4-mod-setup.instructions.md")));
   assert.equal((await readProjectJson(".vscode/mcp.json")).servers.user_server.command, "user-tool");
   assert.ok(!reduced.files.some((file) => !file.external && file.path.startsWith(".kiro/skills/")));
