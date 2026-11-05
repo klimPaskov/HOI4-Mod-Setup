@@ -404,8 +404,9 @@ mod tests {
         for entry in generators {
             for output in entry["outputs"].as_array().into_iter().flatten() {
                 let pattern = output.as_str().expect("output pattern");
-                // The source package's templates are never installed under these names.
-                if pattern.ends_with("_template.md") {
+                // The source package's templates and its `.tools/clients/` copies are never
+                // installed under these names.
+                if pattern.ends_with("_template.md") || pattern.starts_with(".tools/clients/") {
                     continue;
                 }
                 let literal = pattern.split(['*', '?', '{']).next().unwrap_or(pattern);
