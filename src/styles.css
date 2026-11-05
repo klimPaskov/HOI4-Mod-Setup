@@ -488,3 +488,7 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .requirement-row > p { line-height: 1.5; }
 .recovery-cause p { margin: 6px 0 0; }
 .recovery-cause strong { display: block; }
+
+.image-checkbox { margin-top: 12px; }
+.image-backend-details { margin-top: 12px; }
+.image-backend-details > summary { cursor: pointer; font-size: 13px; padding: 4px 0; }

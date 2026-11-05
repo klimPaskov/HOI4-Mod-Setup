@@ -606,8 +606,8 @@ describe("web edition", () => {
     await screen.findByRole("heading", { name: "Choose components" });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("heading", { name: "Choose integrations" })).toBeInTheDocument();
-    // One choice, with the ChatGPT sign-in pre-selected; older providers are not listed.
-    expect(screen.getByRole("radio", { name: /Use hoi4-imagegen/ })).toBeChecked();
+    // One checkbox installs hoi4-imagegen; the ChatGPT sign-in is the default backend; older providers are not listed.
+    expect(screen.getByRole("checkbox", { name: /Install hoi4-imagegen/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /ChatGPT sign-in/ })).toBeChecked();
     expect(screen.queryByText("Codex image generation")).toBeNull();
     expect(screen.queryByText(/More image providers/)).toBeNull();

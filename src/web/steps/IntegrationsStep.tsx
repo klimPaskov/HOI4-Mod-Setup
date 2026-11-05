@@ -57,21 +57,15 @@ export default function IntegrationsStep({ providers, image, onImage, portraitsA
       {providers.length > 0 && (
         <section className="panel form-panel" aria-labelledby="images-title">
           <h2 id="images-title" className="panel-title">Image generation</h2>
-          {legacy.length === 0 && (
-            <div className="radio-row" role="radiogroup" aria-labelledby="images-title">
-              {imagegen && (
-                <label className="radio-option">
-                  <input type="radio" name="web-image-generation" checked={usingImagegen} onChange={() => onImage({ ...image, primary_provider: imagegen.id, additional_providers: [] })} />
-                  <span><strong>Use hoi4-imagegen</strong>{imagegen.description && <small>{imagegen.description}</small>}</span>
-                </label>
-              )}
-              <label className="radio-option">
-                <input type="radio" name="web-image-generation" checked={!usingImagegen} onChange={() => onImage({ ...image, primary_provider: NO_IMAGE_PROVIDER, additional_providers: [] })} />
-                <span><strong>None, I make art myself</strong></span>
-              </label>
-            </div>
+          {imagegen && legacy.length === 0 && (
+            <label className="check-row">
+              <input type="checkbox" name="web-image-generation" checked={usingImagegen} onChange={(event) => onImage({ ...image, primary_provider: event.target.checked ? imagegen.id : NO_IMAGE_PROVIDER, additional_providers: [] })} />
+              <span><strong>Install hoi4-imagegen</strong>{imagegen.description && <small> {imagegen.description}</small>} Uncheck it to make the art yourself.</span>
+            </label>
           )}
           {imagegen && usingImagegen && legacy.length === 0 && backends.length > 0 && (
+            <details className="web-additional" open={Boolean(backend && !backend.default)}>
+              <summary className="details">Use another backend</summary>
             <div className="web-provider-detail">
               <span className="field-label" id="web-image-backend-label">Generate with</span>
               <div className="radio-row" role="radiogroup" aria-labelledby="web-image-backend-label">
@@ -90,6 +84,7 @@ export default function IntegrationsStep({ providers, image, onImage, portraitsA
                 </label>
               ))}
             </div>
+            </details>
           )}
           {legacy.map((provider) => {
             const target = provider.replaced_by ? backends.find((option) => option.id === provider.replaced_by?.backend) : undefined;

@@ -251,29 +251,34 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.queryByText(/To-do: add HOI4 Agent Tools/)).not.toBeInTheDocument();
   });
 
-  it("offers only hoi4-imagegen, with the ChatGPT sign-in pre-selected and the other backends beside it", () => {
+  it("is one checkbox that installs hoi4-imagegen, with the other backends behind a disclosure", () => {
     window.history.replaceState({}, "", "/?screenshot=image-generation");
     const fixture = documentationFixture(readyState());
     function ControlledImageStep() {
       const [state, setState] = useState(fixture);
-      return <ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+      return <><ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} /><output aria-label="image choice">{state.imageGeneration.primary_provider}</output></>;
     }
     render(<ControlledImageStep />);
-    expect(screen.getByRole("radio", { name: /Use hoi4-imagegen/ })).toBeChecked();
-    expect(screen.getByRole("radio", { name: /^None, I make art myself/ })).not.toBeChecked();
-    const backends = screen.getAllByRole("radio", { name: /ChatGPT sign-in|^OpenAI|^Gemini|^fal\.ai|^ComfyUI/ });
+    const install = screen.getByRole("checkbox", { name: /Install hoi4-imagegen/ });
+    expect(install).toBeChecked();
+    expect(screen.queryByRole("radio", { name: /^None, I make art myself/ })).toBeNull();
+    // Nothing else needs choosing: the default backend is the ChatGPT sign-in and the rest sit in a disclosure.
+    const disclosure = screen.getByText("Use another backend").closest("details")!;
+    expect(disclosure).not.toHaveAttribute("open");
+    const backends = within(disclosure).getAllByRole("radio");
     expect(backends.map((radio) => radio.getAttribute("value"))).toEqual(["chatgpt_login", "openai", "gemini", "fal", "comfyui"]);
     expect(backends[0]).toBeChecked();
-    // The separate provider cards and the optional-provider choice are gone.
-    expect(screen.queryByText("Add as an optional provider")).toBeNull();
     expect(screen.queryByRole("radio", { name: /OpenAI Images API/ })).toBeNull();
-    fireEvent.click(screen.getByRole("radio", { name: /^OpenAI/ }));
-    expect(screen.getByRole("radio", { name: /^OpenAI/ })).toBeChecked();
+    fireEvent.click(within(disclosure).getByRole("radio", { name: /^OpenAI/ }));
+    expect(within(disclosure).getByRole("radio", { name: /^OpenAI/ })).toBeChecked();
     expect(screen.getByLabelText("OpenAI API key")).toBeInTheDocument();
     expect(screen.queryByLabelText("Gemini API key")).toBeNull();
+    fireEvent.click(install);
+    expect(screen.getByLabelText("image choice")).toHaveTextContent("none");
+    expect(screen.queryByText("Use another backend")).toBeNull();
   });
 
-  it("selects the hoi4-imagegen component with the choice and leaves no image component behind for none", () => {
+  it("selects the hoi4-imagegen component with the checkbox and leaves no image component behind for none", () => {
     window.history.replaceState({}, "", "/?screenshot=image-generation");
     const fixture = documentationFixture(readyState());
     function ControlledImageStep() {
@@ -283,11 +288,11 @@ describe("HOI4 Mod Setup wizard", () => {
     render(<ControlledImageStep />);
     expect(imageGenerationComponentIds(fixture.imageGeneration, fixture.manifestPreview)).toContain("imagegen.hoi4_imagegen");
     expect(screen.getByLabelText("selected image components")).toHaveTextContent("imagegen.hoi4_imagegen");
-    fireEvent.click(screen.getByRole("radio", { name: /^None, I make art myself/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Install hoi4-imagegen/ }));
     expect(screen.getByLabelText("image choice")).toHaveTextContent("none");
     expect(screen.getByLabelText("selected image components")).not.toHaveTextContent("imagegen");
-    expect(screen.queryByText("Generate with")).toBeNull();
-    fireEvent.click(screen.getByRole("radio", { name: /Use hoi4-imagegen/ }));
+    expect(screen.queryByText("Use another backend")).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Install hoi4-imagegen/ }));
     expect(screen.getByLabelText("selected image components")).toHaveTextContent("imagegen.hoi4_imagegen");
   });
 
@@ -377,12 +382,11 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.queryByRole("button", { name: /Move to hoi4-imagegen/ })).toBeNull();
   });
 
-  it("keeps the none choice usable with clients the provider table does not list", () => {
+  it("cannot install hoi4-imagegen with a client the provider table does not list", () => {
     window.history.replaceState({}, "", "/?screenshot=image-generation");
     const fixture = { ...documentationFixture(readyState()), primaryCodingEnvironment: "aider", additionalCodingEnvironments: [] as string[] };
     render(<ImageGenerationSetup state={fixture} update={vi.fn()} />);
-    expect(screen.getByRole("radio", { name: /^None, I make art myself/ })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: /Use hoi4-imagegen/ })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Install hoi4-imagegen/ })).toBeDisabled();
   });
 
   it("copies recent diagnostics for a failure report", async () => {

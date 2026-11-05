@@ -391,10 +391,15 @@ downloads only the manifest-declared GitHub release URL, verifies size and
 SHA-256 before opening the archive, extracts only the two declared entries, and
 installs them side by side under `.tools/image_generation/hoi4-imagegen/<version>/`.
 A replaced version is removed only after the new one passes
-`hoi4-imagegen --version` and only while its files match the lock. The ChatGPT
-sign-in belongs to the binary: Setup shows `hoi4-imagegen login-risk-note`, and
-only after the user confirms launches `hoi4-imagegen login --accept-risk` with
-an argument array and reads `login-status`; it never sees, stores or logs the
+`hoi4-imagegen --version` and only while its files match the lock. The image
+step is one checkbox ("Install hoi4-imagegen"; unchecked means none) with the
+other backends behind a disclosure. The ChatGPT sign-in belongs to the binary:
+accepted 2026-11-05, after the install the Ready screen opens it by itself once
+per project and session. It shows `hoi4-imagegen login-risk-note` as plain
+information beside the sign-in, treats a completed browser sign-in as the
+user's acceptance (no typed answer, no confirmation screen), launches
+`hoi4-imagegen login --accept-risk` with an argument array and reads
+`login-status`; the user can retry it, and it never sees, stores or logs the
 tokens. Provider keys stay in the OS credential store, where the binary reads
 them itself; Setup also passes them to the `hoi4-imagegen doctor` process
 through the scoped environment. The retired

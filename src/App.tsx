@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
 import { applyInstallationResult, approveInstallation, checkInstallationRequirements, runAgentSetupResult, readDiagnostics, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelOpenRouterSignIn, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, draftModDescription, evaluateReadiness, findInterruptedTransaction, forgetContextAttachment, imagegenLoginRiskNote, imagegenSignIn, imagegenSignInStatus, installAppUpdate, moveImageGenerationCredential, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, openRouterSignIn, pickContextDocuments, pickContextImages, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
@@ -3464,19 +3464,16 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
   return <div className="stack narrow">
     <section className="panel">
       <PanelTitle title="Where images are made" />
-      <p className="muted">hoi4-imagegen makes the artwork. Pick where it generates it. A key stays in this computer's credential store, never in your project.</p>
+      <p className="muted">One tick installs hoi4-imagegen, and its browser sign-in opens after setup unless you pick another backend. A key stays in this computer's credential store, never in your project.</p>
       {!catalog && <p className="muted" role="status">{loadMessage}</p>}
-      {catalog && legacyIds.length === 0 && <div className="coding-environment-options" role="radiogroup" aria-label="Image generation">
-        {imagegen && <label className="coding-environment-option"><input type="radio" name="image-generation" checked={usingImagegen} disabled={!compatible(imagegen)} onChange={() => chooseImagegen(true)} /><span className="coding-environment-copy"><strong>Use hoi4-imagegen</strong><small>{imagegen.description}</small></span></label>}
-        <label className="coding-environment-option"><input type="radio" name="image-generation" checked={!usingImagegen} onChange={() => chooseImagegen(false)} /><span className="coding-environment-copy"><strong>None, I make art myself</strong><small>Use artwork you create or source yourself.</small></span></label>
-      </div>}
-      {catalog && imagegen && usingImagegen && legacyIds.length === 0 && backends.length > 0 && <div className="image-backend-panel">
+      {catalog && imagegen && legacyIds.length === 0 && <label className="coding-environment-option image-checkbox"><input type="checkbox" name="image-generation" checked={usingImagegen} disabled={!compatible(imagegen)} onChange={(event) => chooseImagegen(event.target.checked)} /><span className="coding-environment-copy"><strong>Install hoi4-imagegen</strong><small>{imagegen.description} Uncheck it to make the art yourself.</small></span></label>}
+      {catalog && imagegen && usingImagegen && legacyIds.length === 0 && backends.length > 0 && <details className="image-backend-details" open={Boolean(backend && !backend.default)}><summary>Use another backend</summary><div className="image-backend-panel">
         <span className="field-label" id="image-backend-label">Generate with</span>
         <div className="coding-environment-options" role="radiogroup" aria-labelledby="image-backend-label">{backends.map((option) => <label className="coding-environment-option" key={option.id}><input type="radio" name="image-backend" value={option.id} checked={backend?.id === option.id} onChange={() => chooseBackend(option.id)} /><span className="coding-environment-copy"><strong>{option.display_name}</strong>{option.default && <small>Default. Signs in with your ChatGPT account after setup.</small>}{option.live_verified === false && <small>Untested with the real service.</small>}</span></label>)}</div>
         <p className="muted">Setup downloads hoi4-imagegen from its GitHub release, checks its SHA-256, and installs it in this project.{backend?.default ? " After setup you can sign in with ChatGPT on the last screen." : ""}</p>
         {backendField && <div className="image-provider-secret" key={backendField.id}><label className="field-label" htmlFor={`image-secret-${backendKey}`}>{backendField.display_name}</label><div className="input-with-action"><input id={`image-secret-${backendKey}`} className="text-input" type="password" autoComplete="off" value={drafts[backendKey] ?? ""} onChange={(event) => update({ imageGenerationCredentialDrafts: { ...drafts, [backendKey]: event.target.value } })} /><button type="button" className="input-action" disabled={!drafts[backendKey]?.trim() || savingKey === backendKey} onClick={() => imagegen && void saveCredential(imagegen, backendField.id)}>{savingKey === backendKey ? "Saving…" : "Store"}</button>{backendKeySaved && <button type="button" className="text-button" onClick={() => imagegen && void deleteCredential(imagegen, backendField.id)}>Delete</button>}</div><small className="muted">{backendKeySaved ? "Stored in the operating-system credential vault." : "Needed only for this backend. The key is not added to project files."}</small></div>}
         {backend?.settings.map((setting) => { const value = selection.route_settings[IMAGEGEN_PROVIDER_ID]?.[setting.key] ?? ""; const problem = imageSettingProblem(setting.kind, value); return <div className="image-provider-secret" key={setting.key}><Field label={`${imageSettingLabel(setting.key)}${setting.required ? "" : " (optional)"}`} value={value} onChange={(next) => setRouteSetting(IMAGEGEN_PROVIDER_ID, setting.key, next.trim())} placeholder={setting.default ?? undefined} />{problem && <small className="status-review" role="alert">{problem}</small>}</div>; })}
-      </div>}
+      </div></details>}
       {catalog && legacyIds.map((id) => {
         const legacy = catalog.providers.find((candidate) => candidate.id === id);
         const name = legacy?.display_name ?? id;
@@ -4123,7 +4120,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
             <CheckRow label="Super Events workflow" status={superEvents.status} tone={superEvents.tone} /><CheckRow label="Live testing" status={liveStatus} tone={!liveSelected ? "muted" : liveStatus === "To-do" ? "review" : "info"} />
             <CheckRow label="Portrait production" status={portraitPipeline.enabled ? `${portraitProviderLabel}: ${portraits.status}` : "Disabled"} tone={portraitPipeline.enabled ? portraits.tone : "muted"} />
           </div>
-          {coreReady && imagegenSelected && <ImagegenSignIn projectRoot={state.identity.projectRoot} />}
+          {coreReady && imagegenSelected && <ImagegenSignIn projectRoot={state.identity.projectRoot} autoStart />}
           {coreReady && portraitPipeline.enabled && <div className="portrait-workflow-note"><ExternalLink href={PORTRAIT_REPOSITORY}>Portrait production source and setup guidance <span aria-hidden="true">↗</span></ExternalLink></div>}
           {coreReady && state.selectedComponents.includes("workflow.live_tools") && <div className="portrait-workflow-note"><ExternalLink href={LIVE_TOOLS_GUIDE}>HOI4 Live Tools setup guide <span aria-hidden="true">↗</span></ExternalLink><small className="muted">Setup installs the live-game server for your user and registers it for the coding clients it finds (see Readiness details for the result); restart your coding client afterwards. The guide is also installed in .claude/skills/hoi4-live-playtest.</small></div>}
           <details>
@@ -4146,57 +4143,56 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
  * `hoi4-imagegen login` and reads `login-status`; the program opens the browser
  * and keeps its tokens in the operating-system keychain.
  */
-export function ImagegenSignIn({ projectRoot }: { projectRoot: string }) {
+// A project's sign-in is started automatically once per app session; a later visit to the Ready
+// screen only shows the status and the button.
+const autoSignInAttempted = new Set<string>();
+
+export function ImagegenSignIn({ projectRoot, autoStart = false }: { projectRoot: string; autoStart?: boolean }) {
   const [status, setStatus] = useState<{ signed_in: boolean; detail: string }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [riskNote, setRiskNote] = useState<string>();
-  useEffect(() => {
-    if (!isTauriRuntime() || !projectRoot) return;
-    let active = true;
-    void imagegenSignInStatus(projectRoot).then((result) => { if (active && result.value) setStatus(result.value); });
-    return () => { active = false; };
-  }, [projectRoot]);
-  if (!isTauriRuntime() || !projectRoot) return null;
-  // Step one shows the program's own risk note; nothing is launched yet.
-  const showRiskNote = async () => {
-    if (busy) return;
+  const running = useRef(false);
+
+  // The program's own notice is shown as information beside the sign-in. Nothing waits on it:
+  // a completed sign-in is the user's acceptance.
+  const signIn = useCallback(async () => {
+    if (running.current) return;
+    running.current = true;
     setBusy(true);
     setError(undefined);
     try {
-      const result = await imagegenLoginRiskNote(projectRoot);
-      if (result.value) setRiskNote(result.value);
-      else setError(result.error ?? "The sign-in notice could not be shown.");
-    } finally {
-      setBusy(false);
-    }
-  };
-  // Step two runs only after the user confirmed that note.
-  const signIn = async () => {
-    if (busy) return;
-    setBusy(true);
-    setError(undefined);
-    try {
+      const note = await imagegenLoginRiskNote(projectRoot);
+      if (note.value) setRiskNote(note.value);
       const result = await imagegenSignIn(projectRoot);
-      setRiskNote(undefined);
       if (result.value) setStatus(result.value);
       else setError(result.error ?? "Sign-in could not be started.");
     } finally {
+      running.current = false;
       setBusy(false);
     }
-  };
+  }, [projectRoot]);
+
+  useEffect(() => {
+    if (!isTauriRuntime() || !projectRoot) return;
+    let active = true;
+    void imagegenSignInStatus(projectRoot).then((result) => {
+      if (!active || !result.value) return;
+      setStatus(result.value);
+      if (autoStart && !result.value.signed_in && !autoSignInAttempted.has(projectRoot)) {
+        autoSignInAttempted.add(projectRoot);
+        void signIn();
+      }
+    });
+    return () => { active = false; };
+  }, [projectRoot, autoStart, signIn]);
+  if (!isTauriRuntime() || !projectRoot) return null;
   return <div className="ready-check-list imagegen-sign-in">
-    <CheckRow label="Image sign-in (optional)" status={status?.signed_in ? "Signed in" : status ? "Not signed in" : "Checking"} tone={status?.signed_in ? "pass" : "muted"} />
-    {!status?.signed_in && !riskNote && <button type="button" className="button secondary ready-panel-action" disabled={busy} aria-busy={busy || undefined} onClick={() => void showRiskNote()}>Sign in with ChatGPT</button>}
-    {!status?.signed_in && riskNote && <div className="ready-panel-note" role="group" aria-label="Sign-in notice">
-      <p style={{ whiteSpace: "pre-wrap" }}>{riskNote}</p>
-      <div className="button-row">
-        <button type="button" className="button secondary ready-panel-action" disabled={busy} aria-busy={busy || undefined} onClick={() => void signIn()}>{busy ? "Waiting for the browser sign-in…" : "I understand, continue"}</button>
-        <button type="button" className="text-button" disabled={busy} onClick={() => setRiskNote(undefined)}>Cancel</button>
-      </div>
-    </div>}
-    <p className="ready-panel-note muted">{status?.signed_in ? "hoi4-imagegen can make images with your ChatGPT plan." : "Shows a short notice, then opens your browser. You can skip this and pick another backend later in Update and repair."}</p>
-    {status && !status.signed_in && status.detail && <p className="ready-panel-note muted" role="status">{status.detail}</p>}
+    <CheckRow label="Image sign-in" status={busy ? "Waiting for the browser" : status?.signed_in ? "Signed in" : status ? "Not signed in" : "Checking"} tone={status?.signed_in ? "pass" : "muted"} />
+    {riskNote && !status?.signed_in && <p className="ready-panel-note muted" role="note" style={{ whiteSpace: "pre-wrap" }}>{riskNote}</p>}
+    {!status?.signed_in && !busy && status && <button type="button" className="button secondary ready-panel-action" onClick={() => void signIn()}>{error ? "Try again" : "Sign in with ChatGPT"}</button>}
+    <p className="ready-panel-note muted">{status?.signed_in ? "hoi4-imagegen can make images with your ChatGPT plan." : busy ? "Your browser opens the ChatGPT sign-in. Finishing it accepts the notice above." : "Signing in to ChatGPT is optional. You can pick another backend later in Update and repair."}</p>
+    {status && !status.signed_in && !busy && status.detail && <p className="ready-panel-note muted" role="status">{status.detail}</p>}
     {error && <p className="ready-panel-note" role="alert">{error}</p>}
   </div>;
 }
