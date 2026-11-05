@@ -34,29 +34,52 @@ describe("hoi4-imagegen provider choice", () => {
 });
 
 describe("hoi4-imagegen sign-in step", () => {
-  it("launches the sign-in and shows the reported status", async () => {
+  it("opens the sign-in by itself, shows the notice as information and treats completion as acceptance", async () => {
     vi.mocked(imagegenSignInStatus).mockResolvedValue({ value: { signed_in: false, detail: "" } });
-    vi.mocked(imagegenSignIn).mockResolvedValue({ value: { signed_in: true, detail: "" } });
-    render(<ImagegenSignIn projectRoot="C:/mods/atlantis" />);
-    expect(await screen.findByText("Not signed in")).toBeInTheDocument();
     vi.mocked(imagegenLoginRiskNote).mockResolvedValue({ value: "Risk: unofficial route." });
-    fireEvent.click(screen.getByRole("button", { name: "Sign in with ChatGPT" }));
-    expect(await screen.findByText("Risk: unofficial route.")).toBeInTheDocument();
-    expect(imagegenSignIn).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "I understand, continue" }));
-    await waitFor(() => expect(imagegenSignIn).toHaveBeenCalledWith("C:/mods/atlantis"));
+    vi.mocked(imagegenSignIn).mockResolvedValue({ value: { signed_in: true, detail: "" } });
+    render(<ImagegenSignIn projectRoot="C:/mods/auto_start" autoStart />);
+    // No typed answer and no confirmation button: the program is launched directly.
+    await waitFor(() => expect(imagegenSignIn).toHaveBeenCalledWith("C:/mods/auto_start"));
+    expect(screen.queryByRole("button", { name: "I understand, continue" })).not.toBeInTheDocument();
     expect(await screen.findByText("Signed in")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Sign in with ChatGPT" })).not.toBeInTheDocument();
+    expect(imagegenSignIn).toHaveBeenCalledTimes(1);
   });
 
-  it("reports a failed launch without claiming a sign-in", async () => {
+  it("starts the sign-in once per project, not on every visit", async () => {
     vi.mocked(imagegenSignInStatus).mockResolvedValue({ value: { signed_in: false, detail: "" } });
-    vi.mocked(imagegenSignIn).mockResolvedValue({ value: null, error: "hoi4-imagegen is not installed in this project yet." });
-    render(<ImagegenSignIn projectRoot="C:/mods/atlantis" />);
     vi.mocked(imagegenLoginRiskNote).mockResolvedValue({ value: "Risk: unofficial route." });
-    fireEvent.click(await screen.findByRole("button", { name: "Sign in with ChatGPT" }));
-    fireEvent.click(await screen.findByRole("button", { name: "I understand, continue" }));
+    vi.mocked(imagegenSignIn).mockResolvedValue({ value: { signed_in: false, detail: "Sign-in did not finish." } });
+    const { unmount } = render(<ImagegenSignIn projectRoot="C:/mods/once_only" autoStart />);
+    await waitFor(() => expect(imagegenSignIn).toHaveBeenCalledTimes(1));
+    unmount();
+    render(<ImagegenSignIn projectRoot="C:/mods/once_only" autoStart />);
+    expect(await screen.findByText("Not signed in")).toBeInTheDocument();
+    expect(imagegenSignIn).toHaveBeenCalledTimes(1);
+    // The user can start it again themselves.
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with ChatGPT" }));
+    await waitFor(() => expect(imagegenSignIn).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not launch anything unless asked, and an installed project already signed in is left alone", async () => {
+    vi.mocked(imagegenSignInStatus).mockResolvedValue({ value: { signed_in: false, detail: "" } });
+    render(<ImagegenSignIn projectRoot="C:/mods/manual" />);
+    expect(await screen.findByText("Not signed in")).toBeInTheDocument();
+    expect(imagegenSignIn).not.toHaveBeenCalled();
+    cleanup();
+    vi.mocked(imagegenSignInStatus).mockResolvedValue({ value: { signed_in: true, detail: "" } });
+    render(<ImagegenSignIn projectRoot="C:/mods/signed_in" autoStart />);
+    expect(await screen.findByText("Signed in")).toBeInTheDocument();
+    expect(imagegenSignIn).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed launch without claiming a sign-in and offers another try", async () => {
+    vi.mocked(imagegenSignInStatus).mockResolvedValue({ value: { signed_in: false, detail: "" } });
+    vi.mocked(imagegenLoginRiskNote).mockResolvedValue({ value: "Risk: unofficial route." });
+    vi.mocked(imagegenSignIn).mockResolvedValue({ value: null, error: "hoi4-imagegen is not installed in this project yet." });
+    render(<ImagegenSignIn projectRoot="C:/mods/failed_launch" autoStart />);
     expect(await screen.findByRole("alert")).toHaveTextContent("not installed");
     expect(screen.getByText("Not signed in")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });

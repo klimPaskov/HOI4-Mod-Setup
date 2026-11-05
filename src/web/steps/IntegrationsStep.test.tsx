@@ -24,6 +24,12 @@ function renderStep(image: ImageChoice) {
 }
 
 describe("web image step", () => {
+  it("says so when the source version has no image generator", () => {
+    render(<IntegrationsStep providers={[{ id: "none", display_name: "None", route_kind: "manual" }]} image={{ primary_provider: "none", additional_providers: [], route_settings: {} }} onImage={vi.fn()} portraitsAvailable={false} portrait={NO_PORTRAITS} onPortrait={vi.fn()} liveProviders={[]} live={NO_LIVE_TESTING} onLive={vi.fn()} platform="windows" />);
+    expect(screen.getByText(/no image generator to install/)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Install hoi4-imagegen/ })).toBeNull();
+  });
+
   it("lists every backend the package publishes, with the ChatGPT sign-in first and selected", () => {
     renderStep({ primary_provider: "hoi4_imagegen", additional_providers: [], route_settings: {} });
     const backends = screen.getAllByRole("radio", { name: /ChatGPT sign-in|OpenAI|Stability/ });

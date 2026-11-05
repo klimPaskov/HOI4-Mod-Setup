@@ -86,20 +86,22 @@ test("each coding environment can be primary without becoming an additional choi
   await expect(radios.nth(1)).toBeChecked();
 });
 
-test("image-generation setup offers hoi4-imagegen with the ChatGPT sign-in first and the other backends beside it", async ({ page }) => {
+test("image-generation setup is one checkbox, with the other backends behind a disclosure", async ({ page }) => {
   await page.goto("/?screenshot=image-generation");
   await expect(page.getByRole("heading", { name: "Image generation" })).toBeVisible();
-  await expect(page.getByRole("radio", { name: /Use hoi4-imagegen/ })).toBeChecked();
+  const install = page.getByRole("checkbox", { name: /Install hoi4-imagegen/ });
+  await expect(install).toBeChecked();
   const backends = page.getByRole("radio", { name: /ChatGPT sign-in|^OpenAI|^Gemini|^fal\.ai|^ComfyUI/ });
+  // Nothing else to choose by default: the backends sit in a closed disclosure.
+  await expect(backends.first()).toBeHidden();
+  await page.getByText("Use another backend").click();
   await expect(backends).toHaveCount(5);
   await expect(backends.first()).toBeChecked();
   await expect(page.getByText("Transparent images")).toBeVisible();
-  // The separate provider cards and the optional-provider choice are gone.
-  await expect(page.getByLabel("Add as an optional provider", { exact: true })).toHaveCount(0);
   await page.getByRole("radio", { name: /^OpenAI/ }).check();
   await expect(page.getByLabel("OpenAI API key")).toBeVisible();
   await expect(backends.first()).not.toBeChecked();
-  await page.getByRole("radio", { name: /^None, I make art myself/ }).check();
+  await install.uncheck();
   await expect(backends).toHaveCount(0);
 });
 
@@ -117,6 +119,7 @@ test("maintenance repair sends the changed image backend in its reviewed plan re
     };
   });
   await page.goto("/?screenshot=maintenance");
+  await page.getByText("Use another backend").click();
   const openAi = page.getByRole("radio", { name: /^OpenAI/ });
   await openAi.check();
   await expect(openAi).toBeChecked();
