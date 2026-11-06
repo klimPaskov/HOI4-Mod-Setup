@@ -4,8 +4,12 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.9.3 - 2026-11-06
+
 - Move the reviewed Meshy MCP runtime from 0.6.7 to 0.6.9 (the exact locked runtime is now 3,956 files). The new runtime lets Image to 3D and Multi-Image to 3D pick the texture model apart from the geometry (`texture_model`: `meshy-7`, `meshy-n1` or `meshy-6-lite`), adds Meshy N1 retexturing, and points game characters to the `meshy-t2.5` smart-topology model in its tool descriptions. Its dependencies are unchanged. An inventory of every environment variable the runtime reads found the same set as 0.6.7 (`TRANSPORT`, `MESHY_API_HOST`, `MESHY_API_KEY`, `MESHY_CLIENT`, `PORT`, `CHARACTER_LIMIT`, `ProgramFiles` and `ProgramFiles(x86)`), so the launcher's pinned values are unchanged. The launcher accepts only this exact runtime, so a project set up with the 0.6.7 runtime needs **Repair**, and the kit must move its Meshy lock to 0.6.9 in the same release window.
 - Build with Rust 1.90 and Tauri 2.12. The Tauri 2.12 crates require rustc 1.90, so the pinned toolchain and every workflow move from 1.88.0; contributors run `rustup toolchain install 1.90.0` as `DEVELOPMENT.md` says. Other crate and npm updates are included, with Playwright held at 1.62.1.
+- Describe every tool Setup installs, at the same depth, in the README.
+
 ## 0.9.2 - 2026-11-05
 
 - Keep a local edit the user chose to keep through the development-tools step. After a client is deselected, an edited file Setup keeps (for example `.kiro/agents/<agent>.md`) sat in a folder the package's `check.py setup` still maintains, and the command regenerated it and discarded the edit. Setup now remembers the kept files before the command runs and puts their bytes back, and says so on the Ready screen.
