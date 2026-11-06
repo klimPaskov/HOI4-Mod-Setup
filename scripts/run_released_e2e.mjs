@@ -27,6 +27,21 @@ if (candidateDirectory) {
   pins.app.commit = process.env.GITHUB_SHA;
 }
 let expectedSourceRevision = candidateDirectory ? pins.candidate.sourceRevision : pins.app.sourceRevision;
+let sourceBranch = null;
+// The kit's default branch moves while a scenario runs (a scenario takes about 25 minutes). A "latest" install
+// must land on a commit that was the branch head at some time since the scenario started, which is the start
+// commit or one of its descendants. The walk uses the reviewed single-commit route and follows first parents.
+async function assertLatestSourceRevision(actual, label) {
+  if (!candidateDirectory) return assert.equal(actual, expectedSourceRevision, label);
+  const repository = "/repos/klimPaskov/Agentic-HOI4-Modding";
+  const seen = new Set([expectedSourceRevision]);
+  let sha = (await githubJson(`${repository}/commits/${encodeURIComponent(sourceBranch)}`, metadataToken)).sha;
+  for (let hop = 0; hop < 60 && sha && !seen.has(sha); hop += 1) {
+    seen.add(sha);
+    sha = (await githubJson(`${repository}/commits/${sha}`, metadataToken)).parents?.[0]?.sha;
+  }
+  assert.ok(seen.has(actual), `${label}: ${actual} is not the head of the kit's default branch at any point since the scenario started at ${expectedSourceRevision}.`);
+}
 const scenario = process.argv[2];
 assert.ok(["new", "kaiserreich", "recovery", "clients"].includes(scenario), "Unknown remote scenario.");
 // The clients scenario creates a new mod like "new", then moves it to the
@@ -411,6 +426,7 @@ try {
     const sourceCommit = await githubJson(`/repos/klimPaskov/Agentic-HOI4-Modding/commits/${encodeURIComponent(sourceRepository.default_branch)}`, metadataToken);
     expectedSourceRevision = sourceCommit.sha;
     result.latestSourceAtStart = expectedSourceRevision;
+    sourceBranch = sourceRepository.default_branch;
   }
   const installer = join(workRoot, "installer.exe");
   if (candidateDirectory) {
@@ -524,7 +540,7 @@ try {
     const { readiness } = await applyAndReady();
     const lock = JSON.parse(await readFile(join(project, ".hoi4-mod-setup/install.lock.json"), "utf8"));
     assert.equal(lock.ai_provider, "local");
-    assert.equal(lock.source.revision, expectedSourceRevision);
+    await assertLatestSourceRevision(lock.source.revision, "first install");
     if (candidateDirectory) assert.equal(lock.source.mode, "latest");
     assert.equal(lock.codex_analysis.account_identity_persisted, false);
     assert.equal(lock.primary_coding_environment, "claude_code");
@@ -600,7 +616,8 @@ try {
         const { journal: updateJournal, readiness: updateReadiness } = await applyAndReady(true);
         const updated = JSON.parse(await readFile(join(project, ".hoi4-mod-setup/install.lock.json"), "utf8"));
         assert.equal(updated.source.mode, target);
-        assert.equal(updated.source.revision, expectedSourceRevision);
+        if (target === "latest") await assertLatestSourceRevision(updated.source.revision, "update to latest");
+        else assert.equal(updated.source.revision, expectedSourceRevision);
         assert.equal(updated.source.requested_ref ?? null, target === "pinned_commit" ? expectedSourceRevision : null);
         assert.equal(updated.source.release ?? null, null);
         assert.equal(updated.source.repository, "klimPaskov/Agentic-HOI4-Modding");
