@@ -458,6 +458,8 @@ Keep `README.md` user-facing. Contributor setup belongs in `CONTRIBUTING.md` and
 
 Use pull requests for `main`. Keep changes focused. Update documentation and the owning skill in the same pull request when behavior, commands, file locations, invariants, validation, or common failure modes change.
 
+Merge pull requests and push without asking the maintainer once the required checks pass (maintainer decision D-23, 2026-11-06). Never force push, never reset or clean in a way that loses work, and never delete a branch with unmerged work.
+
 Do not commit:
 
 - real credentials
