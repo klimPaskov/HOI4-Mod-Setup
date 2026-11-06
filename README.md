@@ -50,6 +50,23 @@ Open it, choose **Create new mod** or **Import existing mod**, and follow the st
 updates itself; [release notes](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest) list the
 signing details.
 
+**Windows or macOS shows a warning the first time?** The builds are free and not signed with a paid
+certificate, so this is expected. On Windows click **More info**, then **Run anyway**. On macOS open
+**System Settings**, **Privacy & Security**, and click **Open Anyway**. The
+[step-by-step guide](docs/RUN_ANYWAY.md) has the details.
+
+What each system gets:
+
+| | Windows | macOS | Linux x64 |
+| --- | --- | --- | --- |
+| Instructions, skills, subagents, offline wiki | Yes | Yes | Yes |
+| hoi4-imagegen | Yes | Yes | Yes |
+| HOI4 Agent Tools | Yes | Not yet | Yes |
+| HOI4 Live Tools, 3D models workflow | Yes | No | No |
+| Clausewitz MCP live testing | Through WSL | Through SSH to Linux | Native |
+
+An unavailable item shows as "Not available on this computer" and never blocks the rest of the setup.
+
 ## Web edition (lightweight)
 
 [**Open the web edition →**](https://klimpaskov.github.io/HOI4-Mod-Setup/app/) Nothing to install and
