@@ -591,21 +591,24 @@ mod offline_lifecycle {
             "published skill adapted to {} bytes",
             adapted.len()
         );
-        assert!(std::str::from_utf8(&adapted)
-            .unwrap()
-            .contains(IMAGE_GUIDANCE_REFERENCE));
-        let reference = image_generation_guidance_artifact(&resolution.manifest, &image)
-            .unwrap()
-            .unwrap();
+        // The guidance is inlined when the published skill has room for it and
+        // otherwise moves to the project-root reference; either way it must name
+        // every selected provider and keep the image rules.
+        let text = std::str::from_utf8(&adapted).unwrap();
+        let guidance = if text.contains(IMAGE_GUIDANCE_REFERENCE) {
+            image_generation_guidance_artifact(&resolution.manifest, &image)
+                .unwrap()
+                .unwrap()
+                .content
+        } else {
+            text.to_owned()
+        };
         for id in std::iter::once(&image.primary_provider).chain(image.additional_providers.iter())
         {
-            assert!(
-                reference.content.contains(&format!("`{id}`")),
-                "missing {id}"
-            );
+            assert!(guidance.contains(&format!("`{id}`")), "missing {id}");
         }
-        assert!(reference.content.contains("one image per call"));
-        assert!(reference.content.contains("alpha below 255"));
+        assert!(guidance.to_lowercase().contains("one image per call"));
+        assert!(guidance.contains("alpha below 255"));
     }
 
     #[test]
