@@ -591,9 +591,14 @@ mod offline_lifecycle {
             "published skill adapted to {} bytes",
             adapted.len()
         );
-        assert!(std::str::from_utf8(&adapted)
-            .unwrap()
-            .contains(IMAGE_GUIDANCE_REFERENCE));
+        // The skill is a router of a few KB now, so every selected provider fits inline. A skill too large to
+        // hold them points to the reference file instead.
+        let adapted_text = std::str::from_utf8(&adapted).unwrap();
+        assert!(
+            adapted_text.contains(IMAGE_GUIDANCE_REFERENCE)
+                || adapted_text.contains("Make one image per call."),
+            "the adapted skill holds neither the provider guidance nor a pointer to it"
+        );
         let reference = image_generation_guidance_artifact(&resolution.manifest, &image)
             .unwrap()
             .unwrap();
