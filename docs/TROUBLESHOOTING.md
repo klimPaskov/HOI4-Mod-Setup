@@ -213,10 +213,23 @@ Afterward, use **Refresh checks** on **Project ready**, or **Check integration**
 
 > Not available on this computer
 
-**Cause:** The current verified HOI4 Agent Tools MCP route supports Windows only.
+**Cause:** The verified HOI4 Agent Tools MCP route covers Windows and Linux x64.
+The source declares no verified macOS route yet, so the component is unavailable there.
+Everything else installs on macOS: instructions, skills, subagents, the offline wiki and hoi4-imagegen.
+The [README](../README.md#desktop-app-recommended) lists what each system gets.
 
 **Fix:** Leave the unavailable MCP component unselected on macOS and continue with the supported components.
 Core setup remains usable; this MCP route cannot be enabled on macOS through a setting in the app.
+
+## Windows or macOS blocks the installer
+
+> Windows protected your PC
+
+> "HOI4 Mod Setup" Not Opened
+
+**Cause:** The builds are free and not signed with a paid certificate, so both systems ask you to confirm the first launch.
+
+**Fix:** Follow the [Run anyway and Open Anyway guide](RUN_ANYWAY.md).
 
 ## The selected image provider did not add its setup component
 

@@ -270,7 +270,7 @@ await writeFile(resolve(outputRoot, "RELEASE_NOTES.md"), [
   "",
   ...(platformSummaries.some((summary) => summary.platform === "windows" && summary.signing === "community") ? ["The Windows installer uses the community certificate named ChaosX; Windows may show a publisher or reputation warning.", ""] : []),
   ...(platformSummaries.some((summary) => summary.platform === "macos" && summary.signing === "community") ? ["Community macOS packages use ad-hoc signing and are not Apple-notarized; macOS may block the first launch.", ""] : []),
-  "Review the [installation warning guidance](https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/QUICKSTART.md) and [release signing details](https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/RELEASING.md) before deciding whether to open a blocked installer.",
+  "These free builds are not signed with a paid certificate, so Windows and macOS warn about an unknown publisher the first time. On Windows, click **More info**, then **Run anyway**. On macOS, open **System Settings**, then **Privacy & Security**, and click **Open Anyway**. The [step-by-step guide](https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/RUN_ANYWAY.md) has the details, and the [release signing details](https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/RELEASING.md) explain why.",
   "",
   "The source is public under the Apache License 2.0: <https://github.com/klimPaskov/HOI4-Mod-Setup>.",
 ].join("\n") + "\n", "utf8");

@@ -157,49 +157,77 @@ impl HttpSourceClient {
             }
             return Ok(bytes);
         }
-        let response = self
+        with_retries(&SOURCE_RETRY, &mut std::thread::sleep, || {
+            self.get_bytes_once(url, limit)
+        })
+    }
+
+    /// One request. A throttled answer (429), a server error (500, 502, 503,
+    /// 504) and a failed or interrupted transfer are worth another attempt;
+    /// every other refusal is final. A 403 rate limit stays final because
+    /// `resolve_commit` has its own fallback for it.
+    fn get_bytes_once(&self, url: &str, limit: usize) -> Attempt<Vec<u8>> {
+        let response = match self
             .client
             .get(url)
             .header("Accept", "application/json")
             .send()
-            .map_err(|error| AppError::Source(format!("request failed: {error}")))?;
+        {
+            Ok(response) => response,
+            Err(error) => {
+                return Attempt::Retry {
+                    error: AppError::Source(format!("request failed: {error}")),
+                    retry_after: None,
+                }
+            }
+        };
         let status = response.status();
         if !status.is_success() {
-            let rate_limited = is_rate_limit_response(status.as_u16(), response.headers());
+            let code = status.as_u16();
+            let rate_limited = is_rate_limit_response(code, response.headers());
             let category = if rate_limited {
                 "GitHub rate limit"
             } else {
                 "source request"
             };
-            return Err(AppError::Source(format!(
-                "{category} returned HTTP {status}"
-            )));
+            let error = AppError::Source(format!("{category} returned HTTP {status}"));
+            return if is_retryable_status(code) {
+                Attempt::Retry {
+                    error,
+                    retry_after: retry_after_seconds(response.headers()),
+                }
+            } else {
+                Attempt::Fail(error)
+            };
         }
         if response
             .content_length()
             .is_some_and(|size| size > limit as u64)
         {
-            return Err(AppError::Source(
+            return Attempt::Fail(AppError::Source(
                 "source response exceeds its bounded size limit".into(),
             ));
         }
         if !approved_source_url(response.url()) {
-            return Err(AppError::Source(format!(
+            return Attempt::Fail(AppError::Source(format!(
                 "source redirect ended at an unapproved endpoint: {}",
                 response.url()
             )));
         }
         let mut limited = response.take(limit as u64 + 1);
         let mut bytes = Vec::new();
-        limited
-            .read_to_end(&mut bytes)
-            .map_err(|error| AppError::Source(format!("response body: {error}")))?;
+        if let Err(error) = limited.read_to_end(&mut bytes) {
+            return Attempt::Retry {
+                error: AppError::Source(format!("response body: {error}")),
+                retry_after: None,
+            };
+        }
         if bytes.len() > limit {
-            return Err(AppError::Source(
+            return Attempt::Fail(AppError::Source(
                 "source response exceeds its bounded size limit".into(),
             ));
         }
-        Ok(bytes)
+        Attempt::Done(bytes)
     }
 
     fn get_json(&self, url: &str) -> Result<Value, AppError> {
@@ -900,6 +928,92 @@ fn parse_ref_advertisement(bytes: &[u8]) -> Result<RefAdvertisement, AppError> {
     Ok(result)
 }
 
+/// The outcome of one source request.
+enum Attempt<T> {
+    Done(T),
+    Retry {
+        error: AppError,
+        retry_after: Option<u64>,
+    },
+    Fail(AppError),
+}
+
+/// Bounded retries for one source request: exponential backoff with jitter,
+/// and a server's Retry-After honoured up to the cap.
+struct RetryPolicy {
+    attempts: u32,
+    base: Duration,
+    cap: Duration,
+}
+
+/// An install makes about 1,700 single-file requests, and the occasional 429
+/// or reset (above all from shared CI addresses) must not fail the whole
+/// preparation. Five attempts wait about 1, 2, 4 and 8 seconds with jitter,
+/// or the server's Retry-After up to 30 seconds.
+const SOURCE_RETRY: RetryPolicy = RetryPolicy {
+    attempts: 5,
+    base: Duration::from_secs(1),
+    cap: Duration::from_secs(30),
+};
+
+fn is_retryable_status(status: u16) -> bool {
+    matches!(status, 429 | 500 | 502 | 503 | 504)
+}
+
+fn with_retries<T>(
+    policy: &RetryPolicy,
+    sleep: &mut dyn FnMut(Duration),
+    mut attempt: impl FnMut() -> Attempt<T>,
+) -> Result<T, AppError> {
+    let mut tried = 0;
+    loop {
+        tried += 1;
+        match attempt() {
+            Attempt::Done(value) => return Ok(value),
+            Attempt::Fail(error) => return Err(error),
+            Attempt::Retry { error, retry_after } => {
+                if tried >= policy.attempts {
+                    return Err(error);
+                }
+                sleep(retry_delay(policy, tried, retry_after));
+            }
+        }
+    }
+}
+
+/// Exponential backoff with equal jitter (half fixed, half random), or the
+/// server's own Retry-After when it gave one; never more than the cap.
+fn retry_delay(policy: &RetryPolicy, tried: u32, retry_after: Option<u64>) -> Duration {
+    if let Some(seconds) = retry_after {
+        return Duration::from_secs(seconds).min(policy.cap);
+    }
+    let backoff = policy
+        .base
+        .saturating_mul(1u32 << (tried.saturating_sub(1)).min(16))
+        .min(policy.cap);
+    let half = backoff / 2;
+    let span = u64::try_from(half.as_millis()).unwrap_or(u64::MAX).max(1);
+    half + Duration::from_millis(jitter(tried) % span)
+}
+
+/// A random value from the standard library's randomly keyed hasher, so the
+/// jitter needs no extra dependency.
+fn jitter(salt: u32) -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u32(salt);
+    hasher.finish()
+}
+
+/// A Retry-After header in whole seconds; the HTTP-date form is ignored and
+/// the backoff applies instead.
+fn retry_after_seconds(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    headers
+        .get("retry-after")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+}
+
 fn is_rate_limit_response(status: u16, headers: &reqwest::header::HeaderMap) -> bool {
     status == 429
         || (status == 403
@@ -1226,6 +1340,85 @@ fn select_manifest_for_revision(
 
 #[cfg(test)]
 mod tests {
+    use super::{retry_delay, with_retries, Attempt, RetryPolicy, SOURCE_RETRY};
+    use crate::AppError;
+    use std::time::Duration;
+
+    fn retry(error: &str, retry_after: Option<u64>) -> Attempt<&'static str> {
+        Attempt::Retry {
+            error: AppError::Source(error.into()),
+            retry_after,
+        }
+    }
+
+    #[test]
+    fn a_throttled_answer_and_a_reset_are_retried_until_the_file_arrives() {
+        let mut answers = vec![
+            retry(
+                "GitHub rate limit returned HTTP 429 Too Many Requests",
+                Some(2),
+            ),
+            retry("request failed: connection reset by peer", None),
+            Attempt::Done("blob"),
+        ]
+        .into_iter();
+        let mut slept = Vec::new();
+        let result = with_retries(&SOURCE_RETRY, &mut |delay| slept.push(delay), || {
+            answers.next().expect("no more answers")
+        });
+        assert_eq!(result.ok(), Some("blob"));
+        assert_eq!(slept.len(), 2);
+        assert_eq!(slept[0], Duration::from_secs(2), "Retry-After is honoured");
+        assert!(slept[1] >= Duration::from_millis(1000) && slept[1] < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn retries_are_bounded_and_a_final_refusal_is_not_retried() {
+        let mut calls = 0;
+        let mut slept = Vec::new();
+        let result: Result<&str, AppError> =
+            with_retries(&SOURCE_RETRY, &mut |delay| slept.push(delay), || {
+                calls += 1;
+                retry(
+                    "source request returned HTTP 503 Service Unavailable",
+                    Some(3600),
+                )
+            });
+        assert!(result.is_err());
+        assert_eq!(calls, SOURCE_RETRY.attempts);
+        assert!(
+            slept.iter().all(|delay| *delay <= SOURCE_RETRY.cap),
+            "Retry-After is capped"
+        );
+
+        let mut calls = 0;
+        let result: Result<&str, AppError> = with_retries(&SOURCE_RETRY, &mut |_| {}, || {
+            calls += 1;
+            Attempt::Fail(AppError::Source(
+                "source request returned HTTP 404 Not Found".into(),
+            ))
+        });
+        assert!(result.is_err());
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn backoff_grows_with_jitter_and_stops_at_the_cap() {
+        let policy = RetryPolicy {
+            attempts: 9,
+            base: Duration::from_secs(1),
+            cap: Duration::from_secs(30),
+        };
+        for tried in 1..=8 {
+            let full = Duration::from_secs(1u64 << (tried - 1)).min(policy.cap);
+            let delay = retry_delay(&policy, tried, None);
+            assert!(
+                delay >= full / 2 && delay <= full,
+                "attempt {tried}: {delay:?} outside {full:?}"
+            );
+        }
+    }
+
     use super::*;
     use crate::security::canonical_relative_key;
     use std::collections::HashSet;

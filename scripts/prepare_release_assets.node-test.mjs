@@ -97,6 +97,7 @@ test(`curates ${signing} installers, release notes, and complete updater metadat
       ["- Windows", "- Mac (Apple silicon)", "- Mac (Intel)", "- Linux x64 (AppImage)", "- Linux x64 (Debian/Ubuntu)"],
     );
     for (const feature of ["hoi4-imagegen is the default", "Coding clients remain independent", "Update and repair", "Clausewitz MCP by smerss", "native Linux HOI4 1.19.2", "manual Linux game/server setup", "supports Windows only", "README", "Quickstart"]) assert.ok(releaseNotes.includes(feature), feature);
+    for (const step of ["**More info**, then **Run anyway**", "**Privacy & Security**", "**Open Anyway**", "docs/RUN_ANYWAY.md"]) assert.ok(releaseNotes.includes(step), step);
     assert.equal(releaseNotes.includes("community certificate named ChaosX"), signing === "community");
     assert.equal(releaseNotes.includes("not Apple-notarized"), signing === "community");
     assert.doesNotMatch(releaseNotes, /false positive|flag.*harmful/i);

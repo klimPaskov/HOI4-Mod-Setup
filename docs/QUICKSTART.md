@@ -4,7 +4,7 @@ Follow these steps to prepare a new or existing mod for AI-assisted development.
 
 **Before you start:** download HOI4 Mod Setup for Windows, macOS or Linux. Install any coding client you want to use; the app shows which supported clients are available. You can finish setup assistant sign-in when prompted. The app explains any extra setup needed for an optional workflow.
 
-1. **Install HOI4 Mod Setup.** From [GitHub Releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases), download the Windows installer or the macOS disk image for your Mac. Run the Windows installer, or open the disk image and move the app to Applications. For Linux, choose the AppImage or Debian package and follow the [Linux install guide](LINUX.md). Then open the app.
+1. **Install HOI4 Mod Setup.** From [GitHub Releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases), download the Windows installer or the macOS disk image for your Mac. Run the Windows installer, or open the disk image and move the app to Applications. Windows and macOS warn about an unknown publisher the first time: click **More info**, then **Run anyway** on Windows, or **Open Anyway** in **System Settings**, **Privacy & Security** on macOS ([step by step](RUN_ANYWAY.md)). For Linux, choose the AppImage or Debian package and follow the [Linux install guide](LINUX.md). Then open the app.
 
 2. **Choose your starting point.** On **Start a mod project**, choose **Create new mod** or **Import existing mod**. [Screenshot](screenshots/01-welcome.jpg)
 
