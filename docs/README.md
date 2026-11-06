@@ -23,6 +23,7 @@ documents that define them.
 - `ui-references/`: design references
 - `screenshots/`: README walkthrough images
 - `USER_GUIDE.md`: the full walkthrough moved out of the README, including the existing-mod rules
+- `RUN_ANYWAY.md`: the Windows "Run anyway" and macOS "Open Anyway" steps for the unsigned installers
 - `development/`: current implementation status
 
 The workflow source is

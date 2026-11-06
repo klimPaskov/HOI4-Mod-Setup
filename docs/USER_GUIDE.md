@@ -247,6 +247,8 @@ Tools, and the 3D models workflow need the desktop app.
 
 On Windows, run the downloaded setup file. On Mac, open the disk image and
 move HOI4 Mod Setup to Applications. Community Windows builds are signed by
-ChaosX; community Mac builds use ad-hoc signing. See the
+ChaosX; community Mac builds use ad-hoc signing. Both systems warn about an
+unknown publisher the first time, which the [Run anyway and Open Anyway guide](RUN_ANYWAY.md)
+walks through. See the
 [release notes](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
 for your download's signing details.
