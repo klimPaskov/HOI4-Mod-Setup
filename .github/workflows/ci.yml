@@ -9,11 +9,56 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request cancels that pull request's older run.
+# Pushes to main each get their own group and are never cancelled.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Pull requests that change only documentation skip the heavy jobs. The
+  # ruleset requires the heavy jobs' check names, and a job skipped by an
+  # `if` reports success, so the gate lives here instead of in `paths-ignore`,
+  # which would leave the required checks pending forever. Anything outside
+  # docs (including docs/schemas, which the Rust crates embed) runs in full.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Detect documentation-only pull requests
+        id: diff
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          docs_only=false
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # HEAD is the merge of the pull request into its base, so the first
+            # parent is the base and the diff is exactly the pull request.
+            files="$(git diff --name-only HEAD^1 HEAD)"
+            if [ -n "$files" ]; then
+              docs_only=true
+              while IFS= read -r file; do
+                case "$file" in
+                  docs/schemas/*) docs_only=false ;;
+                  docs/*|*.md|LICENSE) ;;
+                  *) docs_only=false ;;
+                esac
+              done <<EOF
+          $files
+          EOF
+            fi
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "docs_only=$docs_only"
+
   repository-integrity:
     runs-on: ubuntu-latest
     steps:
@@ -33,7 +78,10 @@ jobs:
           python -m unittest scripts/test_linux_release_gates.py scripts/test_released_acceptance_workflow.py
 
   frontend:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Detect frontend source
@@ -88,6 +136,9 @@ jobs:
 
   rust:
     name: Rust (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -149,7 +200,10 @@ jobs:
 
   service-without-keyring:
     name: Service facade without the OS keyring (Linux)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure Rust
@@ -171,7 +225,10 @@ jobs:
 
   core-wasm:
     name: Portable core (wasm32)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure Rust
@@ -188,7 +245,10 @@ jobs:
 
   web:
     name: Web edition
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -218,10 +278,11 @@ jobs:
           name: web-edition
           path: dist-web
           retention-days: 7
+      # Pull requests test Chromium. Main runs all three engines.
       - name: Install browser engines
-        run: pnpm exec playwright install --with-deps chromium firefox webkit
-      - name: Test the web edition in Chromium, Firefox, and WebKit
-        run: pnpm test:web
+        run: pnpm exec playwright install --with-deps ${{ github.event_name == 'pull_request' && 'chromium' || 'chromium firefox webkit' }}
+      - name: Test the web edition in ${{ github.event_name == 'pull_request' && 'Chromium' || 'Chromium, Firefox, and WebKit' }}
+        run: pnpm test:web ${{ github.event_name == 'pull_request' && '--project=chromium' || '' }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
@@ -231,7 +292,10 @@ jobs:
 
   fuzz:
     name: Fuzz target compilation
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Detect fuzz source
@@ -260,6 +324,9 @@ jobs:
 
   desktop-e2e:
     name: Desktop E2E (${{ matrix.os }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -308,8 +375,11 @@ jobs:
         run: |
           corepack enable
           pnpm install --frozen-lockfile
+      # The frontend job runs these gates on every pull request. The native
+      # packages differ per platform, so pull requests repeat them only on
+      # Linux. Main repeats them on every platform.
       - name: Run UI and accessibility gates
-        if: steps.detect.outputs.present == 'true'
+        if: steps.detect.outputs.present == 'true' && (github.event_name != 'pull_request' || matrix.platform == 'linux-x64')
         shell: bash
         run: |
           pnpm test:e2e:install
@@ -364,7 +434,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: [new, kaiserreich, recovery, clients]
+        # Pull requests run two scenarios. Main and release branches run all four.
+        scenario: ${{ fromJSON(github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release/') && '["new","clients"]' || '["new","kaiserreich","recovery","clients"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -399,3 +470,30 @@ jobs:
             test-results/released-${{ matrix.scenario }}/result.json
           if-no-files-found: warn
           retention-days: 14
+
+  # A documentation-only pull request skips the real jobs above. These stand-ins
+  # report the exact check names the ruleset requires, on the cheapest runner,
+  # because a matrix job skipped by an `if` reports an unexpanded name.
+  rust-docs-only:
+    name: Rust (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - run: echo "Documentation-only change, native Rust checks skipped."
+
+  desktop-e2e-docs-only:
+    name: Desktop E2E (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-15, macos-15-intel]
+    steps:
+      - run: echo "Documentation-only change, native desktop checks skipped."
