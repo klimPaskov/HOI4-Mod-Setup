@@ -227,6 +227,8 @@ await writeFile(resolve(outputRoot, "PREVIEW_RELEASE_NOTES.md"), [
   "",
   "Development previews are unsigned inspection builds; stable releases use the verified signing and updater publication gates.",
   "",
+  "Windows and macOS warn about an unknown publisher the first time. On Windows, click **More info**, then **Run anyway**. On macOS, open **System Settings**, then **Privacy & Security**, and click **Open Anyway**. The [step-by-step guide](https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/RUN_ANYWAY.md) has the details.",
+  "",
   "The source is public under the Apache License 2.0: <https://github.com/klimPaskov/HOI4-Mod-Setup>.",
 ].join("\n") + "\n", "utf8");
 
