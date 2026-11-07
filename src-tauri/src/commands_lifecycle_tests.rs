@@ -292,6 +292,19 @@ mod offline_lifecycle {
                     plan.download_ledger.push(ledger);
                 }
             }
+            // A client MCP file loses only the installer's routes. The production planner derives those
+            // bytes from the unchanged live file, so the removal plan must carry them too.
+            if operation.resolution.as_deref() == Some(crate::transaction::MCP_ROUTE_REMOVAL) {
+                prepared.push(
+                    crate::transaction::prepare_mcp_route_removal(
+                        root,
+                        operation,
+                        &crate::transaction::installer_mcp_server_ids(lock),
+                    )
+                    .unwrap(),
+                );
+                continue;
+            }
             if mode != "remove" && operation.action != OperationAction::DeleteManaged {
                 let Some(mut incoming) = bytes
                     .iter()
@@ -591,18 +604,18 @@ mod offline_lifecycle {
             "published skill adapted to {} bytes",
             adapted.len()
         );
-        // The guidance is inlined when the published skill has room for it and
-        // otherwise moves to the project-root reference; either way it must name
-        // every selected provider and keep the image rules.
+        // The kit's feature-assets skill is a router of a few KB, so it carries the one-image-per-call rule inline
+        // and points to the provider reference. A skill too large for that points to the reference file instead.
         let text = std::str::from_utf8(&adapted).unwrap();
-        let guidance = if text.contains(IMAGE_GUIDANCE_REFERENCE) {
-            image_generation_guidance_artifact(&resolution.manifest, &image)
-                .unwrap()
-                .unwrap()
-                .content
-        } else {
-            text.to_owned()
-        };
+        assert!(
+            text.contains(IMAGE_GUIDANCE_REFERENCE) || text.contains("Make one image per call."),
+            "the adapted skill holds neither the image rules nor a pointer to the provider reference"
+        );
+        // The provider rows and the image rules live in the reference artifact, however the skill points to it.
+        let guidance = image_generation_guidance_artifact(&resolution.manifest, &image)
+            .unwrap()
+            .unwrap()
+            .content;
         for id in std::iter::once(&image.primary_provider).chain(image.additional_providers.iter())
         {
             assert!(guidance.contains(&format!("`{id}`")), "missing {id}");
