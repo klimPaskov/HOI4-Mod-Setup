@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { chromium, expect } from "@playwright/test";
 import { assertWindowsInstallerRegistryIsClean, cleanupWindowsInstallerRegistry, resolveNativeSystemExecutable, resolveSystemPowerShellPath, uninstallKey, windowsRegistry } from "./windows_installer_registry.mjs";
-import { assertOriginals, cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, createPhaseClock, sanitizeReport, setupPythonPath, snapshot, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
+import { assertOriginals, cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, actionTimings, createPhaseClock, sanitizeReport, setupPythonPath, snapshot, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
 import { configureHostedWebView } from "./released_e2e_windows.mjs";
 
 requireHostedWindows();
@@ -246,7 +246,7 @@ async function applyAndReady(maintenance = false) {
   assert.equal(readiness.core_ready, true);
   assert.ok(!readiness.checks.some((check) => check.blocking && check.status === "block"));
   result.transactions ??= [];
-  result.transactions.push({ id: journal.transaction_id, state: journal.state, stages: journal.stages.map(({ id, status }) => ({ id, status })), stageTimings: stageTimings(journal), coreReady: readiness.core_ready });
+  result.transactions.push({ id: journal.transaction_id, state: journal.state, stages: journal.stages.map(({ id, status }) => ({ id, status })), stageTimings: stageTimings(journal), actionTimings: actionTimings(journal), coreReady: readiness.core_ready });
   await record(maintenance ? "repaired-ready" : "installed-ready");
   return { journal, readiness };
 }

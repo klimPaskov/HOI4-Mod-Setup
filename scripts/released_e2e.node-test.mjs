@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { cleanAppEnvironment, createPhaseClock, inside, requireDisposableLinux, inventoryDigest, requireHostedWindows, reviewedApplyLabel, reviewedDownloadUrl, reviewedMetadataPath, sanitizeReport, setupPythonPath, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
+import { actionTimings, cleanAppEnvironment, createPhaseClock, inside, requireDisposableLinux, inventoryDigest, requireHostedWindows, reviewedApplyLabel, reviewedDownloadUrl, reviewedMetadataPath, sanitizeReport, setupPythonPath, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
 
 test("Latest acceptance metadata stays in the fixed repository and immutable manifest route", () => {
   const repository = "/repos/klimPaskov/Agentic-HOI4-Modding";
@@ -188,4 +188,18 @@ test("Linux candidate artifacts name their platform, bundle and Debian package",
     await assert.rejects(verifiedCandidate(root, "1.2.3", revision), "the default expectation is the Windows installer");
     await assert.rejects(verifiedCandidate(root, "1.2.3", revision, { ...linux, platform: "Windows" }));
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("post-install action timings are read from the journal evidence", () => {
+  const journal = { stages: [{ id: "post-install checks", evidence: [
+    "external-action:mcp.hoi4_agent_tools:ready:package bootstrap exit=0 verified_tools=13 bootstrap_seconds=70.2 health_seconds=4.1",
+    "external-action-seconds:mcp.hoi4_agent_tools:74.6",
+    "external-action-seconds:imagegen.hoi4_imagegen:3.0",
+    "unrelated",
+  ] }] };
+  assert.deepEqual(actionTimings(journal), [
+    { component: "mcp.hoi4_agent_tools (script)", seconds: 70.2 }, { component: "mcp.hoi4_agent_tools (health check)", seconds: 4.1 },
+    { component: "mcp.hoi4_agent_tools", seconds: 74.6 }, { component: "imagegen.hoi4_imagegen", seconds: 3 },
+  ]);
+  assert.deepEqual(actionTimings({ stages: [] }), []);
 });
