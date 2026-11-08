@@ -20,6 +20,8 @@ use std::os::unix::fs::OpenOptionsExt;
 #[cfg(windows)]
 use std::os::windows::fs::OpenOptionsExt;
 
+mod archive;
+
 const MAX_SOURCE_FILE_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -539,12 +541,14 @@ impl HttpSourceClient {
         Ok(bytes)
     }
 
-    /// Warm the immutable, hash-addressed cache for many declared files with a
-    /// small fixed number of parallel HTTPS fetches. Every file is still
-    /// verified by size and SHA-256 before it is cached. Errors are ignored
-    /// here: the caller's ordered fetch repeats any miss and reports it with
-    /// full context. Files are de-duplicated by hash so two workers never
-    /// write the same cache entry.
+    /// Warm the immutable, hash-addressed cache for many declared files.
+    /// When many are missing, the commit is first downloaded once as its
+    /// archive (`archive.rs`); the rest, and everything if the archive fails,
+    /// is fetched with a small fixed number of parallel HTTPS requests. Every
+    /// file is verified by size and SHA-256 before it is cached. Errors are
+    /// ignored here: the caller's ordered fetch repeats any miss and reports
+    /// it with full context. Files are de-duplicated by hash so two workers
+    /// never write the same cache entry.
     pub fn prefetch_verified_files(&self, revision: &str, files: &[(String, String, Option<u64>)]) {
         const WORKERS: usize = 8;
         let mut seen = std::collections::BTreeSet::new();
@@ -552,6 +556,19 @@ impl HttpSourceClient {
             .iter()
             .filter(|(_, sha256, _)| seen.insert(sha256.clone()))
             .collect::<Vec<_>>();
+        if self.local_repository.is_none() && validate_commit(revision).is_ok() {
+            let wanted: archive::Wanted = unique
+                .iter()
+                .filter(|(_, sha256, _)| {
+                    validate_sha256(sha256).is_ok()
+                        && !archive::blob_cache_path(&self.cache_root, revision, sha256).is_file()
+                })
+                .map(|(path, sha256, size)| (path.clone(), (sha256.clone(), *size)))
+                .collect();
+            if wanted.len() >= archive::ARCHIVE_MIN_MISSING {
+                let _ = self.prefetch_from_archive(revision, &wanted);
+            }
+        }
         let next = std::sync::atomic::AtomicUsize::new(0);
         std::thread::scope(|scope| {
             for _ in 0..WORKERS.min(unique.len()) {
@@ -1046,6 +1063,7 @@ fn approved_source_url(url: &reqwest::Url) -> bool {
                         })
             }
             Some("github.com") => approved_git_metadata_path(url),
+            Some("codeload.github.com") => archive::approved_archive_path(url),
             _ => false,
         }
 }
