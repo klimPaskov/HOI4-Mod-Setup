@@ -31,7 +31,7 @@ const project = join(mods, "linux_acceptance_mod");
 const launcherPath = join(mods, "linux_acceptance_mod.mod");
 const result = { scenario, applicationKind: "candidate", applicationVersion: version, runner: "Linux",
   ai: "deterministic loopback HTTP fixture; real provider authentication and semantic quality are not tested",
-  nativeIpc: "unmodified candidate .deb installed with dpkg; no IPC mocks or application test hooks", stages: [], screenshots: [], phases: [], success: false };
+  nativeIpc: "unmodified candidate .deb installed with apt; no IPC mocks or application test hooks", stages: [], screenshots: [], phases: [], success: false };
 const clock = createPhaseClock();
 result.phases = clock.phases;
 let session;
@@ -168,6 +168,7 @@ try {
   result.signing = "Candidate artifact; not signed release evidence.";
 
   planner = await startPlannerFixture({ malformedFirst: true, projectName: "Linux Acceptance Mod" });
+  // Install the way docs/LINUX.md tells users to (sudo apt install ./file.deb), so declared dependencies resolve.
   await withLinuxDebInstallation(candidate.installer, async (executable) => {
     try {
     result.executableSha256 = await fileHash(executable);
@@ -262,7 +263,7 @@ try {
       // The app must have exited before dpkg purges the package.
       await session?.close().catch(() => {});
     }
-  });
+  }, { useApt: true });
   result.plannerRequests = planner.requests;
   result.success = true;
 } catch (error) {

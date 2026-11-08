@@ -132,7 +132,7 @@ and read them as budgets for regressions, not as a user's install time.
 `Candidate acceptance (linux new)` in `ci.yml` runs `node scripts/run_linux_e2e.mjs`
 on a disposable GitHub-hosted Ubuntu 22.04 runner, after the native package gates.
 It downloads the Linux artifact from the same workflow, checks every hash and the
-exact build identity, installs the Debian package with `dpkg` (refusing an existing
+exact build identity, installs the Debian package with `sudo apt install /path/file.deb`, the route docs/LINUX.md gives users, so declared dependencies resolve (refusing an existing
 registration, purging it at the end) and drives the production WebKitGTK UI
 through the distro's `WebKitWebDriver`, the driver the Tauri documentation names
 for Linux. Playwright cannot attach to WebKitGTK, so `scripts/linux_webdriver.mjs`

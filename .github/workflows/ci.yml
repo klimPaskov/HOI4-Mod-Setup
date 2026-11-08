@@ -490,11 +490,10 @@ jobs:
         with:
           name: hoi4-mod-setup-ci-linux-x64
           path: dist/release
-      # dpkg does not resolve dependencies, so install what the package declares (libsecret-tools) first.
       - name: Install the runtime the app needs on a fresh Linux machine
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y xvfb xauth dbus-x11 webkit2gtk-driver libwebkit2gtk-4.1-0 xdg-utils libsecret-tools gnome-keyring
+          sudo apt-get install --no-install-recommends -y xvfb xauth dbus-x11 webkit2gtk-driver libwebkit2gtk-4.1-0 xdg-utils
       # HOI4 Agent Tools needs Node 22 or 24, and the app trusts only a dpkg-owned /usr/bin/node. Ubuntu 22.04 ships
       # Node 12, so a fresh machine needs the NodeSource package. The signing key is checked against its fingerprint.
       - name: Install a dpkg-owned Node.js 22 like a fresh user machine
