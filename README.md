@@ -38,9 +38,8 @@ Cursor, and [many more coding clients](docs/36_coding_environment_catalog.md).
 
 ## Desktop app (recommended)
 
-Writes into your mod after you review every change, with a backup and **Undo changes**. Installs
-the HOI4 Agent Tools, supports Claude and ChatGPT sign-in, Git, and the 3D workflow, and can update,
-repair, or remove its setup later.
+Writes into your mod after you review every change, with a backup and **Undo changes**, and can
+update, repair, or remove its setup later.
 
 - Windows: [`.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe)
 - Mac: [Apple silicon `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-arm64.dmg) · [Intel `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-x64.dmg)
