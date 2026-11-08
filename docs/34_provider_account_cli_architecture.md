@@ -52,7 +52,7 @@ experimental until the completion gate below passes.
 
 Gemini follows the official interactive **Sign in with Google** flow. The
 current worker opens a terminal helper, uses a private Gemini CLI home, and
-asks the user to finish sign-in there. The setup analysis runs with a single
+asks the user to finish sign-in there. The sign-in terminal must not pre-select the auth type in the CLI settings: Gemini CLI then signs in before its screen is listening for the browser-consent prompt and fails with "Authentication consent could not be obtained" (cached for that process). Only `enforcedType` is set there; analysis turns set both. The setup analysis runs with a single
 bounded turn and no extensions, MCP, skills, hooks, telemetry, or write tools.
 The official references are [Gemini authentication](https://geminicli.com/docs/get-started/authentication/),
 [configuration](https://geminicli.com/docs/reference/configuration/), and

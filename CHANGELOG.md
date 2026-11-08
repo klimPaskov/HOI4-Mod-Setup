@@ -4,6 +4,7 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Fix the experimental Gemini account sign-in (#94). Setup pre-selected "Sign in with Google" in the CLI's settings, so the CLI tried to sign in before its screen could ask for browser consent and stopped with "Authentication consent could not be obtained" (and kept failing on retry). The sign-in terminal now leaves the method unselected so the CLI asks, as an ordinary first run does; analysis still runs with the method fixed to Google sign-in.
 - Download the kit once instead of as about 1,700 single files (#168). Setup now fetches the pinned commit as one archive from `codeload.github.com`, checks every manifest-declared file against its size and SHA-256, and installs from that. The download is resumable and retried like other source requests. A file the archive does not hold correctly, and the whole install when the archive cannot be downloaded, falls back to the per-file route. Only the fixed repository's commit archive is approved, and nothing in the archive is trusted or used as a path.
 
 ## 0.9.3 - 2026-11-06
