@@ -913,7 +913,34 @@ fn gemini_settings() -> Value {
     })
 }
 
+/// Settings for the interactive Sign in with Google terminal. The CLI
+/// authenticates once before its screen exists when `selectedType` is already
+/// set, finds no consent listener and fails with "Authentication consent could
+/// not be obtained" (and caches that failure for the process). Leaving the type
+/// unselected opens its sign-in dialog instead, which registers the listener.
+/// `enforcedType` still limits that dialog to Google sign-in, and the CLI
+/// saves the choice itself; the next analysis rewrites the full settings.
+fn gemini_login_settings() -> Value {
+    let mut settings = gemini_settings();
+    if let Some(auth) = settings["security"]["auth"].as_object_mut() {
+        auth.remove("selectedType");
+    }
+    settings
+}
+
+fn gemini_settings_for(sign_in: bool) -> Value {
+    if sign_in {
+        gemini_login_settings()
+    } else {
+        gemini_settings()
+    }
+}
+
 fn prepare_home(provider: &str) -> Result<(PathBuf, PathBuf), AppError> {
+    prepare_home_for(provider, false)
+}
+
+fn prepare_home_for(provider: &str, sign_in: bool) -> Result<(PathBuf, PathBuf), AppError> {
     let root = provider_root(provider)?;
     let home = root.join("home");
     let workspace = home.join("empty-workspace");
@@ -928,7 +955,7 @@ fn prepare_home(provider: &str) -> Result<(PathBuf, PathBuf), AppError> {
         reject_gemini_admin_policies()?;
         write_private(
             &home.join(".gemini/settings.json"),
-            &serde_json::to_vec(&gemini_settings())?,
+            &serde_json::to_vec(&gemini_settings_for(sign_in))?,
         )?;
         write_private(&root.join("deny-tools.toml"), DENY_POLICY.as_bytes())?;
         // Redirect both system layers to an absent private path, leaving the
@@ -2454,7 +2481,7 @@ fn run_interactive(provider: &str, id: Uuid, logout: bool) -> Result<(), AppErro
     check_persisted_attempt(&root, id)?;
     isolation_preflight(&runtime, provider)?;
     check_persisted_attempt(&root, id)?;
-    let (home, workspace) = prepare_home(provider)?;
+    let (home, workspace) = prepare_home_for(provider, !logout)?;
     let mut args = runtime.prefix.clone();
     if provider == GEMINI {
         args.extend(base_arguments(provider, &root));
@@ -3123,6 +3150,24 @@ mod tests {
         let args = base_arguments(GEMINI, temporary.path());
         assert!(args.contains(&"--admin-policy".into()));
         assert!(args.contains(&"none".into()));
+    }
+
+    /// Regression for #94: a preselected auth type makes Gemini CLI sign in
+    /// before its screen can answer the browser-consent prompt.
+    #[test]
+    fn gemini_sign_in_terminal_does_not_preselect_the_auth_type() {
+        let login = gemini_login_settings();
+        assert!(login["security"]["auth"].get("selectedType").is_none());
+        assert_eq!(login["security"]["auth"]["enforcedType"], "oauth-personal");
+        let mut analysis = gemini_settings();
+        analysis["security"]["auth"]
+            .as_object_mut()
+            .unwrap()
+            .remove("selectedType");
+        assert_eq!(login, analysis);
+        // The settings the sign-in terminal and the analysis turns are given.
+        assert_eq!(gemini_settings_for(true), login);
+        assert_eq!(gemini_settings_for(false), gemini_settings());
     }
 
     #[test]

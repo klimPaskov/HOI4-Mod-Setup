@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Fix the experimental Gemini account sign-in (#94). Setup pre-selected "Sign in with Google" in the CLI's settings, so the CLI tried to sign in before its screen could ask for browser consent and stopped with "Authentication consent could not be obtained" (and kept failing on retry). The sign-in terminal now leaves the method unselected so the CLI asks, as an ordinary first run does; analysis still runs with the method fixed to Google sign-in.
+
 ## 0.9.3 - 2026-11-06
 
 - Retry a source download that GitHub throttles (HTTP 429), that fails with a server error (500, 502, 503, 504) or whose connection drops: up to five attempts with exponential backoff and jitter, or the server's Retry-After up to 30 seconds. An install fetches about 1,700 single files, and one throttled request used to fail the whole preparation with "The setup source could not be downloaded or prepared", most often from shared CI addresses. Every file is still checked against its manifest SHA-256, and other refusals are not retried.
