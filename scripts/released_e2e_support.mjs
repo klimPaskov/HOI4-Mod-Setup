@@ -14,6 +14,15 @@ export function requireHostedWindows() {
   }
 }
 
+// The Linux acceptance installs a package with dpkg, so it runs only on a disposable GitHub-hosted Ubuntu runner,
+// or in a throwaway container the caller marks with HOI4_E2E_DISPOSABLE_CONTAINER=1. Never on a developer desktop.
+export function requireDisposableLinux(env = process.env, platform = process.platform) {
+  const hosted = env.GITHUB_ACTIONS === "true" && env.RUNNER_ENVIRONMENT === "github-hosted" && isAbsolute(env.RUNNER_TEMP ?? "");
+  if (platform !== "linux" || !(hosted || env.HOI4_E2E_DISPOSABLE_CONTAINER === "1")) {
+    throw new Error("Linux acceptance E2E runs only on a disposable GitHub-hosted Ubuntu runner or a marked throwaway container, never a developer desktop.");
+  }
+}
+
 export function inside(root, path) {
   const value = relative(resolve(root), resolve(path));
   if (!value || value.startsWith("..") || isAbsolute(value)) throw new Error("Path is outside its owned test root.");
@@ -33,7 +42,8 @@ export async function fileHash(path) {
   return hash.digest("hex");
 }
 
-export async function verifiedCandidate(root, version, revision) {
+export async function verifiedCandidate(root, version, revision, expected = {}) {
+  const { platform = "Windows", architecture = "X64", bundle = "nsis", installer: installerPattern = /^packages\/nsis\/[^/]+\.exe$/i } = expected;
   const rootMetadata = await lstat(root);
   assert.ok(rootMetadata.isDirectory() && !rootMetadata.isSymbolicLink());
   async function regularArtifact(name) {
@@ -54,9 +64,9 @@ export async function verifiedCandidate(root, version, revision) {
   assert.equal(metadata.sourceRevision, revision);
   assert.match(revision, /^[a-f0-9]{40}$/);
   assert.equal(metadata.frontendOnly, false);
-  assert.equal(metadata.platform, "Windows");
-  assert.equal(metadata.architecture, "X64");
-  assert.equal(metadata.bundle, "nsis");
+  assert.equal(metadata.platform, platform);
+  assert.equal(metadata.architecture, architecture);
+  assert.equal(metadata.bundle, bundle);
   assert.equal(metadata.artifact_manifest, "ARTIFACTS.sha256");
   const entries = JSON.parse(await readFile(await regularArtifact("ARTIFACTS.sha256"), "utf8"));
   assert.ok(Array.isArray(entries) && entries.length < 10_000);
@@ -70,7 +80,7 @@ export async function verifiedCandidate(root, version, revision) {
     assert.equal(await fileHash(path), entry.sha256);
   }
   assert.ok(names.has("BUILD_METADATA.json"));
-  const installers = entries.filter((entry) => /^packages\/nsis\/[^/]+\.exe$/i.test(entry.path));
+  const installers = entries.filter((entry) => installerPattern.test(entry.path));
   assert.equal(installers.length, 1);
   const installer = inside(root, join(root, installers[0].path));
   return { installer, sha256: installers[0].sha256, size: (await lstat(installer)).size, sourceRevision: metadata.sourceRevision };

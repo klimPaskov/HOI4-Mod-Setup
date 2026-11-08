@@ -471,6 +471,57 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # Fresh install on a disposable Ubuntu runner: dpkg-installs the exact Debian package built above, drives its
+  # WebKitGTK UI through WebKitWebDriver (create, install, repair, Ready) and records per-phase timings.
+  candidate-acceptance-linux:
+    name: Candidate acceptance (linux new)
+    needs: desktop-e2e
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: hoi4-mod-setup-ci-linux-x64
+          path: dist/release
+      - name: Install the runtime the app needs on a fresh Linux machine
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y xvfb xauth dbus-x11 webkit2gtk-driver libwebkit2gtk-4.1-0 xdg-utils
+      # HOI4 Agent Tools needs Node 22 or 24, and the app trusts only a dpkg-owned /usr/bin/node. Ubuntu 22.04 ships
+      # Node 12, so a fresh machine needs the NodeSource package. The signing key is checked against its fingerprint.
+      - name: Install a dpkg-owned Node.js 22 like a fresh user machine
+        run: |
+          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+          gpg --show-keys --with-colons /usr/share/keyrings/nodesource.gpg | grep -q '^fpr:::::::::6F71F525282841EEDAF851B42F59B5F99B1BE0B4:' || { echo "NodeSource key fingerprint changed" >&2; exit 1; }
+          echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y nodejs
+          dpkg -S /usr/bin/node
+          /usr/bin/node --version
+      - name: Exercise the source-bound native candidate on a fresh Linux install
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HOI4_E2E_CANDIDATE_DIR: ${{ github.workspace }}/dist/release
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+        run: xvfb-run -a -s "-screen 0 1440x900x24" dbus-run-session -- node scripts/run_linux_e2e.mjs
+      - name: Retain only screenshots and sanitized candidate results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: candidate-acceptance-linux-new
+          path: |
+            test-results/linux-new/*.png
+            test-results/linux-new/result.json
+          if-no-files-found: warn
+          retention-days: 14
+
   # A documentation-only pull request skips the real jobs above. These stand-ins
   # report the exact check names the ruleset requires, on the cheapest runner,
   # because a matrix job skipped by an `if` reports an unexpanded name.
