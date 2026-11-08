@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { cleanAppEnvironment, createPhaseClock, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, reviewedDownloadUrl, reviewedMetadataPath, sanitizeReport, setupPythonPath, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
+import { cleanAppEnvironment, createPhaseClock, inside, requireDisposableLinux, inventoryDigest, requireHostedWindows, reviewedApplyLabel, reviewedDownloadUrl, reviewedMetadataPath, sanitizeReport, setupPythonPath, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
 
 test("Latest acceptance metadata stays in the fixed repository and immutable manifest route", () => {
   const repository = "/repos/klimPaskov/Agentic-HOI4-Modding";
@@ -160,4 +160,32 @@ test("journal stage and phase timings are derived from checkpoints and summarise
   assert.match(summary, /\| works \| 2\.5 \|/);
   assert.match(summary, /\| download \| 12\.3 \|/);
   assert.match(summary, /\| apply \| n\/a \|/);
+});
+
+test("the Linux acceptance runs only on a hosted runner or a marked throwaway container", () => {
+  const hosted = { GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted", RUNNER_TEMP: "/home/runner/work/_temp" };
+  requireDisposableLinux(hosted, "linux");
+  requireDisposableLinux({ HOI4_E2E_DISPOSABLE_CONTAINER: "1" }, "linux");
+  assert.throws(() => requireDisposableLinux({}, "linux"), /disposable/);
+  assert.throws(() => requireDisposableLinux({ ...hosted, RUNNER_ENVIRONMENT: "self-hosted" }, "linux"), /disposable/);
+  assert.throws(() => requireDisposableLinux(hosted, "win32"), /disposable/);
+  assert.throws(() => requireDisposableLinux({ HOI4_E2E_DISPOSABLE_CONTAINER: "1" }, "darwin"), /disposable/);
+});
+
+test("Linux candidate artifacts name their platform, bundle and Debian package", async () => {
+  const root = await mkdtemp(join(tmpdir(), "hoi4-candidate-linux-"));
+  try {
+    const revision = "c".repeat(40);
+    const metadata = JSON.stringify({ product: "HOI4 Mod Setup", version: "1.2.3", sourceRevision: revision, frontendOnly: false, platform: "Linux", architecture: "X64", bundle: "appimage,deb", artifact_manifest: "ARTIFACTS.sha256" });
+    const deb = Buffer.from("synthetic package bytes; never installed");
+    const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+    await mkdir(join(root, "packages/deb"), { recursive: true });
+    await writeFile(join(root, "BUILD_METADATA.json"), metadata);
+    await writeFile(join(root, "packages/deb/HOI4 Mod Setup_1.2.3_amd64.deb"), deb);
+    await writeFile(join(root, "ARTIFACTS.sha256"), JSON.stringify([{ path: "BUILD_METADATA.json", sha256: digest(metadata) }, { path: "packages/deb/HOI4 Mod Setup_1.2.3_amd64.deb", sha256: digest(deb) }]));
+    const linux = { platform: "Linux", bundle: "appimage,deb", installer: /^packages\/deb\/[^/]+\.deb$/i };
+    assert.equal((await verifiedCandidate(root, "1.2.3", revision, linux)).sha256, digest(deb));
+    await assert.rejects(verifiedCandidate(root, "1.2.3", revision), "the default expectation is the Windows installer");
+    await assert.rejects(verifiedCandidate(root, "1.2.3", revision, { ...linux, platform: "Windows" }));
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

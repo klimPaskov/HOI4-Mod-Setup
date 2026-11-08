@@ -99,3 +99,23 @@ test("dedicated Debian smoke rejects incomplete purge and preserves ordinary fai
     },
   }), (error) => error instanceof AggregateError && error.errors.some((failure) => /partial installation/.test(failure.message)) && error.errors.some((failure) => /left.*behind/.test(failure.message)));
 });
+
+test("the Linux acceptance can install the way the guide tells users to, through apt, and still purges", async () => {
+  const commands = [];
+  let registered = false;
+  await withLinuxDebInstallation("/temporary/setup.deb", async () => {}, {
+    useApt: true,
+    exists: () => registered,
+    exec: async (command, args) => {
+      commands.push([command, args]);
+      if (command === "/usr/bin/dpkg-query") return { stdout: registered ? "hoi4-mod-setup\tinstalled\n" : "" };
+      if (args.includes("install")) registered = true;
+      if (args.includes("--purge")) registered = false;
+      return { stdout: "" };
+    },
+  });
+  assert.ok(commands.some(([, args]) => args.includes("/usr/bin/apt-get") && args.includes("install") && args.includes("/temporary/setup.deb")));
+  assert.ok(!commands.some(([, args]) => args.includes("--install")));
+  assert.equal(commands.filter(([, args]) => args.includes("--purge")).length, 1);
+  await assert.rejects(withLinuxDebInstallation("relative.deb", async () => {}, { useApt: true, exists: () => false, exec: async (command) => ({ stdout: command === "/usr/bin/dpkg-query" ? "" : "" }) }), /path/);
+});

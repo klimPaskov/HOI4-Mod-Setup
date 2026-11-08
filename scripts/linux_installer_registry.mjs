@@ -20,7 +20,11 @@ export async function withLinuxDebInstallation(packagePath, launch, injected = {
   if (adapter.exists(binary)) throw new Error("dedicated Linux installer smoke refuses an existing application executable");
   let failure;
   try {
-    await adapter.exec("/usr/bin/sudo", ["-n", "/usr/bin/dpkg", "--install", packagePath], { timeout: 120_000 });
+    if (adapter.useApt) {
+      // The documented user route (docs/LINUX.md: sudo apt install ./file.deb), which resolves declared dependencies.
+      if (!packagePath.startsWith("/")) throw new Error("apt installs a local package only from a path");
+      await adapter.exec("/usr/bin/sudo", ["-n", "/usr/bin/env", "DEBIAN_FRONTEND=noninteractive", "/usr/bin/apt-get", "install", "-y", packagePath], { timeout: 600_000, maxBuffer: 16 * 1024 * 1024 });
+    } else await adapter.exec("/usr/bin/sudo", ["-n", "/usr/bin/dpkg", "--install", packagePath], { timeout: 120_000 });
     await launch(binary);
   } catch (error) { failure = error; }
   try {
