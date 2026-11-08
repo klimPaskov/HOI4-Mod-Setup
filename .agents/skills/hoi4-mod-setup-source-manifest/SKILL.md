@@ -211,6 +211,13 @@ a newer bootstrap.
   commit and reads with `git show <commit>:<path>`; it does not re-resolve every
   raw file through `rev-parse`. Source verification uses an isolated cache and
   bounded prefetch, and fails when the checkout is not supplied.
+- `prefetch_verified_files` first downloads the pinned commit once as
+  `codeload.github.com/<owner>/<name>/tar.gz/<commit>` when 24 or more declared
+  blobs are uncached (`src-tauri/src/source/archive.rs`). It stores an entry only
+  by its exact manifest path, size and SHA-256 and never uses an archive path on
+  disk, because `git archive` applies `export-ignore`, `export-subst` and line
+  endings; a mismatch is a skipped entry, and the per-file route fetches it.
+  Never trust the archive as evidence, only the manifest hashes.
 - `HttpSourceClient::resolve_commit` uses GitHub REST first and falls back only
   for a rate-limit-only 403/429 to the fixed repository's bounded
   `info/refs?service=git-upload-pack` advertisement. The parser binds `HEAD`,

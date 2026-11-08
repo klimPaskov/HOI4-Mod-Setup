@@ -197,6 +197,23 @@ a plan row and SHA-256; the installer downloads only those declared blobs. A
 recursive tree listing is not required for public resolution and cannot add
 undeclared files to a plan.
 
+#### One archive per install
+
+When many declared files are not yet in the verified blob cache, the desktop
+app first downloads the exact commit once from
+`https://codeload.github.com/klimPaskov/Agentic-HOI4-Modding/tar.gz/<commit>`
+instead of about 1,700 single-file requests. The download streams to a partial
+file under the cache (resumed with a `Range` request when the server allows it,
+with the same bounded retries as other source requests, and capped at 1 GiB
+compressed and 4 GiB declared). The extractor never uses an archive path on the
+filesystem: it looks each entry up by its exact manifest path, accepts only
+regular files whose size and SHA-256 match the manifest, and stores them in the
+same hash-addressed cache. Links, special files, undeclared paths and mismatched
+content are skipped. Anything the archive did not supply, and every file when the
+archive fails or is refused, is fetched by the per-file route as before, so a
+bad archive can only cost time. A developer's local source checkout never uses
+the archive. The web edition is unchanged.
+
 Disjoint tree components may share a standard managed destination directory such as `.agents/skills/` or `.codex/agents/`. Every selected concrete destination remains unique and is canonicalized before download; any selected overlap is rejected.
 
 ### Generated

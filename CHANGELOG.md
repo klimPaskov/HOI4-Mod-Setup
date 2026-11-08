@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Download the kit once instead of as about 1,700 single files (#168). Setup now fetches the pinned commit as one archive from `codeload.github.com`, checks every manifest-declared file against its size and SHA-256, and installs from that. The download is resumable and retried like other source requests. A file the archive does not hold correctly, and the whole install when the archive cannot be downloaded, falls back to the per-file route. Only the fixed repository's commit archive is approved, and nothing in the archive is trusted or used as a path.
+
 ## 0.9.3 - 2026-11-06
 
 - Retry a source download that GitHub throttles (HTTP 429), that fails with a server error (500, 502, 503, 504) or whose connection drops: up to five attempts with exponential backoff and jitter, or the server's Retry-After up to 30 seconds. An install fetches about 1,700 single files, and one throttled request used to fail the whole preparation with "The setup source could not be downloaded or prepared", most often from shared CI addresses. Every file is still checked against its manifest SHA-256, and other refusals are not retried.
