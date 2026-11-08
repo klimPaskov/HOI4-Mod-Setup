@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { cleanAppEnvironment, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, reviewedDownloadUrl, reviewedMetadataPath, sanitizeReport, setupPythonPath, startPlannerFixture, stopOwnedSession, verifiedCandidate } from "./released_e2e_support.mjs";
+import { cleanAppEnvironment, createPhaseClock, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, reviewedDownloadUrl, reviewedMetadataPath, sanitizeReport, setupPythonPath, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
 
 test("Latest acceptance metadata stays in the fixed repository and immutable manifest route", () => {
   const repository = "/repos/klimPaskov/Agentic-HOI4-Modding";
@@ -143,4 +143,21 @@ test("loopback planner binds approved input and returns one correction without c
     const unbound = await fetch(planner.endpoint, { method: "POST", body: JSON.stringify({ model: "e2e-planner", messages: [{ role: "user", content: prompt.replace(digest, "a".repeat(64)) }] }) });
     assert.equal(unbound.status, 400);
   } finally { await planner.close(); }
+});
+
+test("journal stage and phase timings are derived from checkpoints and summarised", async () => {
+  const stages = stageTimings({ stages: [
+    { id: "download", status: "complete", started_at: "2026-01-01T00:00:00.000Z", completed_at: "2026-01-01T00:00:12.340Z" },
+    { id: "apply", status: "pending" },
+  ] });
+  assert.deepEqual(stages, [{ id: "download", status: "complete", seconds: 12.3 }, { id: "apply", status: "pending", seconds: null }]);
+  let tick = 0;
+  const clock = createPhaseClock(() => (tick += 2500));
+  await assert.rejects(clock.measure("fails", async () => { throw new Error("boom"); }), /boom/);
+  assert.equal(await clock.measure("works", async () => 7), 7);
+  assert.deepEqual(clock.phases, [{ name: "fails", seconds: 2.5 }, { name: "works", seconds: 2.5 }]);
+  const summary = timingSummary({ scenario: "new", runner: "Linux", phases: clock.phases, transactions: [{ id: "0123456789abcdef", stageTimings: stages }] });
+  assert.match(summary, /\| works \| 2\.5 \|/);
+  assert.match(summary, /\| download \| 12\.3 \|/);
+  assert.match(summary, /\| apply \| n\/a \|/);
 });

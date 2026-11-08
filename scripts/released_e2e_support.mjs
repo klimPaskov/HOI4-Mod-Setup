@@ -271,3 +271,38 @@ export async function startPlannerFixture({ malformedFirst = false, projectName 
   return { endpoint: `http://127.0.0.1:${server.address().port}/v1/chat/completions`, requests,
     close: () => new Promise((resolvePromise, reject) => server.close((error) => error ? reject(error) : resolvePromise())) };
 }
+
+// Per-stage wall-clock durations from a transaction journal's own checkpoints. Stages that
+// never started (or never completed) report null so a partial journal is still honest.
+export function stageTimings(journal) {
+  return (journal.stages ?? []).map((stage) => {
+    const started = Date.parse(stage.started_at ?? "");
+    const completed = Date.parse(stage.completed_at ?? "");
+    return { id: stage.id, status: stage.status,
+      seconds: Number.isFinite(started) && Number.isFinite(completed) ? Math.max(0, Math.round((completed - started) / 100) / 10) : null };
+  });
+}
+
+// Wall-clock phases the driver observed (UI waits that include the app's work), in order.
+export function createPhaseClock(now = () => Date.now()) {
+  const phases = [];
+  return {
+    phases,
+    async measure(name, run) {
+      const started = now();
+      try { return await run(); }
+      finally { phases.push({ name, seconds: Math.round((now() - started) / 100) / 10 }); }
+    },
+  };
+}
+
+// A short markdown table for the job summary: observed UI phases, then each installation's journal stages.
+export function timingSummary(report) {
+  const rows = [`### ${report.scenario} timings (${report.runner ?? "runner"})`, "", "| Phase | Seconds |", "| --- | ---: |"];
+  for (const phase of report.phases ?? []) rows.push(`| ${phase.name} | ${phase.seconds} |`);
+  for (const transaction of report.transactions ?? []) {
+    rows.push("", `Transaction ${transaction.id.slice(0, 8)} stages`, "", "| Stage | Seconds |", "| --- | ---: |");
+    for (const stage of transaction.stageTimings ?? []) rows.push(`| ${stage.id} | ${stage.seconds ?? "n/a"} |`);
+  }
+  return `${rows.join("\n")}\n`;
+}
