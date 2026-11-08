@@ -293,6 +293,20 @@ export function stageTimings(journal) {
   });
 }
 
+// Seconds each post-install action (tool installers, MCP bootstrap, hoi4-imagegen) took, from the journal's
+// post-install checks evidence, plus the MCP bootstrap's own split between its script and its health check.
+export function actionTimings(journal) {
+  const evidence = (journal.stages ?? []).find((stage) => stage.id === "post-install checks")?.evidence ?? [];
+  const timings = [];
+  for (const item of evidence) {
+    const total = /^external-action-seconds:([^:]+):([0-9.]+)$/.exec(item);
+    if (total) timings.push({ component: total[1], seconds: Number(total[2]) });
+    const split = /^external-action:mcp.hoi4_agent_tools:[a-z_]+:.*bootstrap_seconds=([0-9.]+) health_seconds=([0-9.]+)/.exec(item);
+    if (split) timings.push({ component: "mcp.hoi4_agent_tools (script)", seconds: Number(split[1]) }, { component: "mcp.hoi4_agent_tools (health check)", seconds: Number(split[2]) });
+  }
+  return timings;
+}
+
 // Wall-clock phases the driver observed (UI waits that include the app's work), in order.
 export function createPhaseClock(now = () => Date.now()) {
   const phases = [];
@@ -313,6 +327,10 @@ export function timingSummary(report) {
   for (const transaction of report.transactions ?? []) {
     rows.push("", `Transaction ${transaction.id.slice(0, 8)} stages`, "", "| Stage | Seconds |", "| --- | ---: |");
     for (const stage of transaction.stageTimings ?? []) rows.push(`| ${stage.id} | ${stage.seconds ?? "n/a"} |`);
+    if (transaction.actionTimings?.length) {
+      rows.push("", "Post-install actions", "", "| Action | Seconds |", "| --- | ---: |");
+      for (const action of transaction.actionTimings) rows.push(`| ${action.component} | ${action.seconds} |`);
+    }
   }
   return `${rows.join("\n")}\n`;
 }

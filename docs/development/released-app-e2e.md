@@ -123,7 +123,7 @@ Every scenario report (`result.json`) carries `phases`, the wall-clock seconds
 the driver observed for each long UI wait (resolve, download, verify and review;
 apply until the journal completes; the Ready screen), and, for each installation,
 `transactions[].stageTimings`, the per-stage seconds taken from the app's own
-journal checkpoints. The same tables are appended to the job summary. They
+journal checkpoints, and `actionTimings`, the seconds each post-install action (the MCP bootstrap script and its health check, hoi4-imagegen, optional workflows) took, from `external-action-seconds` evidence the transaction journals for stage 9. The same tables are appended to the job summary. They
 include the runner's network and disk, so compare runs on the same runner type
 and read them as budgets for regressions, not as a user's install time.
 

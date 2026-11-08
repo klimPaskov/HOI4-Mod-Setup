@@ -3233,7 +3233,9 @@ fn run_reviewed_mcp_bootstrap(
         timeout_seconds: 30 * 60,
         max_output_bytes: 2 * 1024 * 1024,
     };
+    let bootstrap_started = std::time::Instant::now();
     let run_result = spec.run(&[python], None);
+    let bootstrap_seconds = bootstrap_started.elapsed().as_secs_f64();
     let cleanup_result = remove_private_verified_script(&private_script);
     cleanup_result?;
     let result = match run_result {
@@ -3246,14 +3248,16 @@ fn run_reviewed_mcp_bootstrap(
             });
         }
     };
+    let health_started = std::time::Instant::now();
     let health = crate::mcp::reviewed_plan_target(&plan.external_actions)
         .and_then(|target| crate::mcp::initialize_health(root, &target));
+    let health_seconds = health_started.elapsed().as_secs_f64();
     Ok(match health {
         Ok(evidence) => PostInstallActionOutcome {
             component_id: crate::mcp::COMPONENT_ID.into(),
             state: "ready".into(),
             evidence: format!(
-                "package bootstrap exit={} verified_tools={}",
+                "package bootstrap exit={} verified_tools={} bootstrap_seconds={bootstrap_seconds:.1} health_seconds={health_seconds:.1}",
                 result.status_code.unwrap_or_default(),
                 evidence.required_tools.len()
             ),

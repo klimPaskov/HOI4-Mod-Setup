@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { withLinuxDebInstallation } from "./linux_installer_registry.mjs";
-import { createPhaseClock, fileHash, githubJson, inside, requireDisposableLinux, reviewedApplyLabel, sanitizeReport, stageTimings, startPlannerFixture, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
+import { actionTimings, createPhaseClock, fileHash, githubJson, inside, requireDisposableLinux, reviewedApplyLabel, sanitizeReport, stageTimings, startPlannerFixture, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
 import { WebDriverSession } from "./linux_webdriver.mjs";
 
 // Fresh install on a disposable Linux machine: install the exact CI-built Debian package, drive the production
@@ -114,7 +114,7 @@ async function applyAndReady(maintenance = false) {
   });
   const readiness = JSON.parse(await readFile(join(await journalRoot(), journal.transaction_id, "readiness-report.json"), "utf8"));
   result.transactions ??= [];
-  result.transactions.push({ id: journal.transaction_id, state: journal.state, stages: journal.stages.map(({ id, status }) => ({ id, status })), stageTimings: stageTimings(journal), coreReady: readiness.core_ready });
+  result.transactions.push({ id: journal.transaction_id, state: journal.state, stages: journal.stages.map(({ id, status }) => ({ id, status })), stageTimings: stageTimings(journal), actionTimings: actionTimings(journal), coreReady: readiness.core_ready });
   result.readinessChecks = readiness.checks.map((check) => ({ id: check.id, status: check.status, blocking: check.blocking }));
   assert.equal(readiness.core_ready, true, `core readiness: ${JSON.stringify(result.readinessChecks.filter((check) => check.status !== "pass"))}`);
   assert.ok(!readiness.checks.some((check) => check.blocking && check.status === "block"));

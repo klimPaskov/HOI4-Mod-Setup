@@ -1819,7 +1819,9 @@ fn run_transaction_inner(
                     )));
                 }
                 project_directory.verify_bound_to_path()?;
+                let action_started = std::time::Instant::now();
                 let outcome = runner(&project_root, plan, component_id)?;
+                let action_seconds = action_started.elapsed().as_secs_f64();
                 project_directory.verify_bound_to_path()?;
                 if outcome.component_id != component_id {
                     return Err(AppError::Transaction(format!(
@@ -1898,6 +1900,11 @@ fn run_transaction_inner(
                     stage.evidence.push(format!(
                         "external-action:{}:{}:{}",
                         outcome.component_id, outcome.state, evidence
+                    ));
+                    // Wall-clock evidence for install-time budgets; never part of a decision.
+                    stage.evidence.push(format!(
+                        "external-action-seconds:{}:{action_seconds:.1}",
+                        outcome.component_id
                     ));
                 }
                 if (options.fail_after_post_install_action && action_index == 0)
