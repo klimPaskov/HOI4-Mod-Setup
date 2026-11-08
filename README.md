@@ -38,9 +38,8 @@ Cursor, and [many more coding clients](docs/36_coding_environment_catalog.md).
 
 ## Desktop app (recommended)
 
-Writes into your mod after you review every change, with a backup and **Undo changes**. Installs
-the HOI4 Agent Tools, supports Claude and ChatGPT sign-in, Git, and the 3D workflow, and can update,
-repair, or remove its setup later.
+Writes into your mod after you review every change, with a backup and **Undo changes**, and can
+update, repair, or remove its setup later.
 
 - Windows: [`.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe)
 - Mac: [Apple silicon `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-arm64.dmg) · [Intel `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-x64.dmg)
@@ -92,7 +91,7 @@ with your coding client.
   local references, visual previews, and tools for focus trees, interfaces, and maps.
 - **[hoi4-imagegen](https://github.com/klimPaskov/hoi4-imagegen-mcp)** is an MCP server that makes
   and edits graphical assets, then processes, validates, and exports them as DDS. Setup installs it
-  with one checkbox. Sign-in, providers, and troubleshooting are in its README.
+  with one checkbox and offers the ChatGPT sign-in. Sign-in, providers, and troubleshooting are in its README.
 - **[HOI4 Live Tools](https://github.com/klimPaskov/HOI4-Live-Tools)** is an experimental MCP server
   that lets your AI client test the mod and play the game. Stable on Windows. The alternative is
   [Clausewitz MCP](https://github.com/smerss/Clausewitz-MCP) by smerss, which needs native Linux.
