@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { chromium, expect } from "@playwright/test";
 import { assertWindowsInstallerRegistryIsClean, cleanupWindowsInstallerRegistry, resolveNativeSystemExecutable, resolveSystemPowerShellPath, uninstallKey, windowsRegistry } from "./windows_installer_registry.mjs";
-import { assertOriginals, cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, sanitizeReport, setupPythonPath, snapshot, startPlannerFixture, stopOwnedSession, verifiedCandidate } from "./released_e2e_support.mjs";
+import { assertOriginals, cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, createPhaseClock, sanitizeReport, setupPythonPath, snapshot, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
 import { configureHostedWebView } from "./released_e2e_windows.mjs";
 
 requireHostedWindows();
@@ -63,6 +63,8 @@ const project = join(mods, fresh ? "remote_acceptance_mod" : "kaiserreich");
 const result = { scenario, applicationKind, applicationVersion: pins.app.version, releaseSourceCommitFromPin: pins.app.commit, runner: process.env.RUNNER_OS,
   ai: "deterministic loopback HTTP fixture; real provider authentication and semantic quality are not tested",
   nativeIpc: `unmodified ${applicationKind} binary; no IPC mocks or application test hooks`, stages: [], screenshots: [], success: false };
+const clock = createPhaseClock();
+result.phases = clock.phases;
 let app;
 let browser;
 let page;
@@ -197,7 +199,7 @@ async function commonSetup() {
 // `choices` maps a conflict path to the button that resolves it; any other
 // conflict keeps the current file.
 async function waitForReview(maintenance, choices = {}) {
-  await waitUntil(async () => {
+  await clock.measure(maintenance ? "maintenance: resolve, download, verify and review" : "resolve, download, verify and review", () => waitUntil(async () => {
     const title = await heading().innerText();
     if (title === "Resolve file conflicts") {
       const done = page.getByRole("button", { name: maintenance ? "Apply" : "Review changes", exact: true });
@@ -220,7 +222,7 @@ async function waitForReview(maintenance, choices = {}) {
     const errors = await page.getByRole("alert").allTextContents();
     if (errors.some((text) => /could not|unavailable|failed|error/i.test(text))) throw new Error(errors.join(" ").slice(0, 1500));
     return false;
-  }, 15 * 60_000, "source preparation and reviewed conflicts");
+  }, 15 * 60_000, "source preparation and reviewed conflicts"));
   await record(maintenance ? "maintenance-review" : "dry-run");
 }
 async function applyAndReady(maintenance = false) {
@@ -229,20 +231,22 @@ async function applyAndReady(maintenance = false) {
   const label = reviewedApplyLabel(title, maintenance);
   assert.ok(label, "Installation requires a recognized reviewed-plan screen.");
   await next(label);
-  const journal = await completedTransaction(previousIds);
+  const journal = await clock.measure(maintenance ? "maintenance: apply (journal completed)" : "install: apply (journal completed)", () => completedTransaction(previousIds));
   assert.equal(journal.stages.length, 12);
   assert.ok(journal.stages.every((stage) => stage.status === "complete"));
   if (!maintenance) {
     await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled({ timeout: 60_000 });
     await next("Continue");
   }
-  await at("Project ready");
-  await expect(page.getByRole("heading", { name: / is ready$/ })).toBeVisible({ timeout: 90_000 });
+  await clock.measure(maintenance ? "maintenance: ready screen" : "install: ready screen", async () => {
+    await at("Project ready");
+    await expect(page.getByRole("heading", { name: / is ready$/ })).toBeVisible({ timeout: 90_000 });
+  });
   const readiness = JSON.parse(await readFile(join(journalRoot, journal.transaction_id, "readiness-report.json"), "utf8"));
   assert.equal(readiness.core_ready, true);
   assert.ok(!readiness.checks.some((check) => check.blocking && check.status === "block"));
   result.transactions ??= [];
-  result.transactions.push({ id: journal.transaction_id, state: journal.state, stages: journal.stages.map(({ id, status }) => ({ id, status })), coreReady: readiness.core_ready });
+  result.transactions.push({ id: journal.transaction_id, state: journal.state, stages: journal.stages.map(({ id, status }) => ({ id, status })), stageTimings: stageTimings(journal), coreReady: readiness.core_ready });
   await record(maintenance ? "repaired-ready" : "installed-ready");
   return { journal, readiness };
 }
@@ -696,6 +700,7 @@ try {
   result.success &&= !failure;
   Object.assign(result, sanitizeReport(result, [metadataToken]));
   await writeFile(join(output, "result.json"), JSON.stringify(result, null, 2) + "\n");
+  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, timingSummary(result)).catch(() => {});
   inside(process.env.RUNNER_TEMP, workRoot);
   await rm(workRoot, { recursive: true, force: true });
 }
