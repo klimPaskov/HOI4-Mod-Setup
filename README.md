@@ -91,7 +91,7 @@ with your coding client.
   local references, visual previews, and tools for focus trees, interfaces, and maps.
 - **[hoi4-imagegen](https://github.com/klimPaskov/hoi4-imagegen-mcp)** is an MCP server that makes
   and edits graphical assets, then processes, validates, and exports them as DDS. Setup installs it
-  with one checkbox. Sign-in, providers, and troubleshooting are in its README.
+  with one checkbox and offers the ChatGPT sign-in. Sign-in, providers, and troubleshooting are in its README.
 - **[HOI4 Live Tools](https://github.com/klimPaskov/HOI4-Live-Tools)** is an experimental MCP server
   that lets your AI client test the mod and play the game. Stable on Windows. The alternative is
   [Clausewitz MCP](https://github.com/smerss/Clausewitz-MCP) by smerss, which needs native Linux.
