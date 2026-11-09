@@ -532,6 +532,16 @@ pub fn install_release(
     }
 }
 
+/// Windows reports a file that another process has open or running as access denied (5), a
+/// sharing violation (32) or a lock violation (33).
+fn is_file_in_use(error: &AppError) -> bool {
+    cfg!(windows)
+        && matches!(
+            error,
+            AppError::Io(source) if matches!(source.raw_os_error(), Some(5 | 32 | 33))
+        )
+}
+
 /// Remove an installed version, but only while its files still hash to what
 /// Setup recorded. A changed folder is kept.
 pub fn remove_release(
@@ -554,7 +564,15 @@ pub fn remove_release(
     let directory = install_root.open_dir(version)?;
     let identity = directory.identity_token()?;
     drop(directory);
-    if !install_root.remove_tree_if_identity(version, &identity)? {
+    // A previous version whose program is still running (for example the sign-in the Ready
+    // screen started) cannot be deleted on Windows. The new version is already installed and
+    // checked, so the old one is kept and the next Update or Repair removes it.
+    let removed = match install_root.remove_tree_if_identity(version, &identity) {
+        Ok(removed) => removed,
+        Err(error) if is_file_in_use(&error) => return Ok(RemoveResult::ModifiedKept),
+        Err(error) => return Err(error),
+    };
+    if !removed {
         return Ok(RemoveResult::ModifiedKept);
     }
     let _ = relative;
