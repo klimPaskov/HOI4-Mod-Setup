@@ -247,8 +247,11 @@ fn read_installed_package_tree_with_links(
 type PackageRead = Result<Vec<u8>, AppError>;
 
 /// Read regular package files with the same no-follow, bounded read as before,
-/// on several threads. Every file still goes through the full per-file path
-/// checks; only the waiting overlaps. The result keeps the byte bounds: a file
+/// on several threads. The package root is opened and identity-checked once and
+/// its handle is retained for every read (a per-file root open repeated the
+/// whole ancestor walk thousands of times); every file still goes through the
+/// per-file contained open, containment and link checks, so only the repeated
+/// root work and the waiting change. The result keeps the byte bounds: a file
 /// over its limit, or a tree over the tree limit, fails the whole read.
 fn read_package_files(
     root: &Path,
@@ -259,6 +262,7 @@ fn read_package_files(
     if relatives.is_empty() {
         return Ok(Vec::new());
     }
+    let bounded_root = crate::flatten::BoundedReadRoot::open(root)?;
     let workers = std::thread::available_parallelism()
         .map_or(4, std::num::NonZeroUsize::get)
         .clamp(1, 8)
@@ -277,10 +281,10 @@ fn read_package_files(
                 if index >= relatives.len() || failed.load(Ordering::SeqCst) {
                     break;
                 }
-                let mut result = crate::flatten::read_bounded_regular_file_no_follow_under_root(
-                    root,
+                let mut result = bounded_root.read_bounded_with_check(
                     &relatives[index],
                     MAX_PACKAGE_FILE_BYTES,
+                    || false,
                 );
                 if let Ok(bytes) = &result {
                     let total = retained.fetch_add(bytes.len() as u64, Ordering::SeqCst)
