@@ -813,8 +813,8 @@ pub fn initialize_health(
         ));
     }
     phases.push(("entry_checks", started.elapsed().as_secs_f64()));
-    let (node, node_sha256, node_directory, node_identity_seconds) = node_identity?;
-    phases.push(("node_identity", node_identity_seconds));
+    let (node, node_sha256, node_directory, node_phases) = node_identity?;
+    phases.extend(node_phases);
     let started = std::time::Instant::now();
     let transport = ProcessJsonlTransport::start_command_with_path_and_identity(
         node.clone(),
@@ -842,19 +842,32 @@ pub fn initialize_health(
 }
 
 /// Resolve Node and verify its publisher, returning the path, the verified content hash, its
-/// directory and the seconds spent.
-fn verified_node_identity() -> Result<(PathBuf, String, PathBuf, f64), AppError> {
+/// directory and the seconds spent. The phases separate the PATH lookup, the first (cold) read of
+/// the executable and the publisher check, so a slow first run can be attributed.
+type NodeIdentity = (PathBuf, String, PathBuf, Vec<(&'static str, f64)>);
+
+fn verified_node_identity() -> Result<NodeIdentity, AppError> {
     let started = std::time::Instant::now();
     let node = resolved_node()?;
+    let resolve_seconds = started.elapsed().as_secs_f64();
+    let started = std::time::Instant::now();
+    sha256_file(&node)?;
+    let cold_read_seconds = started.elapsed().as_secs_f64();
+    let started = std::time::Instant::now();
     let node_sha256 = crate::process::verified_executable_sha256(&node, "OpenJS Foundation")?;
     let node_directory = node.parent().map(Path::to_path_buf).ok_or_else(|| {
         AppError::Process("the resolved Node executable has no containing directory".into())
     })?;
+    let publisher_seconds = started.elapsed().as_secs_f64();
     Ok((
         node,
         node_sha256,
         node_directory,
-        started.elapsed().as_secs_f64(),
+        vec![
+            ("node_resolve", resolve_seconds),
+            ("node_cold_read", cold_read_seconds),
+            ("node_identity", publisher_seconds),
+        ],
     ))
 }
 
