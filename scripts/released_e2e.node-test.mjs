@@ -202,6 +202,13 @@ test("post-install action timings are read from the journal evidence", () => {
     { component: "mcp.hoi4_agent_tools", seconds: 74.6 }, { component: "imagegen.hoi4_imagegen", seconds: 3 },
   ]);
   assert.deepEqual(actionTimings({ stages: [] }), []);
+  const phased = { stages: [{ id: "post-install checks", evidence: [
+    "external-action:mcp.hoi4_agent_tools:ready:package bootstrap exit=0 verified_tools=13 bootstrap_seconds=19.0 health_seconds=28.0 health_phases=tree_read:6.0,copy_write:9.5,copy_verify:7.5,node_start:1.0",
+  ] }] };
+  assert.deepEqual(actionTimings(phased).slice(2), [
+    { component: "mcp.hoi4_agent_tools (health: tree_read)", seconds: 6 }, { component: "mcp.hoi4_agent_tools (health: copy_write)", seconds: 9.5 },
+    { component: "mcp.hoi4_agent_tools (health: copy_verify)", seconds: 7.5 }, { component: "mcp.hoi4_agent_tools (health: node_start)", seconds: 1 },
+  ]);
 });
 
 test("assertAgentToolsProfiles requires the kit's profile variable in the Claude Code and Codex files", async () => {

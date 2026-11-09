@@ -3257,9 +3257,15 @@ fn run_reviewed_mcp_bootstrap(
             component_id: crate::mcp::COMPONENT_ID.into(),
             state: "ready".into(),
             evidence: format!(
-                "package bootstrap exit={} verified_tools={} bootstrap_seconds={bootstrap_seconds:.1} health_seconds={health_seconds:.1}",
+                "package bootstrap exit={} verified_tools={} bootstrap_seconds={bootstrap_seconds:.1} health_seconds={health_seconds:.1} health_phases={}",
                 result.status_code.unwrap_or_default(),
-                evidence.required_tools.len()
+                evidence.required_tools.len(),
+                evidence
+                    .phase_seconds
+                    .iter()
+                    .map(|(name, seconds)| format!("{name}:{seconds:.1}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
             ),
         },
         Err(error) => PostInstallActionOutcome {
