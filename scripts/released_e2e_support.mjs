@@ -303,6 +303,9 @@ export function actionTimings(journal) {
     if (total) timings.push({ component: total[1], seconds: Number(total[2]) });
     const split = /^external-action:mcp.hoi4_agent_tools:[a-z_]+:.*bootstrap_seconds=([0-9.]+) health_seconds=([0-9.]+)/.exec(item);
     if (split) timings.push({ component: "mcp.hoi4_agent_tools (script)", seconds: Number(split[1]) }, { component: "mcp.hoi4_agent_tools (health check)", seconds: Number(split[2]) });
+    // The health check's own phases (tree read, private copy write and verify, Node start, initialize, tools/list).
+    const phases = /health_phases=([a-z_]+:[0-9.]+(?:,[a-z_]+:[0-9.]+)*)/.exec(item);
+    if (split && phases) for (const phase of phases[1].split(",")) { const [name, seconds] = phase.split(":"); timings.push({ component: `mcp.hoi4_agent_tools (health: ${name})`, seconds: Number(seconds) }); }
   }
   return timings;
 }

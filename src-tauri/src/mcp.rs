@@ -128,6 +128,9 @@ pub(crate) struct VerifiedPackageTree {
     pub(crate) sha256: String,
     pub(crate) file_count: u64,
     symlinks: BTreeMap<String, String>,
+    /// Seconds spent reading and hashing the installed tree, writing the
+    /// private copy, and re-reading that copy to prove it matches.
+    pub(crate) phase_seconds: [f64; 3],
 }
 
 fn read_installed_package_tree(root: &Path) -> Result<Vec<(String, Vec<u8>)>, AppError> {
@@ -418,30 +421,17 @@ fn materialize_verified_package_tree_with_links(
     symlinks: &BTreeMap<String, String>,
     layout: PrivateTreeLayout,
 ) -> Result<VerifiedPackageTree, AppError> {
+    let started = std::time::Instant::now();
     let files = read_installed_package_tree_with_links(root, symlinks)?;
     let (sha256, file_count) = package_tree_identity(&files);
+    let read_seconds = started.elapsed().as_secs_f64();
+    let started = std::time::Instant::now();
     let temporary = tempfile::tempdir()?;
     let private_root = temporary.path().join(layout.directory_name());
     std::fs::create_dir(&private_root)?;
-    for (relative, bytes) in &files {
-        let destination = safe_join(&private_root, relative)?;
-        if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        if let Some(target) = symlinks.get(relative) {
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(target, destination)?;
-            #[cfg(not(unix))]
-            {
-                let _ = target;
-                return Err(AppError::UnsupportedPlatform(
-                    "declared package symlinks require Unix".into(),
-                ));
-            }
-        } else {
-            std::fs::write(destination, bytes)?;
-        }
-    }
+    write_private_copy(&private_root, &files, symlinks)?;
+    let write_seconds = started.elapsed().as_secs_f64();
+    let started = std::time::Instant::now();
     let copied = read_installed_package_tree_with_links(&private_root, symlinks)?;
     let copied_identity = package_tree_identity(&copied);
     if copied_identity != (sha256.clone(), file_count) {
@@ -455,7 +445,78 @@ fn materialize_verified_package_tree_with_links(
         sha256,
         file_count,
         symlinks: symlinks.clone(),
+        phase_seconds: [read_seconds, write_seconds, started.elapsed().as_secs_f64()],
     })
+}
+
+/// Write the verified bytes into the new private directory. Directories are
+/// created first, one thread, so the file writers only create distinct files;
+/// the copy is then re-read and re-hashed, so the write order proves nothing
+/// and the concurrency only overlaps the per-file waiting.
+fn write_private_copy(
+    private_root: &Path,
+    files: &[(String, Vec<u8>)],
+    symlinks: &BTreeMap<String, String>,
+) -> Result<(), AppError> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut directories = BTreeSet::new();
+    let mut regular = Vec::with_capacity(files.len());
+    for (relative, bytes) in files {
+        let destination = safe_join(private_root, relative)?;
+        if let Some(parent) = destination.parent() {
+            directories.insert(parent.to_path_buf());
+        }
+        if symlinks.contains_key(relative) {
+            continue;
+        }
+        regular.push((destination, bytes));
+    }
+    for directory in &directories {
+        std::fs::create_dir_all(directory)?;
+    }
+    for (relative, target) in symlinks {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, safe_join(private_root, relative)?)?;
+        #[cfg(not(unix))]
+        {
+            let _ = target;
+            return Err(AppError::UnsupportedPlatform(
+                "declared package symlinks require Unix".into(),
+            ));
+        }
+    }
+    let workers = std::thread::available_parallelism()
+        .map_or(4, std::num::NonZeroUsize::get)
+        .clamp(1, 8)
+        .min(regular.len().max(1));
+    let next = AtomicUsize::new(0);
+    let failures = std::sync::Mutex::new(Vec::<std::io::Error>::new());
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::SeqCst);
+                let Some((destination, bytes)) = regular.get(index) else {
+                    break;
+                };
+                if let Err(error) = std::fs::write(destination, bytes) {
+                    if let Ok(mut failures) = failures.lock() {
+                        failures.push(error);
+                    }
+                    // Stop the other workers: one failed write fails the copy.
+                    next.store(usize::MAX / 2, Ordering::SeqCst);
+                    break;
+                }
+            });
+        }
+    });
+    let mut failures = failures.into_inner().map_err(|_| {
+        AppError::PathSecurity("the private MCP runtime copy could not be written".into())
+    })?;
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::from(failures.remove(0)))
+    }
 }
 
 #[cfg(test)]
@@ -527,6 +588,8 @@ pub struct HealthEvidence {
     pub server_version: String,
     pub tool_count: usize,
     pub required_tools: Vec<String>,
+    /// Seconds spent in each health-check phase, for the journal's timing evidence.
+    pub phase_seconds: Vec<(&'static str, f64)>,
 }
 
 /// Parse only the managed HOI4 Agent Tools registration. Unrelated client
@@ -703,11 +766,16 @@ pub fn initialize_health(
             "the installed MCP package does not match the reviewed package identity".into(),
         ));
     }
+    let mut phases: Vec<(&'static str, f64)> = Vec::new();
     let verified_tree = materialize_verified_package_tree_with_links(
         &package_root,
         &target.package_symlinks,
         PrivateTreeLayout::Package,
     )?;
+    let [read_seconds, write_seconds, verify_seconds] = verified_tree.phase_seconds;
+    phases.push(("tree_read", read_seconds));
+    phases.push(("copy_write", write_seconds));
+    phases.push(("copy_verify", verify_seconds));
     if verified_tree.sha256 != target.package_tree_sha256
         || verified_tree.file_count != target.package_file_count
     {
@@ -716,6 +784,7 @@ pub fn initialize_health(
         ));
     }
     verify_optional_npm_lock_integrity(&bin_root, &target.package_name, &target.package_integrity)?;
+    let started = std::time::Instant::now();
     let entry = safe_join(&verified_tree.root, &target.runtime_entry)?;
     let entry_metadata = std::fs::symlink_metadata(&entry)?;
     if is_link_metadata(&entry_metadata)
@@ -728,11 +797,15 @@ pub fn initialize_health(
             "the installed MCP runtime entry does not match the reviewed identity".into(),
         ));
     }
+    phases.push(("entry_checks", started.elapsed().as_secs_f64()));
+    let started = std::time::Instant::now();
     let node = resolved_node()?;
     let node_sha256 = crate::process::verified_executable_sha256(&node, "OpenJS Foundation")?;
     let node_directory = node.parent().map(Path::to_path_buf).ok_or_else(|| {
         AppError::Process("the resolved Node executable has no containing directory".into())
     })?;
+    phases.push(("node_identity", started.elapsed().as_secs_f64()));
+    let started = std::time::Instant::now();
     let transport = ProcessJsonlTransport::start_command_with_path_and_identity(
         node.clone(),
         vec![entry.display().to_string()],
@@ -741,13 +814,19 @@ pub fn initialize_health(
         &node_sha256,
     )?;
     let mut protocol = McpProtocol::new(transport, MCP_HEALTH_TIMEOUT);
+    phases.push(("node_start", started.elapsed().as_secs_f64()));
+    let started = std::time::Instant::now();
     let initialized = protocol.initialize()?;
+    phases.push(("initialize", started.elapsed().as_secs_f64()));
     let evidence = validate_verified_initialize_result(&initialized, &target.package_version)?;
+    let started = std::time::Instant::now();
     let listing = protocol.request("tools/list", json!({}))?;
+    phases.push(("tools_list", started.elapsed().as_secs_f64()));
     let tool_count = validate_tools_result(&listing, &target.required_tools)?;
     Ok(HealthEvidence {
         tool_count,
         required_tools: target.required_tools.clone(),
+        phase_seconds: phases,
         ..evidence
     })
 }
@@ -810,6 +889,7 @@ pub fn validate_initialize_result(value: &Value) -> Result<HealthEvidence, AppEr
         server_version,
         tool_count: 0,
         required_tools: Vec::new(),
+        phase_seconds: Vec::new(),
     })
 }
 
@@ -1396,6 +1476,35 @@ mod tests {
             "materialize total: {:?} {}",
             started.elapsed(),
             tree.file_count
+        );
+    }
+
+    #[test]
+    fn the_concurrent_private_copy_matches_a_large_nested_tree_byte_for_byte() {
+        let installed = tempfile::tempdir().unwrap();
+        for index in 0..400 {
+            let directory = installed
+                .path()
+                .join(format!("d{}/e{}/f{}", index % 7, index % 13, index % 3));
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                directory.join(format!("file{index}.js")),
+                format!("export const value = {index};\n").repeat(1 + index % 5),
+            )
+            .unwrap();
+        }
+        std::fs::write(installed.path().join("package.json"), b"{}").unwrap();
+        let expected = package_tree_identity(&read_installed_package_tree(installed.path()).unwrap());
+        let tree =
+            materialize_verified_package_tree(installed.path(), PrivateTreeLayout::Package).unwrap();
+        assert_eq!((tree.sha256.clone(), tree.file_count), expected);
+        assert_eq!(tree.file_count, 401);
+        assert!(tree.phase_seconds.iter().all(|seconds| seconds.is_finite() && *seconds >= 0.0));
+        verify_materialized_package_tree(&tree).unwrap();
+        let sample = tree.root.join("d3/e3/f0/file3.js");
+        assert_eq!(
+            std::fs::read(sample).unwrap(),
+            "export const value = 3;\n".repeat(4).into_bytes()
         );
     }
 
