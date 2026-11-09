@@ -4,7 +4,7 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
-- Fix an intermittent Windows failure of Update and repair with "Access is denied (os error 5)" while the hoi4-imagegen files were checked. A virus scanner or indexer that had just seen a file could refuse a read-only open for a moment, so Setup now retries such an open up to five times over about 1.5 seconds (Windows access, sharing and lock violations only; never writes or deletes). A post-install error that carries no message of its own now names the component in the transaction journal.
+- Fix an intermittent Windows failure of Update and repair with "Access is denied (os error 5)" while the hoi4-imagegen files were checked. A virus scanner or indexer that had just seen a file could refuse a read-only open for a moment, so Setup now retries opening an existing file or folder up to seven times over about 6 seconds (Windows access, sharing and lock violations only; never creating, writing or deleting). A post-install error that carries no message of its own now names the component, and the hoi4-imagegen install check names the step, in the transaction journal.
 - Fix the image sign-in check showing "Signed in" for a signed-out user. `hoi4-imagegen login-status` always exits 0 without `--check`, so Setup now reads its text (`signed in;` versus `not signed in (...)`) as well as the exit code, and the Ready page opens the sign-in when needed.
 
 ## 0.9.4 - 2026-11-08

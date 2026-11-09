@@ -733,7 +733,7 @@ impl RootedDir {
     fn open_regular_file(&self, relative: &str) -> Result<File, AppError> {
         let (parent, leaf) = self.open_parent(relative, false)?;
         parent.verify_bound_to_path()?;
-        let file = retry_transient_open(|| open_regular_file_at(&parent, &leaf))?;
+        let file = open_regular_file_at(&parent, &leaf)?;
         if is_link_metadata(&file.metadata()?) {
             return Err(AppError::PathSecurity(
                 "opened file is a link or reparse point".into(),
@@ -1388,11 +1388,13 @@ fn abort_before_named_placement() {
 }
 
 /// Pauses between attempts to open a file that another process briefly holds.
-const TRANSIENT_OPEN_DELAYS_MS: [u64; 5] = [50, 100, 200, 400, 800];
+#[cfg_attr(not(windows), allow(dead_code))]
+const TRANSIENT_OPEN_DELAYS_MS: [u64; 7] = [50, 100, 200, 400, 800, 1600, 3200];
 
 /// On Windows a virus scanner or indexer that has just seen a file can make an
 /// open fail with access denied (5), a sharing violation (32) or a lock
 /// violation (33) for a moment. No other platform reports these as transient.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn is_transient_open_error(error: &AppError) -> bool {
     cfg!(windows)
         && matches!(
@@ -1404,6 +1406,7 @@ fn is_transient_open_error(error: &AppError) -> bool {
 /// Run a read-only open again, with short bounded pauses, while it fails for a
 /// transient reason. Only read-only opens use this: a retried write or delete
 /// could repeat a change.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn retry_transient_open<T>(operation: impl FnMut() -> Result<T, AppError>) -> Result<T, AppError> {
     retry_with(
         operation,
@@ -1412,6 +1415,7 @@ fn retry_transient_open<T>(operation: impl FnMut() -> Result<T, AppError>) -> Re
     )
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 fn retry_with<T>(
     mut operation: impl FnMut() -> Result<T, AppError>,
     is_transient: impl Fn(&AppError) -> bool,
@@ -1948,22 +1952,31 @@ fn create_windows_file(
     share: u32,
 ) -> Result<File, AppError> {
     let path = windows_api_path_z(path);
-    let handle = unsafe {
-        CreateFileW(
-            path.as_ptr(),
-            access,
-            share,
-            std::ptr::null(),
-            disposition,
-            attributes,
-            std::ptr::null_mut(),
-        )
+    let open = || {
+        let handle = unsafe {
+            CreateFileW(
+                path.as_ptr(),
+                access,
+                share,
+                std::ptr::null(),
+                disposition,
+                attributes,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error().into());
+        }
+        // SAFETY: `CreateFileW` returned a valid, uniquely owned handle.
+        Ok(unsafe { File::from_raw_handle(handle as _) })
     };
-    if handle == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error().into());
+    // Opening an existing file or directory changes nothing, so a refusal that a scanner or
+    // indexer causes for a moment is retried. Creating a file is never repeated.
+    if disposition == OPEN_EXISTING {
+        retry_transient_open(open)
+    } else {
+        open()
     }
-    // SAFETY: `CreateFileW` returned a valid, uniquely owned handle.
-    Ok(unsafe { File::from_raw_handle(handle as _) })
 }
 
 #[cfg(unix)]

@@ -382,6 +382,18 @@ fn directory_name(version: &str) -> Result<String, AppError> {
     Ok(route::version_dir(version))
 }
 
+/// Name the step of an install check that failed with a bare operating-system error, so a rare
+/// refusal such as "Access is denied" can be located from the transaction journal. A missing file
+/// keeps its error, because callers treat that as "not installed".
+fn step<T>(what: &str, result: Result<T, AppError>) -> Result<T, AppError> {
+    result.map_err(|error| match error {
+        AppError::Io(source) if source.kind() != std::io::ErrorKind::NotFound => {
+            AppError::Transaction(format!("could not {what}: {source}"))
+        }
+        other => other,
+    })
+}
+
 /// The files of an installed version and their tree hash, or `None` when the
 /// version is not installed. An entry that is not a regular file makes the
 /// tree unusable and is an error.
@@ -390,23 +402,26 @@ pub fn installed_tree(
     version: &str,
 ) -> Result<Option<(Vec<InstalledFile>, String)>, AppError> {
     let relative = directory_name(version)?;
-    let project = RootedDir::open_read(root)?;
-    if !project.is_directory(&relative)? {
+    let project = step("open the project", RootedDir::open_read(root))?;
+    if !step(
+        "look for the install folder",
+        project.is_directory(&relative),
+    )? {
         return Ok(None);
     }
-    let directory = project.open_dir(&relative)?;
+    let directory = step("open the install folder", project.open_dir(&relative))?;
     let mut files = Vec::new();
-    for name in directory.read_dir_names()? {
+    for name in step("list the install folder", directory.read_dir_names())? {
         let name = name
             .to_str()
             .ok_or_else(|| AppError::PathSecurity("an installed file name is not UTF-8".into()))?
             .to_owned();
-        if !directory.is_regular_file(&name)? {
+        if !step("check an installed file", directory.is_regular_file(&name))? {
             return Err(AppError::PathSecurity(format!(
                 "the installed entry {name} is not a regular file"
             )));
         }
-        let sha256 = directory.hash_file(&name)?;
+        let sha256 = step("hash an installed file", directory.hash_file(&name))?;
         let size = std::fs::metadata(root.join(&relative).join(&name))
             .map(|metadata| metadata.len())
             .unwrap_or(0);
