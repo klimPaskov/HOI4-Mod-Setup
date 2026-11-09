@@ -771,11 +771,23 @@ pub fn initialize_health(
         ));
     }
     let mut phases: Vec<(&'static str, f64)> = Vec::new();
-    let verified_tree = materialize_verified_package_tree_with_links(
-        &package_root,
-        &target.package_symlinks,
-        PrivateTreeLayout::Package,
-    )?;
+    // The Node publisher check (a cold Authenticode lookup on Windows) does not depend on the
+    // package tree, so it runs while the tree is read, copied and verified.
+    let (verified_tree, node_identity) = std::thread::scope(|scope| {
+        let node_check = scope.spawn(verified_node_identity);
+        let tree = materialize_verified_package_tree_with_links(
+            &package_root,
+            &target.package_symlinks,
+            PrivateTreeLayout::Package,
+        );
+        let node_identity = node_check.join().unwrap_or_else(|_| {
+            Err(AppError::Process(
+                "the Node publisher check stopped unexpectedly".into(),
+            ))
+        });
+        (tree, node_identity)
+    });
+    let verified_tree = verified_tree?;
     let [read_seconds, write_seconds, verify_seconds] = verified_tree.phase_seconds;
     phases.push(("tree_read", read_seconds));
     phases.push(("copy_write", write_seconds));
@@ -802,13 +814,8 @@ pub fn initialize_health(
         ));
     }
     phases.push(("entry_checks", started.elapsed().as_secs_f64()));
-    let started = std::time::Instant::now();
-    let node = resolved_node()?;
-    let node_sha256 = crate::process::verified_executable_sha256(&node, "OpenJS Foundation")?;
-    let node_directory = node.parent().map(Path::to_path_buf).ok_or_else(|| {
-        AppError::Process("the resolved Node executable has no containing directory".into())
-    })?;
-    phases.push(("node_identity", started.elapsed().as_secs_f64()));
+    let (node, node_sha256, node_directory, node_phases) = node_identity?;
+    phases.extend(node_phases);
     let started = std::time::Instant::now();
     let transport = ProcessJsonlTransport::start_command_with_path_and_identity(
         node.clone(),
@@ -833,6 +840,36 @@ pub fn initialize_health(
         phase_seconds: phases,
         ..evidence
     })
+}
+
+/// Resolve Node and verify its publisher, returning the path, the verified content hash, its
+/// directory and the seconds spent. The phases separate the PATH lookup, the first (cold) read of
+/// the executable and the publisher check, so a slow first run can be attributed.
+type NodeIdentity = (PathBuf, String, PathBuf, Vec<(&'static str, f64)>);
+
+fn verified_node_identity() -> Result<NodeIdentity, AppError> {
+    let started = std::time::Instant::now();
+    let node = resolved_node()?;
+    let resolve_seconds = started.elapsed().as_secs_f64();
+    let started = std::time::Instant::now();
+    sha256_file(&node)?;
+    let cold_read_seconds = started.elapsed().as_secs_f64();
+    let started = std::time::Instant::now();
+    let node_sha256 = crate::process::verified_executable_sha256(&node, "OpenJS Foundation")?;
+    let node_directory = node.parent().map(Path::to_path_buf).ok_or_else(|| {
+        AppError::Process("the resolved Node executable has no containing directory".into())
+    })?;
+    let publisher_seconds = started.elapsed().as_secs_f64();
+    Ok((
+        node,
+        node_sha256,
+        node_directory,
+        vec![
+            ("node_resolve", resolve_seconds),
+            ("node_cold_read", cold_read_seconds),
+            ("node_identity", publisher_seconds),
+        ],
+    ))
 }
 
 fn validate_verified_initialize_result(
