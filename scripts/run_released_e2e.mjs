@@ -675,6 +675,12 @@ try {
       result.failureReadiness = report.checks.filter((check) => check.status === "block" || check.status === "fail").map((check) => ({ id: check.id, status: check.status, message: String(check.message ?? "").slice(0, 300), evidence: JSON.stringify(check.evidence ?? []).slice(0, 600) }));
     }
   } catch { /* The journal may not hold a report yet. */ }
+  // Keep the interrupted transaction itself (stage, recovery and error fields), so an intermittent
+  // transaction error such as "Access is denied" can be located from the artifact alone.
+  try {
+    const latest = (await journals()).at(-1);
+    if (latest) result.failureJournal = JSON.stringify(latest, (key, value) => (Array.isArray(value) && value.length > 40 ? [...value.slice(0, 40), `(${value.length - 40} more)`] : value)).replace(/(?:sk-|gh[pousr]_)[A-Za-z0-9_-]+/g, "[REDACTED]").slice(0, 8000);
+  } catch { /* The journal may be unreadable. */ }
   // The Ready screen re-evaluates readiness from the project on disk; ask the app the same question.
   try {
     const live = await page.evaluate(async (root) => {
