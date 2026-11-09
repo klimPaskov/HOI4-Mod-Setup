@@ -23,8 +23,12 @@ class ManifestSchemaSelectionTests(unittest.TestCase):
         self.assertEqual(schema['title'], 'HOI4 Mod Setup Remote Manifest v7')
         parameters = schema['$defs']['validation']['properties']['parameters']['properties']
         self.assertEqual(parameters['platform_targets']['properties']['macos'], {'const': 'hoi4-agent-tools'})
-        self.assertIn('macos', parameters['platform_pins']['properties'])
-        self.assertNotIn('macos', parameters['platform_pins']['required'])
+        agent_tools_pins, live_tools_pins = parameters['platform_pins']['oneOf']
+        self.assertIn('macos', agent_tools_pins['properties'])
+        self.assertNotIn('macos', agent_tools_pins['required'])
+        self.assertEqual(list(live_tools_pins['properties']), ['macos'])
+        live = schema['$defs']['liveToolsPlatformPin']['properties']
+        self.assertEqual(sorted(live), ['expected_writes', 'network_access'])
 
     def test_unknown_or_missing_version_is_rejected(self):
         for manifest in ({}, {'schema_version': '8.0.0'}, {'schema_version': '4.bad'}, {'schema_version': 4}):
