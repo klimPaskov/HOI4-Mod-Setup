@@ -474,16 +474,15 @@ fn write_private_copy(
     for directory in &directories {
         std::fs::create_dir_all(directory)?;
     }
+    #[cfg(unix)]
     for (relative, target) in symlinks {
-        #[cfg(unix)]
         std::os::unix::fs::symlink(target, safe_join(private_root, relative)?)?;
-        #[cfg(not(unix))]
-        {
-            let _ = target;
-            return Err(AppError::UnsupportedPlatform(
-                "declared package symlinks require Unix".into(),
-            ));
-        }
+    }
+    #[cfg(not(unix))]
+    if !symlinks.is_empty() {
+        return Err(AppError::UnsupportedPlatform(
+            "declared package symlinks require Unix".into(),
+        ));
     }
     let workers = std::thread::available_parallelism()
         .map_or(4, std::num::NonZeroUsize::get)
