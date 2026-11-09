@@ -146,3 +146,10 @@ path, the decoded PNG thumbnail, the source-bound lock and core readiness, delet
 one owned skill and repair it, then finish. Nothing starts a game or a launcher.
 The runner guard refuses a developer desktop; a marked throwaway container
 (`HOI4_E2E_DISPOSABLE_CONTAINER=1`) is also accepted for local reproduction.
+
+## Agent Tools profiles
+
+HOI4 Agent Tools lists only its core tools unless the client registration sets
+`HOI4_AGENT_TOOLS_PROFILES`. The `new` and Linux scenarios therefore assert that
+the Setup-written `.mcp.json` and `.codex/config.toml` keep the kit's
+`HOI4_AGENT_TOOLS_PROFILES=all` after Setup retargets the launch command.

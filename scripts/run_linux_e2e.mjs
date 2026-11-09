@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { withLinuxDebInstallation } from "./linux_installer_registry.mjs";
-import { actionTimings, createPhaseClock, fileHash, githubJson, inside, requireDisposableLinux, reviewedApplyLabel, sanitizeReport, stageTimings, startPlannerFixture, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
+import { actionTimings, assertAgentToolsProfiles,createPhaseClock, fileHash, githubJson, inside, requireDisposableLinux, reviewedApplyLabel, sanitizeReport, stageTimings, startPlannerFixture, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
 import { WebDriverSession } from "./linux_webdriver.mjs";
 
 // Fresh install on a disposable Linux machine: install the exact CI-built Debian package, drive the production
@@ -230,6 +230,7 @@ try {
     assert.equal(lock.primary_coding_environment, "claude_code");
     assert.ok(lock.additional_coding_environments.includes("codex"));
     for (const path of ["CLAUDE.md", "AGENTS.md", ".codex/config.toml", ".mcp.json"]) assert.ok(existsSync(join(project, path)), `missing ${path}`);
+    await assertAgentToolsProfiles(project);
     result.installed = { files: lock.files.length, source: lock.source, primary: lock.primary_coding_environment, additional: lock.additional_coding_environments, image: lock.image_generation.primary_provider };
     const descriptor = await readFile(join(project, "descriptor.mod"), "utf8");
     const launcher = await readFile(launcherPath, "utf8");

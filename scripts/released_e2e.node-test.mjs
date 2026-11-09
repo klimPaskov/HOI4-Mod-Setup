@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { actionTimings, cleanAppEnvironment, createPhaseClock, inside, requireDisposableLinux, inventoryDigest, requireHostedWindows, reviewedApplyLabel, reviewedDownloadUrl, reviewedMetadataPath, sanitizeReport, setupPythonPath, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
+import { actionTimings, assertAgentToolsProfiles, cleanAppEnvironment, createPhaseClock, inside, requireDisposableLinux, inventoryDigest, requireHostedWindows, reviewedApplyLabel, reviewedDownloadUrl, reviewedMetadataPath, sanitizeReport, setupPythonPath, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
 
 test("Latest acceptance metadata stays in the fixed repository and immutable manifest route", () => {
   const repository = "/repos/klimPaskov/Agentic-HOI4-Modding";
@@ -202,4 +202,26 @@ test("post-install action timings are read from the journal evidence", () => {
     { component: "mcp.hoi4_agent_tools", seconds: 74.6 }, { component: "imagegen.hoi4_imagegen", seconds: 3 },
   ]);
   assert.deepEqual(actionTimings({ stages: [] }), []);
+});
+
+test("assertAgentToolsProfiles requires the kit's profile variable in the Claude Code and Codex files", async () => {
+  const project = await mkdtemp(join(tmpdir(), "hoi4-profiles-"));
+  try {
+    await mkdir(join(project, ".codex"), { recursive: true });
+    const claude = (env) => JSON.stringify({ mcpServers: { hoi4_agent_tools: { command: "node", env } } });
+    const codex = (env) => `[mcp_servers.other]\nenv = { HOI4_AGENT_TOOLS_PROFILES = "all" }\n\n[mcp_servers.hoi4_agent_tools]\ncommand = "node"\n${env}\n`;
+    await writeFile(join(project, ".mcp.json"), claude({ HOI4_AGENT_TOOLS_PROFILES: "all" }));
+    await writeFile(join(project, ".codex/config.toml"), codex('env = { A = "1", HOI4_AGENT_TOOLS_PROFILES = "all" }'));
+    await assertAgentToolsProfiles(project);
+    await writeFile(join(project, ".mcp.json"), claude({}));
+    await assert.rejects(assertAgentToolsProfiles(project), /\.mcp\.json lost/);
+    await writeFile(join(project, ".mcp.json"), claude({ HOI4_AGENT_TOOLS_PROFILES: "all" }));
+    await writeFile(join(project, ".codex/config.toml"), codex('env = { A = "1" }'));
+    await assert.rejects(assertAgentToolsProfiles(project), /config\.toml lost/);
+    // The re-rendered form Setup writes: the variable in an env sub-table.
+    await writeFile(join(project, ".codex/config.toml"), '[mcp_servers.other.env]\nHOI4_AGENT_TOOLS_PROFILES = "all"\n\n[mcp_servers.hoi4_agent_tools]\ncommand = "node"\n\n[mcp_servers.hoi4_agent_tools.env]\nHOI4_AGENT_TOOLS_PROFILES = "all"\n');
+    await assertAgentToolsProfiles(project);
+  } finally {
+    await rm(project, { recursive: true, force: true });
+  }
 });
