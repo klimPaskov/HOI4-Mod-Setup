@@ -218,6 +218,9 @@ test("assertAgentToolsProfiles requires the kit's profile variable in the Claude
     await writeFile(join(project, ".mcp.json"), claude({ HOI4_AGENT_TOOLS_PROFILES: "all" }));
     await writeFile(join(project, ".codex/config.toml"), codex('env = { A = "1" }'));
     await assert.rejects(assertAgentToolsProfiles(project), /config\.toml lost/);
+    // The re-rendered form Setup writes: the variable in an env sub-table.
+    await writeFile(join(project, ".codex/config.toml"), '[mcp_servers.other.env]\nHOI4_AGENT_TOOLS_PROFILES = "all"\n\n[mcp_servers.hoi4_agent_tools]\ncommand = "node"\n\n[mcp_servers.hoi4_agent_tools.env]\nHOI4_AGENT_TOOLS_PROFILES = "all"\n');
+    await assertAgentToolsProfiles(project);
   } finally {
     await rm(project, { recursive: true, force: true });
   }
