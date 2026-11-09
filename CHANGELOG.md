@@ -4,6 +4,9 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Install HOI4 Agent Tools on Apple silicon Macs (klimPaskov/Agentic-HOI4-Modding#124). Setup reads manifest format 7, whose HOI4 Agent Tools health action carries a macOS target and pins. On macOS the registrations for every selected client start the private official Node.js that the package's bootstrap installs (`~/Library/Application Support/hoi4-mod-setup/npm/node/bin/node`) with the package entry, as on Linux. The runtime is accepted only with the Node.js Foundation Developer ID signature (Team ID `HX7739G8FX`). The health check, readiness and update all treat macOS as a native route. Setup releases that read only format 6 report that an app update is needed when the package moves to format 7.
+- Find and accept Python on macOS for the package scripts. The MCP bootstrap and the other Python steps required a python.org signature but had no macOS identity for it, so they never ran on a Mac. They now accept the python.org build (Developer ID, Team ID `BMM5U3QVKW`) and Apple's own CPython from the Command Line Tools or Xcode. The lookup names each framework's real `bin/python3.N`, because `bin/python3` there is a link the search refuses.
+- Fix Update and repair on macOS stopping with "the reviewed post-install component has no action evidence: mcp.hoi4_agent_tools" (#188). For an optional component the platform is not offered, the action lookup fell back to the component's first platform, so the update marked it pending and then required evidence that cannot exist. Such a component now starts as `unsupported_platform`.
 - Fix the image sign-in check showing "Signed in" for a signed-out user. `hoi4-imagegen login-status` always exits 0 without `--check`, so Setup now reads its text (`signed in;` versus `not signed in (...)`) as well as the exit code, and the Ready page opens the sign-in when needed.
 
 ## 0.9.4 - 2026-11-08

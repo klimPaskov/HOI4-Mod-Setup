@@ -530,7 +530,7 @@ pub fn adapt_image_generation_client_config_with_launch(
         live_selection
     };
     let image_bytes = match route {
-        Some(_) if matches!(platform, Platform::Windows | Platform::Linux) => {
+        Some(_) if crate::mcp_target::has_native_route(platform) => {
             let target = crate::mcp_target::manifest_target_for_platform(manifest, platform).ok();
             if platform == Platform::Windows && target.is_none() {
                 image_bytes

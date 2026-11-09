@@ -2994,7 +2994,7 @@ mod tests {
     #[test]
     fn newer_manifest_formats_ask_for_an_app_update() {
         let mut value = format_six_fixture();
-        value["schema_version"] = serde_json::json!("7.0.0");
+        value["schema_version"] = serde_json::json!("8.0.0");
         let error = parse_value(&value).unwrap_err().to_string();
         assert!(error.contains("needs a newer HOI4 Mod Setup"), "{error}");
     }

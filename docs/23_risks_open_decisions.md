@@ -37,7 +37,7 @@ README pinned wording differs from latest-at-bootstrap resolution. Choose and en
 
 ## Open decisions
 
-1. Is HOI4 Agent Tools required on macOS before a source-supported command exists?
+1. Should Intel Macs get a HOI4 Agent Tools route? The package bundles its engine for darwin-arm64 only, so Apple silicon is the only reviewed macOS route.
 2. Should wiki updates use subtree files or release bundles?
 3. Should the lock be committed by default?
 4. Should modified wiki pages default to merge or renamed incoming?

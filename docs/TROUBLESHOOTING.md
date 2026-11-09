@@ -213,13 +213,16 @@ Afterward, use **Refresh checks** on **Project ready**, or **Check integration**
 
 > Not available on this computer
 
-**Cause:** The verified HOI4 Agent Tools MCP route covers Windows and Linux x64.
-The source declares no verified macOS route yet, so the component is unavailable there.
-Everything else installs on macOS: instructions, skills, subagents, the offline wiki and hoi4-imagegen.
+**Cause:** HOI4 Agent Tools runs on Apple silicon Macs. It needs HOI4 Mod Setup 0.9.5 or newer and a setup package in manifest format 7.
+Intel Macs have no verified route, because the package bundles its engine for Apple silicon only.
+An older package or an older app shows the component as unavailable, and an older app asks to be updated when the package is newer.
+Everything else installs on every Mac: instructions, skills, subagents, the offline wiki and hoi4-imagegen.
 The [README](../README.md#desktop-app-recommended) lists what each system gets.
 
-**Fix:** Leave the unavailable MCP component unselected on macOS and continue with the supported components.
-Core setup remains usable; this MCP route cannot be enabled on macOS through a setting in the app.
+**Fix:** On an Apple silicon Mac, update the app, then use **Manage an existing project** and **Update** (or **Repair installation**) to add HOI4 Agent Tools.
+The setup needs Python 3.9 or newer, either from python.org or Apple's Command Line Tools (`xcode-select --install`).
+It does not need Node.js: the package's bootstrap installs a private, signature-checked copy of the official build.
+On an Intel Mac, leave the component unselected; core setup remains usable.
 
 ## Windows or macOS blocks the installer
 

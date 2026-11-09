@@ -27,7 +27,7 @@ impl NodeRuntime {
     ///
     /// Both paths must be absolute and free of symlinks. The executable is
     /// canonicalized and must pass the same publisher verification the
-    /// desktop applies on Linux (`OpenJS Foundation`). The prefix is not
+    /// desktop applies on Linux and macOS (`OpenJS Foundation`). The prefix is not
     /// created or read here.
     pub fn new(
         executable: impl AsRef<Path>,
@@ -88,6 +88,37 @@ impl NodeRuntime {
         })
     }
 
+    /// The runtime the desktop registers on macOS: the official Node.js
+    /// binary the kit bootstrap installs at `<prefix>/node/bin/node`, and that
+    /// same prefix.
+    ///
+    /// A plan is built before the bootstrap runs, so the binary may not exist
+    /// yet and is not read here: the registration only names this fixed path.
+    /// Setup never starts it without `crate::mcp::initialize_health`'s check of
+    /// the Node.js Foundation Developer ID signature.
+    pub fn macos_private() -> Result<Self, AppError> {
+        let npm_prefix = crate::paths::macos_npm_prefix()?;
+        if crate::security::path_has_link_component(&npm_prefix) {
+            return Err(AppError::PathSecurity(
+                "the npm prefix must not contain links or traversal".into(),
+            ));
+        }
+        Ok(Self {
+            executable: npm_prefix.join("node/bin/node"),
+            npm_prefix,
+        })
+    }
+
+    /// The runtime the desktop uses on `platform`, or `None` where the
+    /// registration starts npm's own wrapper (Windows).
+    pub fn desktop(platform: Platform) -> Result<Option<Self>, AppError> {
+        match platform {
+            Platform::Linux => Self::linux_system().map(Some),
+            Platform::Macos => Self::macos_private().map(Some),
+            _ => Ok(None),
+        }
+    }
+
     pub fn executable(&self) -> &Path {
         &self.executable
     }
@@ -98,15 +129,15 @@ impl NodeRuntime {
 }
 
 /// The command and arguments a coding client uses to start the installed
-/// MCP package. Only the Linux route uses a Node runtime: `node` is the
+/// MCP package. The Linux and macOS routes use a Node runtime: `node` is the
 /// verified runtime and the argument is the package entry under its npm
-/// prefix. Windows and macOS launch the package's own target.
+/// prefix. Windows launches the package's own target.
 pub fn mcp_client_launch(
     target: &crate::mcp::VerifiedMcpTarget,
     platform: Platform,
     node: Option<&NodeRuntime>,
 ) -> Result<(String, Vec<String>), AppError> {
-    if platform == Platform::Linux {
+    if crate::mcp::launches_with_node(platform) {
         let node = node.ok_or_else(|| {
             AppError::Process("the trusted native Node runtime is unavailable".into())
         })?;
@@ -171,12 +202,14 @@ mod tests {
             .join("hoi4-agent-tools")
             .join("dist/index.js");
         assert_eq!(arguments, vec![entry.display().to_string()]);
+        // macOS launches the same way with the runtime it is given.
+        let (command, arguments) =
+            mcp_client_launch(&target(), Platform::Macos, Some(&runtime)).unwrap();
+        assert_eq!(command, runtime.executable().display().to_string());
+        assert_eq!(arguments, vec![entry.display().to_string()]);
         // There is no discovery to fall back on.
         assert!(mcp_client_launch(&target(), Platform::Linux, None).is_err());
-        // Other platforms never consult a Node runtime.
-        let (command, arguments) = mcp_client_launch(&target(), Platform::Macos, None).unwrap();
-        assert_eq!(command, "hoi4-agent-tools");
-        assert!(arguments.is_empty());
+        assert!(mcp_client_launch(&target(), Platform::Macos, None).is_err());
     }
 
     #[test]

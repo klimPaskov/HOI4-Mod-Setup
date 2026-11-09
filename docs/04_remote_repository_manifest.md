@@ -361,6 +361,8 @@ Reject absolute project destinations, parent traversal, reserved Windows names, 
 
 Manifest major 5 adds `linux` to `windows`, `macos`, and `all`. `all` covers all supported platforms; command routes still require explicit platform evidence. HOI4 Agent Tools declares platform-specific launcher names and immutable package-tree pins for Windows and Linux. macOS keeps its unsupported runtime state; 3D remains Windows-only. Older manifest majors 2, 3, and 4 remain readable. Linux core routes must use the declared native launcher and current-user XDG npm prefix, never an inferred `.cmd` translation.
 
+Manifest major 7 adds an optional `macos` entry to the HOI4 Agent Tools health action's `platform_targets` (`hoi4-agent-tools`) and `platform_pins`. Format 6 forbids additional keys there, so a format 6 reader could not accept them. On macOS the source bootstrap installs a private official Node.js at `~/Library/Application Support/hoi4-mod-setup/npm/node/bin/node`. The app accepts it only with the Node.js Foundation Developer ID signature (Team ID `HX7739G8FX`). Client registrations start that runtime with the package entry under the same prefix, as on Linux. Older majors 2 to 6 remain readable.
+
 ## Tools and environment
 
 A tool declaration includes required state, version policy, version when pinned, user-visible commands, and health checks. A secret environment variable must use OS credential-vault storage and cannot request project-file storage.

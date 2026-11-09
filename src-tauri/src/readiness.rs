@@ -1613,7 +1613,7 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
     let codex_valid = codex_text
         .as_deref()
         .is_some_and(|text| toml::from_str::<toml::Value>(text).is_ok());
-    let runtime_supported = matches!(Platform::current(), Platform::Windows | Platform::Linux);
+    let runtime_supported = crate::mcp::has_native_route(Platform::current());
     let mcp_unsupported = lock.as_ref().is_some_and(|lock| {
         lock.components.iter().any(|component| {
             component.id == "mcp.hoi4_agent_tools" && component.state == "unsupported_platform"
@@ -1648,7 +1648,7 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
                                 && args.is_empty()
                         })
                 }
-                Platform::Linux => {
+                Platform::Linux | Platform::Macos => {
                     Path::new(&command).is_absolute()
                         && args.len() == 1
                         && Path::new(&args[0]).is_absolute()
@@ -1670,7 +1670,7 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
     } else if !mcp_registration_ready {
         "block".into()
     } else if runtime_supported && mcp_planned_unavailable {
-        let locator = if Platform::current() == Platform::Linux {
+        let locator = if crate::mcp::launches_with_node(Platform::current()) {
             "hoi4-agent-tools"
         } else {
             "hoi4-agent-tools.cmd"
@@ -2473,22 +2473,27 @@ my notes
             component("runtime.cursor.mcp", "installed"),
             component("mcp.hoi4_agent_tools", "installed"),
         ];
-        for platform in [Platform::Windows, Platform::Linux] {
+        for platform in [Platform::Windows, Platform::Linux, Platform::Macos] {
             assert_eq!(
                 native_mcp_check_for_lock(&cursor, &[], "cursor", platform),
                 McpCheck::Route
             );
         }
-        assert_eq!(
-            native_mcp_check_for_lock(&cursor, &[], "cursor", Platform::Macos),
-            McpCheck::NotRequired
-        );
         let unsupported = [
             component("runtime.cursor.mcp", "unsupported_platform"),
             component("mcp.hoi4_agent_tools", "installed"),
         ];
         assert_eq!(
             native_mcp_check_for_lock(&unsupported, &[], "cursor", Platform::Windows),
+            McpCheck::NotRequired
+        );
+        // A macOS lock written from a manifest without a macOS route.
+        let older_macos = [
+            component("runtime.cursor.mcp", "unsupported_platform"),
+            component("mcp.hoi4_agent_tools", "unsupported_platform"),
+        ];
+        assert_eq!(
+            native_mcp_check_for_lock(&older_macos, &[], "cursor", Platform::Macos),
             McpCheck::NotRequired
         );
         let legacy = [

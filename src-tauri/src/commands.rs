@@ -3102,7 +3102,7 @@ fn python_requirement(check: Result<PathBuf, McpPython>) -> SetupRequirement {
 fn setup_requirements(plan: &InstallationPlan) -> Vec<SetupRequirement> {
     let mut requirements = Vec::new();
     let mcp_runs = plan.maintenance_mode.as_deref() != Some("remove")
-        && matches!(Platform::current(), Platform::Windows | Platform::Linux)
+        && crate::mcp::has_native_route(Platform::current())
         && plan
             .external_actions
             .iter()
@@ -3135,11 +3135,12 @@ fn run_reviewed_mcp_bootstrap(
     root: &Path,
     plan: &InstallationPlan,
 ) -> Result<PostInstallActionOutcome, AppError> {
-    if !matches!(Platform::current(), Platform::Windows | Platform::Linux) {
+    if !crate::mcp::has_native_route(Platform::current()) {
         return Ok(PostInstallActionOutcome {
             component_id: crate::mcp::COMPONENT_ID.into(),
             state: "unsupported_platform".into(),
-            evidence: "the verified source declares no non-Windows HOI4 Agent Tools route".into(),
+            evidence: "the verified source declares no HOI4 Agent Tools route for this platform"
+                .into(),
         });
     }
     let actions = plan
@@ -3736,11 +3737,10 @@ fn mcp_client_launch(
     target: &crate::mcp::VerifiedMcpTarget,
     platform: Platform,
 ) -> Result<(String, Vec<String>), AppError> {
-    // The desktop's Linux route is the system Node and the per-user npm
-    // prefix; a server supplies its own `NodeRuntime` through the service.
-    let node = (platform == Platform::Linux)
-        .then(NodeRuntime::linux_system)
-        .transpose()?;
+    // The desktop's Linux route is the system Node and its macOS route the
+    // bootstrap's private official Node, each with the per-user npm prefix; a
+    // server supplies its own `NodeRuntime` through the service.
+    let node = NodeRuntime::desktop(platform)?;
     launch_with_node(target, platform, node.as_ref())
 }
 
@@ -3753,7 +3753,7 @@ async fn run_mcp_health_check(project_root: String) -> Result<WorkflowHealthResu
 }
 
 fn run_mcp_health_check_blocking(project_root: String) -> Result<WorkflowHealthResult, String> {
-    if !matches!(Platform::current(), Platform::Windows | Platform::Linux) {
+    if !crate::mcp::has_native_route(Platform::current()) {
         return Ok(WorkflowHealthResult {
             status: "unsupported_platform".into(),
             exit_code: None,
@@ -3817,7 +3817,7 @@ fn refresh_installed_mcp_readiness(
     detected: &mut ReadinessInput,
 ) -> Result<(), AppError> {
     if !matches!(detected.mcp_status.as_str(), "pass" | "health_not_run")
-        || !matches!(Platform::current(), Platform::Windows | Platform::Linux)
+        || !crate::mcp::has_native_route(Platform::current())
         || !detected
             .selected_components
             .iter()
@@ -4699,6 +4699,32 @@ fn read_project_lock(root: &Path) -> Result<InstallationLock, AppError> {
     crate::migrations::migrate_lock(value)
 }
 
+/// The workflow state an update or repair starts from for an optional
+/// component the manifest declares. A component this platform is not offered
+/// has no reviewed action here, so it is `unsupported_platform` rather than a
+/// pending action whose evidence the post-install stage would then require.
+fn maintenance_workflow_state(
+    manifest: &RemoteManifest,
+    component: &ComponentDefinition,
+    platform: Platform,
+) -> &'static str {
+    if !component
+        .platforms
+        .iter()
+        .any(|declared| declared.supports(platform))
+    {
+        return "unsupported_platform";
+    }
+    let has_action = manifest_external_actions(manifest, std::slice::from_ref(&component.id))
+        .iter()
+        .any(|action| action.component_id == component.id);
+    if has_action {
+        "selected_pending"
+    } else {
+        "ready"
+    }
+}
+
 fn lock_mcp_selected(lock: &InstallationLock) -> bool {
     lock.components.iter().any(|component| {
         component.id == "mcp.hoi4_agent_tools"
@@ -4706,14 +4732,13 @@ fn lock_mcp_selected(lock: &InstallationLock) -> bool {
                 component.state.as_str(),
                 "unsupported_platform" | "not_selected" | "removed"
             )
-            && matches!(Platform::current(), Platform::Windows | Platform::Linux)
+            && crate::mcp::has_native_route(Platform::current())
     })
 }
 
 fn component_ids_include_mcp(component_ids: &[String]) -> bool {
     component_ids.iter().any(|component_id| {
-        component_id == "mcp.hoi4_agent_tools"
-            && matches!(Platform::current(), Platform::Windows | Platform::Linux)
+        component_id == "mcp.hoi4_agent_tools" && crate::mcp::has_native_route(Platform::current())
     })
 }
 
@@ -6839,18 +6864,9 @@ fn build_maintenance_plan_blocking(
             {
                 continue;
             }
-            let has_action =
-                manifest_external_actions(manifest, std::slice::from_ref(component_id))
-                    .iter()
-                    .any(|action| action.component_id == *component_id);
             optional_workflows.insert(
                 component_id.clone(),
-                if has_action {
-                    "selected_pending"
-                } else {
-                    "ready"
-                }
-                .into(),
+                maintenance_workflow_state(manifest, component, Platform::current()).into(),
             );
         }
     }
@@ -7841,7 +7857,7 @@ mod tests {
 
     #[test]
     fn setup_requirements_cover_only_plans_that_run_the_mcp_bootstrap() {
-        if !matches!(Platform::current(), Platform::Windows | Platform::Linux) {
+        if !crate::mcp::has_native_route(Platform::current()) {
             return;
         }
         // The bootstrap runs for a selected, pending MCP route.
@@ -8736,8 +8752,8 @@ mod tests {
         assert!(adapted["mcpServers"].get("hoi4_image_custom").is_some());
         assert_eq!(
             adapted["mcpServers"].get("hoi4_agent_tools").is_some(),
-            Platform::current() != Platform::Linux,
-            "this fixture declares no native Linux HOI4 Agent Tools route"
+            Platform::current() == Platform::Windows,
+            "this fixture declares no native Linux or macOS HOI4 Agent Tools route"
         );
         assert_eq!(adapted["mcpServers"]["hoi4_image_openai_api"]["cwd"], ".");
 
@@ -9896,6 +9912,54 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         .unwrap();
 
         assert_eq!(adapted, source);
+    }
+
+    #[test]
+    fn maintenance_skips_optional_components_this_platform_is_not_offered() {
+        // klimPaskov/HOI4-Mod-Setup#188: an update on macOS required action
+        // evidence for the Windows/Linux-only HOI4 Agent Tools component.
+        let mut manifest = crate::source::parse_manifest(
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json"),
+            None,
+        )
+        .unwrap();
+        let component = |manifest: &RemoteManifest, id: &str| {
+            manifest
+                .components
+                .iter()
+                .find(|component| component.id == id)
+                .unwrap()
+                .clone()
+        };
+        let mcp = component(&manifest, crate::mcp::COMPONENT_ID);
+        assert_eq!(
+            maintenance_workflow_state(&manifest, &mcp, Platform::Macos),
+            "unsupported_platform"
+        );
+        for platform in [Platform::Windows, Platform::Linux] {
+            assert_eq!(
+                maintenance_workflow_state(&manifest, &mcp, platform),
+                "selected_pending"
+            );
+        }
+        let three_d = component(&manifest, "workflow.3d");
+        for platform in [Platform::Macos, Platform::Linux] {
+            assert_eq!(
+                maintenance_workflow_state(&manifest, &three_d, platform),
+                "unsupported_platform"
+            );
+        }
+        // Once the manifest declares macOS, the same update runs the action.
+        for entry in manifest.components.iter_mut().filter(|entry| {
+            entry.id == crate::mcp::COMPONENT_ID || entry.id == "mcp.hoi4_agent_tools.bootstrap"
+        }) {
+            entry.platforms.push(ManifestPlatform::Macos);
+        }
+        let mcp = component(&manifest, crate::mcp::COMPONENT_ID);
+        assert_eq!(
+            maintenance_workflow_state(&manifest, &mcp, Platform::Macos),
+            "selected_pending"
+        );
     }
 
     #[test]
