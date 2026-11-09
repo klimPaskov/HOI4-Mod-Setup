@@ -334,3 +334,15 @@ export function timingSummary(report) {
   }
   return `${rows.join("\n")}\n`;
 }
+
+/**
+ * HOI4 Agent Tools 4.13.0 lists only its core tools unless the client registration sets
+ * HOI4_AGENT_TOOLS_PROFILES, so the Claude Code and Codex files Setup writes must carry the kit's value.
+ */
+export async function assertAgentToolsProfiles(project) {
+  const claude = JSON.parse(await readFile(join(project, ".mcp.json"), "utf8")).mcpServers.hoi4_agent_tools;
+  if (claude.env?.HOI4_AGENT_TOOLS_PROFILES !== "all") throw new Error(".mcp.json lost HOI4_AGENT_TOOLS_PROFILES=all");
+  const codex = await readFile(join(project, ".codex/config.toml"), "utf8");
+  const section = codex.split(/^\[/m).find((block) => block.startsWith("mcp_servers.hoi4_agent_tools]")) ?? "";
+  if (!/HOI4_AGENT_TOOLS_PROFILES\s*=\s*"all"/.test(section)) throw new Error(".codex/config.toml lost HOI4_AGENT_TOOLS_PROFILES=all");
+}
