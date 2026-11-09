@@ -3299,10 +3299,11 @@ fn run_reviewed_live_tools_bootstrap(
     root: &Path,
     plan: &InstallationPlan,
 ) -> Result<PostInstallActionOutcome, AppError> {
-    if Platform::current() != Platform::Windows {
+    let platform = Platform::current();
+    if !hoi4_setup_core::live_testing::live_tools_supported(platform) {
         return Ok(live_tools_outcome(
             "unsupported_platform",
-            "the verified source declares no non-Windows HOI4 Live Tools route",
+            "HOI4 Live Tools installs on Windows and macOS only",
         ));
     }
     let actions = plan
@@ -3319,7 +3320,7 @@ fn run_reviewed_live_tools_bootstrap(
     let action = actions[0];
     let expected_arguments = [LIVE_TOOLS_SCRIPT, "--quiet", "--register", "none"];
     if action.command_source != "repository_script"
-        || action.platform != Platform::Windows
+        || action.platform != platform
         || action.arguments
             != expected_arguments
                 .into_iter()
@@ -3369,22 +3370,38 @@ fn run_reviewed_live_tools_bootstrap(
             "the reviewed HOI4 Live Tools bootstrap changed before execution".into(),
         ));
     }
-    let python = match crate::process::find_path_executable(&["python.exe", "python"]) {
-        Ok(python) => python,
-        Err(_) => {
+    let python = if platform == Platform::Windows {
+        let python = match crate::process::find_path_executable(&["python.exe", "python"]) {
+            Ok(python) => python,
+            Err(_) => {
+                return Ok(live_tools_outcome(
+                    "incomplete",
+                    "Python 3.9 or newer is unavailable for the HOI4 Live Tools installer",
+                ));
+            }
+        };
+        if crate::process::validate_executable_publisher(&python, "Python Software Foundation")
+            .is_err()
+        {
             return Ok(live_tools_outcome(
                 "incomplete",
-                "Python 3.9 or newer is unavailable for the HOI4 Live Tools installer",
+                "Python publisher validation did not pass for the HOI4 Live Tools installer",
             ));
         }
+        python
+    } else {
+        // macOS: the verified lookup the Agent Tools bootstrap uses
+        // (python.org or Apple's command-line tools Python, 3.9 or newer).
+        match mcp_bootstrap_python() {
+            Ok(python) => python,
+            Err(_) => {
+                return Ok(live_tools_outcome(
+                    "incomplete",
+                    "a verified Python 3.9 or newer is unavailable for the HOI4 Live Tools installer",
+                ));
+            }
+        }
     };
-    if crate::process::validate_executable_publisher(&python, "Python Software Foundation").is_err()
-    {
-        return Ok(live_tools_outcome(
-            "incomplete",
-            "Python publisher validation did not pass for the HOI4 Live Tools installer",
-        ));
-    }
     let private_script = create_private_verified_script(&script_bytes)?;
     let spec = crate::process::ProcessSpec {
         executable: python.clone(),
@@ -3397,7 +3414,7 @@ fn run_reviewed_live_tools_bootstrap(
             "none".into(),
         ],
         cwd: Some(root.to_path_buf()),
-        platform: Platform::Windows,
+        platform,
         environment_names: vec![],
         timeout_seconds: 30 * 60,
         max_output_bytes: 2 * 1024 * 1024,

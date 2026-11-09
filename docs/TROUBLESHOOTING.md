@@ -252,8 +252,8 @@ updated dependency and file list before preparing changes. No stale
 
 > Not available on this computer
 
-**Cause:** HOI4 Live Tools is an experimental, slower workflow. The current
-public package verifies Windows only; its macOS scaffold is incomplete.
+**Cause:** HOI4 Live Tools is an experimental, slower workflow. It installs on
+Windows and macOS only, so Linux shows it as unavailable.
 
 **Fix:** Leave the route disabled on an unsupported computer, or choose the
 Clausewitz MCP route after preparing its separate Linux game/server
