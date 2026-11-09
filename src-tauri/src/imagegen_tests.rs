@@ -181,6 +181,8 @@ struct FakeCli {
     /// (arguments, scoped variable names) of every launch.
     launches: RefCell<Vec<(Vec<String>, Vec<String>)>>,
     doctor_echo: RefCell<String>,
+    /// Replaces the `login-status` answer: (exit code, timed out, stdout).
+    status_override: RefCell<Option<(Option<i32>, bool, String)>>,
 }
 
 impl FakeCli {
@@ -190,6 +192,7 @@ impl FakeCli {
             signed_in: Cell::new(false),
             launches: RefCell::new(Vec::new()),
             doctor_echo: RefCell::new(String::new()),
+            status_override: RefCell::new(None),
         }
     }
 
@@ -225,6 +228,18 @@ impl CliRunner for FakeCli {
                 .map(|environment| environment.variable_names())
                 .unwrap_or_default()
         );
+        if spec.args.first().map(String::as_str) == Some("login-status") {
+            if let Some((status_code, timed_out, stdout)) = self.status_override.borrow().clone() {
+                return Ok(ProcessResult {
+                    status_code,
+                    stdout,
+                    stderr: String::new(),
+                    timed_out,
+                    stdout_truncated: false,
+                    stderr_truncated: false,
+                });
+            }
+        }
         let (code, stdout) = match spec.args.first().map(String::as_str) {
             Some("--version") => (0, self.version_output.borrow().clone()),
             Some("login-risk-note") => (0, "Risk note: this uses an unofficial route.".to_owned()),
@@ -237,7 +252,15 @@ impl CliRunner for FakeCli {
                 self.signed_in.set(true);
                 (0, "Signed in. Risk note acknowledged.".to_owned())
             }
-            Some("login-status") => (if self.signed_in.get() { 0 } else { 1 }, String::new()),
+            // Like the real binary without `--check`: always exit 0, say which.
+            Some("login-status") => (
+                0,
+                if self.signed_in.get() {
+                    "signed in; account acc_1; plan plus; token expires at 2030-01-01".to_owned()
+                } else {
+                    "not signed in (run `hoi4-imagegen login`; tokens would go to /x)".to_owned()
+                },
+            ),
             Some("doctor") => (0, self.doctor_echo.borrow().clone()),
             other => panic!("unexpected hoi4-imagegen arguments: {other:?}"),
         };
@@ -826,6 +849,38 @@ fn installed(root: &std::path::Path) -> InstalledImagegen {
         }),
     )
     .unwrap()
+}
+
+#[test]
+fn sign_in_status_reads_the_text_not_just_the_exit_code() {
+    let dir = project();
+    let root = root(&dir);
+    let imagegen = installed(&root);
+    let cli = FakeCli::reporting("0.2.0");
+    let check = |answer: Option<(Option<i32>, bool, &str)>| {
+        *cli.status_override.borrow_mut() =
+            answer.map(|(code, timed_out, text)| (code, timed_out, text.to_owned()));
+        imagegen.sign_in_status(&cli).unwrap().signed_in
+    };
+    // Signed out: exit 0 with the "not signed in" text.
+    assert!(!check(None));
+    assert!(!check(Some((
+        Some(0),
+        false,
+        "not signed in (run `hoi4-imagegen login`)\n"
+    ))));
+    // Signed in: exit 0 with the "signed in;" text.
+    assert!(check(Some((
+        Some(0),
+        false,
+        "signed in; account a; plan plus; token expires at t\n"
+    ))));
+    cli.signed_in.set(true);
+    assert!(check(None));
+    // A timeout or a nonzero exit is never signed in.
+    assert!(!check(Some((Some(0), true, "signed in; account a"))));
+    assert!(!check(Some((None, true, "signed in; account a"))));
+    assert!(!check(Some((Some(1), false, "signed in; account a"))));
 }
 
 #[test]
