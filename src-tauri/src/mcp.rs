@@ -1483,9 +1483,10 @@ mod tests {
     fn the_concurrent_private_copy_matches_a_large_nested_tree_byte_for_byte() {
         let installed = tempfile::tempdir().unwrap();
         for index in 0..400 {
-            let directory = installed
-                .path()
-                .join(format!("d{}/e{}/f{}", index % 7, index % 13, index % 3));
+            let directory =
+                installed
+                    .path()
+                    .join(format!("d{}/e{}/f{}", index % 7, index % 13, index % 3));
             std::fs::create_dir_all(&directory).unwrap();
             std::fs::write(
                 directory.join(format!("file{index}.js")),
@@ -1494,12 +1495,16 @@ mod tests {
             .unwrap();
         }
         std::fs::write(installed.path().join("package.json"), b"{}").unwrap();
-        let expected = package_tree_identity(&read_installed_package_tree(installed.path()).unwrap());
-        let tree =
-            materialize_verified_package_tree(installed.path(), PrivateTreeLayout::Package).unwrap();
+        let expected =
+            package_tree_identity(&read_installed_package_tree(installed.path()).unwrap());
+        let tree = materialize_verified_package_tree(installed.path(), PrivateTreeLayout::Package)
+            .unwrap();
         assert_eq!((tree.sha256.clone(), tree.file_count), expected);
         assert_eq!(tree.file_count, 401);
-        assert!(tree.phase_seconds.iter().all(|seconds| seconds.is_finite() && *seconds >= 0.0));
+        assert!(tree
+            .phase_seconds
+            .iter()
+            .all(|seconds| seconds.is_finite() && *seconds >= 0.0));
         verify_materialized_package_tree(&tree).unwrap();
         let sample = tree.root.join("d3/e3/f0/file3.js");
         assert_eq!(
