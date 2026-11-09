@@ -1820,7 +1820,14 @@ fn run_transaction_inner(
                 }
                 project_directory.verify_bound_to_path()?;
                 let action_started = std::time::Instant::now();
-                let outcome = runner(&project_root, plan, component_id)?;
+                // A bare operating-system error would name no component in the journal.
+                let outcome =
+                    runner(&project_root, plan, component_id).map_err(|error| match error {
+                        AppError::Io(source) => AppError::Transaction(format!(
+                            "post-install action {component_id} could not use a file: {source}"
+                        )),
+                        other => other,
+                    })?;
                 let action_seconds = action_started.elapsed().as_secs_f64();
                 project_directory.verify_bound_to_path()?;
                 if outcome.component_id != component_id {
