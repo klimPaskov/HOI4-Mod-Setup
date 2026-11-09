@@ -184,12 +184,23 @@ impl InstalledImagegen {
         }
     }
 
-    /// `hoi4-imagegen login-status`. Exit code zero means signed in.
+    /// `hoi4-imagegen login-status`. Without `--check` the command exits zero
+    /// whether or not the user is signed in, so the answer is its text: signed
+    /// in only when it exits zero, did not time out, and its first line starts
+    /// with `signed in` (`not signed in (...)` does not). `--check` would
+    /// signal through the exit code but may refresh the token over the network.
     pub fn sign_in_status(&self, runner: &dyn CliRunner) -> Result<SignInStatus, AppError> {
         let spec = self.spec(&["login-status"], STATUS_TIMEOUT_SECONDS, Vec::new())?;
         let result = runner.run(&spec, None)?;
         Ok(SignInStatus {
-            signed_in: !result.timed_out && result.status_code == Some(0),
+            signed_in: !result.timed_out
+                && result.status_code == Some(0)
+                && result
+                    .stdout
+                    .trim()
+                    .lines()
+                    .next()
+                    .is_some_and(|line| line.starts_with("signed in")),
             detail: Self::text(&result),
         })
     }

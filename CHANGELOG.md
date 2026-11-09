@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Fix the image sign-in check showing "Signed in" for a signed-out user. `hoi4-imagegen login-status` always exits 0 without `--check`, so Setup now reads its text (`signed in;` versus `not signed in (...)`) as well as the exit code, and the Ready page opens the sign-in when needed.
+
 ## 0.9.4 - 2026-11-08
 
 - Fix the experimental Gemini account sign-in (#94). Setup pre-selected "Sign in with Google" in the CLI's settings, so the CLI tried to sign in before its screen could ask for browser consent and stopped with "Authentication consent could not be obtained" (and kept failing on retry). The sign-in terminal now leaves the method unselected so the CLI asks, as an ordinary first run does; analysis still runs with the method fixed to Google sign-in.
