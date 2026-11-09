@@ -679,7 +679,7 @@ try {
   // transaction error such as "Access is denied" can be located from the artifact alone.
   try {
     const latest = (await journals()).at(-1);
-    if (latest) result.failureJournal = JSON.stringify(latest, (key, value) => (Array.isArray(value) && value.length > 40 ? [...value.slice(0, 40), `(${value.length - 40} more)`] : value)).replace(/(?:sk-|gh[pousr]_)[A-Za-z0-9_-]+/g, "[REDACTED]").slice(0, 8000);
+    if (latest) result.failureJournal = JSON.stringify({ state: latest.state, error: latest.error, last_checkpoint: latest.last_checkpoint, recovery: latest.recovery, post_install_stage: latest.stages?.[9], journal: latest }, (key, value) => (Array.isArray(value) && value.length > 40 ? [...value.slice(0, 40), `(${value.length - 40} more)`] : value)).replace(/(?:sk-|gh[pousr]_)[A-Za-z0-9_-]+/g, "[REDACTED]").slice(0, 8000);
   } catch { /* The journal may be unreadable. */ }
   // The Ready screen re-evaluates readiness from the project on disk; ask the app the same question.
   try {

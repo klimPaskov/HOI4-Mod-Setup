@@ -156,4 +156,4 @@ the Setup-written `.mcp.json` and `.codex/config.toml` keep the kit's
 
 ## Failure evidence
 
-When a Windows scenario fails, `result.json` also carries `failureJournal`: the newest transaction's journal (stage statuses, recovery fields and error text; long lists cut at 40 entries and the whole string at 8,000 characters), next to `failureReadiness` and `failureLiveReadiness`. Use it to locate an intermittent transaction error, for example `Access is denied (os error 5)`, without rerunning.
+When a Windows scenario fails, `result.json` also carries `failureJournal`: the newest transaction's journal (state, error, last checkpoint, recovery fields and the post-install stage first, then the whole journal; long lists cut at 40 entries and the whole string at 8,000 characters), next to `failureReadiness` and `failureLiveReadiness`. Use it to locate an intermittent transaction error, for example `Access is denied (os error 5)`, without rerunning.
