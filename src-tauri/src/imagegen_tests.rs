@@ -554,6 +554,38 @@ fn install_update_and_uninstall_leave_an_exact_journalled_tree() {
     assert!(!root.join(route::INSTALL_ROOT).exists());
 }
 
+/// The Ready screen starts the hoi4-imagegen sign-in, which keeps the program running; an update
+/// then cannot delete the previous version on Windows and must keep it instead of failing.
+#[cfg(windows)]
+#[test]
+fn a_previous_version_that_is_in_use_is_kept_not_a_failure() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let dir = project();
+    let root = root(&dir);
+    let v1 = release("0.2.0");
+    let receipt = install_release(
+        &root,
+        "0.2.0",
+        &v1.target,
+        None,
+        &FakeDownloader::new(&v1.archive),
+    )
+    .unwrap();
+    let (_, cli_name) = binary_names(host_triple());
+    // Share read only: a delete of the open file is refused, as for a running program.
+    let _running = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(version_path(&root, "0.2.0").join(&cli_name))
+        .unwrap();
+    assert_eq!(
+        remove_release(&root, "0.2.0", &receipt.tree_sha256).unwrap(),
+        RemoveResult::ModifiedKept
+    );
+    assert!(version_path(&root, "0.2.0").join(&cli_name).is_file());
+}
+
 #[test]
 fn a_folder_with_other_content_is_never_overwritten() {
     let dir = project();
