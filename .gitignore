@@ -66,3 +66,6 @@ __pycache__/
 dist-web/
 web/public/core/
 web/public/icon.png
+
+# Local Claude Code state (worktrees, launch and local settings)
+.claude/

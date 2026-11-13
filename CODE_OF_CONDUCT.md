@@ -13,4 +13,4 @@ Contributors are expected to:
 
 Project spaces include issues, pull requests, discussions, reviews, release channels, and community spaces operated for this project.
 
-Report conduct problems privately to the maintainer contact published by the repository. Maintainers may edit, hide, lock, or remove disruptive content and may restrict participation when necessary to protect the project and its contributors.
+Report conduct problems privately to the maintainer, [klimPaskov on GitHub](https://github.com/klimPaskov). Maintainers may edit, hide, lock, or remove disruptive content and may restrict participation when necessary to protect the project and its contributors.

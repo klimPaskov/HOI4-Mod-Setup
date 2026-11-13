@@ -9,14 +9,14 @@
 /SECURITY.md @klimPaskov
 /RELEASING.md @klimPaskov
 
-# High-risk implementation surfaces once source is scaffolded
+# High-risk implementation surfaces
 /src-tauri/ @klimPaskov
 /crates/ @klimPaskov
-/schemas/ @klimPaskov
+/docs/schemas/ @klimPaskov
 /scripts/ @klimPaskov
 
 # ChatGPT authentication and Codex integration
 /docs/30_codex_chatgpt_authentication.md @klimPaskov
-/schemas/codex-analysis.schema.json @klimPaskov
+/docs/schemas/codex-analysis.schema.json @klimPaskov
 /.agents/skills/hoi4-mod-setup-codex-integration/ @klimPaskov
 /.codex/agents/hoi4setup_codex_integration_auditor.toml @klimPaskov

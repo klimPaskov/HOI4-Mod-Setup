@@ -28,16 +28,18 @@ body:
         - Existing project scanner
         - Source manifest and downloads
         - Components and MCP
-        - 3D optional workflow
-        - LoRA and ComfyUI future boundary
+        - Optional workflows (3D, Super Events, live testing)
+        - Image generation and ComfyUI portraits
         - Git setup
         - Conflicts and merge
         - Transaction and recovery
         - Update and Repair
-        - Readiness and Open in Codex
+        - Readiness and opening the project in a coding client
         - Accessibility and UI
         - Windows packaging
         - macOS packaging
+        - Linux packaging
+        - Web edition
         - Open-source development workflow
         - Other
     validations:
