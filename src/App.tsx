@@ -4482,13 +4482,20 @@ function readableRecoveryAction(value: string) {
 }
 
 /** One plain sentence for what to do about a recorded setup failure. */
-export function recoveryNextStep(message: string | undefined, rollbackAllowed: boolean): string {
+export function recoveryNextStep(message: string | undefined, rollbackAllowed: boolean, platform: "windows" | "macos" | "linux" = currentUiPlatform()): string {
   const undo = rollbackAllowed ? "Choose Undo changes to return your mod to how it was before this setup began, then" : "Choose an option below, then";
   if (message && /access is denied|os error (?:5|32|33)\b|being used by another process|\bEBUSY\b|\bEPERM\b/i.test(message)) {
     return "Another program is using a file in this project. That is usually a coding client (Claude Code, Codex, Cursor and others) running the project's MCP servers, or the hoi4-imagegen sign-in window. Close it, then choose Continue setup or try again. Undo changes alone does not help while that program stays open.";
   }
-  if (message && /python|node\.js|\bnpm\b|winget/i.test(message)) {
-    return `${undo} install Python from python.org (tick “Add python.exe to PATH”) and set up again. HOI4 Agent Tools needs it.`;
+  if (message && /python/i.test(message)) {
+    return platform === "linux"
+      ? `${undo} install python3 with your package manager and set up again. HOI4 Agent Tools needs it.`
+      : `${undo} install Python from python.org${platform === "windows" ? " (tick “Add python.exe to PATH”)" : ""} and set up again. HOI4 Agent Tools needs it.`;
+  }
+  if (message && /node\.js|\bnode\b|\bnpm\b|winget/i.test(message)) {
+    return platform === "linux"
+      ? `${undo} install Node.js 22 or newer from your package manager so it is at /usr/bin/node (on Ubuntu 22.04 use the NodeSource Node 22 repository), and set up again. HOI4 Agent Tools needs it.`
+      : `${undo} install the Node.js LTS from nodejs.org${platform === "windows" ? " (or run winget install OpenJS.NodeJS.LTS)" : ""} and set up again. HOI4 Agent Tools needs it.`;
   }
   return `${undo} try again. If it stops at the same point, choose Copy diagnostics and include it in a report.`;
 }

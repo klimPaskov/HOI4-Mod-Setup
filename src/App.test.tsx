@@ -3347,7 +3347,10 @@ describe("recovery guidance", () => {
       expect(recoveryNextStep(message, true)).toMatch(/Close it/);
       expect(recoveryNextStep(message, true)).toMatch(/Undo changes alone does not help/);
     }
-    expect(recoveryNextStep("npm was not found", true)).toMatch(/python[.]org/);
+    expect(recoveryNextStep("Python was not found", true, "windows")).toMatch(/python[.]org.*PATH/);
+    expect(recoveryNextStep("Python was not found", true, "linux")).toMatch(/python3/);
+    expect(recoveryNextStep("npm was not found", true, "windows")).toMatch(/nodejs[.]org.*winget/);
+    expect(recoveryNextStep("npm was not found", true, "linux")).toContain("/usr/bin/node");
     expect(recoveryNextStep("something else", false)).toMatch(/Copy diagnostics/);
   });
 });
