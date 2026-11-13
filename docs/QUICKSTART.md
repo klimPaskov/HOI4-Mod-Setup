@@ -2,7 +2,7 @@
 
 Follow these steps to prepare a new or existing mod for AI-assisted development.
 
-**Before you start:** download HOI4 Mod Setup for Windows, macOS or Linux. Install any coding client you want to use; the app shows which supported clients are available. You can finish setup assistant sign-in when prompted. The app explains any extra setup needed for an optional workflow.
+**Before you start:** install the few tools Setup cannot install for you, listed under [Requirements](USER_GUIDE.md#requirements): Python on Windows and macOS, Node.js and `python3` on Linux, and the coding client you want to use. You can finish setup assistant sign-in when prompted. The app explains any extra setup needed for an optional workflow.
 
 1. **Install HOI4 Mod Setup.** From [GitHub Releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases), download the Windows installer or the macOS disk image for your Mac. Run the Windows installer, or open the disk image and move the app to Applications. Windows and macOS warn about an unknown publisher the first time: click **More info**, then **Run anyway** on Windows, or **Open Anyway** in **System Settings**, **Privacy & Security** on macOS ([step by step](RUN_ANYWAY.md)). For Linux, choose the AppImage or Debian package and follow the [Linux install guide](LINUX.md). Then open the app.
 
@@ -22,7 +22,7 @@ Follow these steps to prepare a new or existing mod for AI-assisted development.
 
 9. **Choose optional workflows.** On **Optional workflows**, enable any available **3D models workflow** (Meshy and Blender), **Super Events workflow**, **ComfyUI portrait production** (Comfy Cloud, Local ComfyUI, or RunPod), or **Live testing**. If the 3D workflow asks for a Meshy key, choose **Store in vault** or **Configure later**; the key stays on your computer. Incomplete optional workflows do not block core setup. [Screenshot](screenshots/05-integrations.png)
 
-9a. **If you selected Live testing**, choose Clausewitz MCP, experimental HOI4 Live Tools, or None in its separate step. Clausewitz MCP by smerss requires native Linux HOI4 1.19.2 and manual Linux game/server setup: WSL on Windows, Linux and SSH on macOS. On Linux it runs directly, with no extra WSL, VM or SSH environment. Follow the [Linux guide](LIVE_TESTING_LINUX.md). Leave readiness unchecked to configure later without registration. A configured route does not establish that live gameplay was verified. HOI4 Live Tools is slower and not fully tested; it installs on Windows and macOS.
+9a. **If you selected Live testing**, choose Clausewitz MCP, experimental HOI4 Live Tools, or None in its separate step. Clausewitz MCP by smerss requires native Linux HOI4 1.19.2 and manual Linux game/server setup: WSL on Windows, Linux and SSH on macOS. On Linux it runs directly, with no extra WSL, VM or SSH environment. Follow the [Linux guide](LIVE_TESTING_LINUX.md). If the server is not ready yet, leave the ready checkbox empty: setup records it as a to-do and does not register it. Registering it does not mean live play was tested. HOI4 Live Tools is experimental, slower and not fully tested; it installs on Windows and macOS only.
 
 10. **Review integrations and credentials.** This step appears only when the 3D workflow or HOI4 Live Tools is selected. Check the credential status and per-user setup, then choose **Next**. Secret values stay outside the mod folder. [Screenshot](screenshots/06-mcp-credentials.png)
 
@@ -40,6 +40,6 @@ Follow these steps to prepare a new or existing mod for AI-assisted development.
 - Each specialist subagent has a fixed Claude model tier: Opus for the improvement loop planner, Sonnet for the 3D pipeline, feature completion auditor, localisation auditor, scripted system architect, and skill maintainer, and Haiku for the rest.
 - Reopen the project in HOI4 Mod Setup with **Manage an existing project** to update, repair, add a workflow, or remove the setup.
 
-If something blocks setup, see [Troubleshooting](TROUBLESHOOTING.md).
+After setup, follow the kit's [first-run guide](https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/docs/first-run.md) to check that your agent works. If something blocks setup, see [Troubleshooting](TROUBLESHOOTING.md).
 
-New projects use the tested Agentic package release by default. Under **Choose source version**, you can select **Latest** or another exact release. Existing projects keep their reviewed source choice.
+New projects use **Latest** by default: the current published Agentic HOI4 Modding package, fixed to one exact commit when you prepare the changes. Under **Choose source version**, you can pick a **Specific commit** or a **Release** instead. Existing projects keep their reviewed source choice.
