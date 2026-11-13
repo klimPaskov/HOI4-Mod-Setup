@@ -2537,7 +2537,8 @@ describe("HOI4 Mod Setup wizard", () => {
 
     expect(await screen.findByText("What stopped setup")).toBeInTheDocument();
     expect(screen.getAllByText(/Python is unavailable for the source-declared MCP bootstrap/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/install Python from python.org .*HOI4 Agent Tools needs it/)).toBeInTheDocument();
+    // The hint follows the test machine's platform (jsdom reports it in its user agent).
+    expect(screen.getByText(/install (Python from python.org|python3 with your package manager).*HOI4 Agent Tools needs it/)).toBeInTheDocument();
   });
 
   it("does not blame Python when the failure names the tools component but not Python", async () => {
@@ -2564,7 +2565,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\mods\removal" } });
 
     expect(await screen.findByText("What stopped setup")).toBeInTheDocument();
-    expect(screen.queryByText(/install Python from python.org/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/install (Python from python.org|python3 with your package manager)/)).not.toBeInTheDocument();
     expect(screen.getByText(/try again\. If it stops at the same point/)).toBeInTheDocument();
   });
 
