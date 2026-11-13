@@ -3121,6 +3121,8 @@ function formatFindingDetails(raw: string): string {
 
 function formatManifestSize(component: ManifestComponentPreview): string {
   const bytes = component.expected_files.reduce((total, file) => total + (file.size ?? 0), 0);
+  // A component without project files (an MCP server or tool installed for the user) is not "0 files".
+  if (component.expected_files.length === 0) return "Installed for your user";
   const size = bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : bytes ? `${bytes} B` : "—";
   return `${component.expected_files.length === 1 ? "1 file" : `${component.expected_files.length} files`} · ${size}`;
 }

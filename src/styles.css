@@ -90,7 +90,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .choice-grid, .two-column, .action-grid, .recovery-grid, .diff-grid { display: grid; gap: 16px; }
 .choice-grid, .two-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .choice-grid, .two-column { width: 100%; max-width: 920px; margin-inline: auto; }
-.stack.narrow.mcp-review { max-width: 720px; }
+/* The MCP step uses the same column width as the other steps. */
 .diff-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .recovery-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -178,9 +178,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .list-row > div, .server-row > span:nth-child(2), .component-row > span:nth-child(2), .radio-row > span:nth-child(2), .finding-row > span:nth-child(2), .change-row > span:nth-child(2) { min-width: 0; flex: 1 1 12rem; display: grid; gap: 4px; overflow-wrap: anywhere; }
 .toggle-row > .toggle-copy { min-width: 0; display: grid; flex: 1 1 auto; gap: 6px; overflow-wrap: anywhere; }
 .toggle-row > span:last-child { margin-left: auto; flex: 0 0 auto; }
-.list-row strong, .server-row strong, .component-row strong, .radio-row strong, .finding-row strong, .change-row strong, .check-row strong { font-size: 13px; }
+.list-row strong, .server-row strong, .component-row strong, .radio-row strong, .finding-row strong, .change-row strong, .check-row strong { font-size: 14px; }
 .toggle-row strong { font-size: 15px; }
-.list-row span, .server-row small, .component-row small, .radio-row small, .finding-row small, .change-row small { color: var(--muted); font-size: 12px; }
+.list-row span, .server-row small, .component-row small, .radio-row small, .finding-row small, .change-row small { color: var(--muted); font-size: 13px; line-height: 1.45; }
 .toggle-row small { color: var(--muted); font-size: 13px; }
 .list-row > .status, .server-row > .status, .component-row > .size, .change-row > .size { margin-left: auto; }
 .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
@@ -194,7 +194,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .status-muted { color: #99a7ba; }
 .details { color: #9db5ff; font-size: 12px; }
 details { border-top: 1px solid var(--line); }
-summary { padding: 13px 16px; color: #a3b0c3; font-size: 12px; list-style-position: inside; }
+summary { padding: 13px 16px; color: #a3b0c3; font-size: 13px; list-style-position: inside; }
 details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .panel > details[open] > summary { margin-bottom: 10px; }
 .panel > details > .field { min-width: 0; margin: 0; padding: 0 16px 16px; }
@@ -305,8 +305,8 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .coding-environment-option input { width: 17px; height: 17px; margin: 1px 0 0; accent-color: #7680ff; }
 .coding-environment-copy { min-width: 0; display: grid; gap: 5px; }
 .coding-environment-copy strong, .coding-environment-copy small { display: block; min-width: 0; overflow-wrap: anywhere; }
-.coding-environment-copy strong { color: #e6edf8; font-size: 13px; line-height: 1.35; }
-.coding-environment-copy small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.coding-environment-copy strong { color: #e6edf8; font-size: 14px; line-height: 1.35; }
+.coding-environment-copy small { color: var(--muted); font-size: 13px; line-height: 1.5; }
 .coding-environment-unavailable { margin-top: 12px; }
 .coding-environment-unavailable ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; font-size: 12px; line-height: 1.5; }
 .coding-environment-unavailable li strong { color: #e6edf8; }
