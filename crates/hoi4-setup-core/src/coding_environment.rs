@@ -672,14 +672,14 @@ pub fn image_and_live_config_path(environment: &str) -> Option<&'static str> {
 
 /// Whether readiness must find the shared HOI4 Agent Tools route for the
 /// client. The route is installed only where the verified tools package
-/// exists (Windows and Linux) and only when the client's MCP component is
+/// exists (Windows, Linux and macOS) and only when the client's MCP component is
 /// part of the installation.
 pub fn native_registration_required<'a>(
     environment: &str,
     selected_components: impl Iterator<Item = &'a str> + Clone,
     platform: Platform,
 ) -> bool {
-    if !matches!(platform, Platform::Windows | Platform::Linux) {
+    if !crate::mcp_target::has_native_route(platform) {
         return false;
     }
     let Some(client) = native_client(environment) else {
@@ -1191,7 +1191,7 @@ mod tests {
     #[test]
     fn native_registration_is_required_only_for_selected_project_routes_on_tool_platforms() {
         let selected = |ids: &'static [&'static str]| ids.iter().copied();
-        for platform in [Platform::Windows, Platform::Linux] {
+        for platform in [Platform::Windows, Platform::Linux, Platform::Macos] {
             for (environment, component) in [
                 (CLAUDE_CODE, "runtime.claude.mcp"),
                 (CURSOR, "runtime.cursor.mcp"),
@@ -1241,7 +1241,7 @@ mod tests {
         assert!(!native_registration_required(
             CLAUDE_CODE,
             selected(&["runtime.claude.mcp", "mcp.hoi4_agent_tools"]),
-            Platform::Macos
+            Platform::Unsupported
         ));
     }
 

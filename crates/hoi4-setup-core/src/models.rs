@@ -9,8 +9,8 @@ use uuid::Uuid;
 /// (`.claude/skills`, `.claude/agents`) with declared coding environments.
 /// Major 6 adds per-client MCP support declarations and shared client
 /// components, so an older app never offers a client it cannot register.
-pub const SUPPORTED_MANIFEST_MAJORS: [u64; 5] = [2, 3, 4, 5, 6];
-pub const CURRENT_MANIFEST_MAJOR: u64 = 6;
+pub const SUPPORTED_MANIFEST_MAJORS: [u64; 6] = [2, 3, 4, 5, 6, 7];
+pub const CURRENT_MANIFEST_MAJOR: u64 = 7;
 
 pub const TRANSACTION_STAGES: [&str; 12] = [
     "preflight",

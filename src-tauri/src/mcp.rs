@@ -12,9 +12,10 @@ use crate::process::find_path_executable;
 use crate::security::{is_link_metadata, path_has_link_component, safe_join, sha256_file};
 use crate::AppError;
 pub use hoi4_setup_core::mcp_target::{
-    contained_link_target, manifest_target, manifest_target_for_platform, required_parameter,
-    validate_bare_command_name, validate_package_identity, VerifiedMcpTarget, COMPONENT_ID,
-    HEALTH_RULE_ID, LIVE_TOOLS_COMPONENT_ID, MAX_TOOL_COUNT, MAX_TOOL_NAME_BYTES,
+    contained_link_target, has_native_route, launches_with_node, manifest_target,
+    manifest_target_for_platform, required_parameter, validate_bare_command_name,
+    validate_package_identity, VerifiedMcpTarget, COMPONENT_ID, HEALTH_RULE_ID,
+    LIVE_TOOLS_COMPONENT_ID, MAX_TOOL_COUNT, MAX_TOOL_NAME_BYTES,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -617,7 +618,7 @@ pub fn reviewed_plan_target(actions: &[ExternalAction]) -> Result<VerifiedMcpTar
         .filter(|action| {
             action.component_id == COMPONENT_ID
                 && action.id == format!("external.{COMPONENT_ID}.{HEALTH_RULE_ID}")
-                && matches!(action.platform, Platform::Windows | Platform::Linux)
+                && has_native_route(action.platform)
                 && matches!(
                     action.command_source.as_str(),
                     "remote_manifest" | "repository_script"
@@ -706,9 +707,9 @@ pub fn initialize_health(
     project_root: &Path,
     target: &VerifiedMcpTarget,
 ) -> Result<HealthEvidence, AppError> {
-    if !matches!(Platform::current(), Platform::Windows | Platform::Linux) {
+    if !crate::mcp::has_native_route(Platform::current()) {
         return Err(AppError::UnsupportedPlatform(
-            "the verified MCP route is currently supported only on Windows".into(),
+            "the verified MCP route is supported only on Windows, Linux and macOS".into(),
         ));
     }
     validate_bare_command_name(&target.target)?;
@@ -722,8 +723,8 @@ pub fn initialize_health(
             "MCP health working directory contains a symlink or junction".into(),
         ));
     }
-    let (bin_root, package_root) = if Platform::current() == Platform::Linux {
-        let prefix = crate::paths::linux_npm_prefix()?;
+    let (bin_root, package_root) = if launches_with_node(Platform::current()) {
+        let prefix = crate::paths::node_route_npm_prefix(Platform::current())?;
         let package = prefix.join("lib/node_modules").join(&target.package_name);
         let locator = prefix.join("bin").join(&target.target);
         let expected = format!(
@@ -1012,6 +1013,21 @@ fn resolved_wrapper(target: &str) -> Result<PathBuf, AppError> {
 }
 
 fn resolved_node() -> Result<PathBuf, AppError> {
+    // macOS runs only the private official Node.js the bootstrap installed,
+    // the same path the client registrations name; its caller verifies the
+    // Node.js Foundation signature before starting it.
+    if Platform::current() == Platform::Macos {
+        let node = crate::paths::macos_npm_prefix()?.join("node/bin/node");
+        let metadata = std::fs::symlink_metadata(&node).map_err(|_| {
+            AppError::Process("the private Node.js runtime of HOI4 Agent Tools is missing".into())
+        })?;
+        if is_link_metadata(&metadata) || !metadata.is_file() || path_has_link_component(&node) {
+            return Err(AppError::PathSecurity(
+                "the private Node.js runtime is not a regular, link-free file".into(),
+            ));
+        }
+        return Ok(node);
+    }
     if let Ok(path) = find_path_executable(&["node.exe", "node"]) {
         return Ok(path);
     }
