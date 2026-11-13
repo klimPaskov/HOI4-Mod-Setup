@@ -4,6 +4,10 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Redesign the Image generation step: one switch card for hoi4-imagegen with what it does at a glance, and the other backends as labelled tiles (with what each needs, such as an API key or a server address) and their limits behind "Use another backend". The leftover "Image providers loaded." line is gone.
+- Explain an "Access is denied" or "file in use" stop on the recovery screen: close the coding client or hoi4-imagegen window that holds the file, then continue. Undo changes alone did not help while that program stayed open.
+- Fix the step heading reserving a large empty gap above the content in narrow windows.
+- Fix the Python hint on the recovery screen never showing for npm errors (a broken pattern in the check).
 - Fix an Update or repair that stopped with "Access is denied" when the previous hoi4-imagegen version could not be deleted because its program was still running (for example the sign-in the Ready screen started). Setup now keeps that version and reports it, and the next Update or Repair removes it.
 - Fix an intermittent Windows failure of Update and repair with "Access is denied (os error 5)" while the hoi4-imagegen files were checked. A virus scanner or indexer that had just seen a file could refuse a read-only open for a moment, so Setup now retries opening an existing file or folder up to seven times over about 6 seconds (Windows access, sharing and lock violations only; never creating, writing or deleting). A post-install error that carries no message of its own now names the component, and the hoi4-imagegen install check names the step, in the transaction journal.
 - Fix the image sign-in check showing "Signed in" for a signed-out user. `hoi4-imagegen login-status` always exits 0 without `--check`, so Setup now reads its text (`signed in;` versus `not signed in (...)`) as well as the exit code, and the Ready page opens the sign-in when needed.
