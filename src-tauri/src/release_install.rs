@@ -382,6 +382,18 @@ fn directory_name(version: &str) -> Result<String, AppError> {
     Ok(route::version_dir(version))
 }
 
+/// Name the step of an install check that failed with a bare operating-system error, so a rare
+/// refusal such as "Access is denied" can be located from the transaction journal. A missing file
+/// keeps its error, because callers treat that as "not installed".
+fn step<T>(what: &str, result: Result<T, AppError>) -> Result<T, AppError> {
+    result.map_err(|error| match error {
+        AppError::Io(source) if source.kind() != std::io::ErrorKind::NotFound => {
+            AppError::Transaction(format!("could not {what}: {source}"))
+        }
+        other => other,
+    })
+}
+
 /// The files of an installed version and their tree hash, or `None` when the
 /// version is not installed. An entry that is not a regular file makes the
 /// tree unusable and is an error.
@@ -390,23 +402,26 @@ pub fn installed_tree(
     version: &str,
 ) -> Result<Option<(Vec<InstalledFile>, String)>, AppError> {
     let relative = directory_name(version)?;
-    let project = RootedDir::open_read(root)?;
-    if !project.is_directory(&relative)? {
+    let project = step("open the project", RootedDir::open_read(root))?;
+    if !step(
+        "look for the install folder",
+        project.is_directory(&relative),
+    )? {
         return Ok(None);
     }
-    let directory = project.open_dir(&relative)?;
+    let directory = step("open the install folder", project.open_dir(&relative))?;
     let mut files = Vec::new();
-    for name in directory.read_dir_names()? {
+    for name in step("list the install folder", directory.read_dir_names())? {
         let name = name
             .to_str()
             .ok_or_else(|| AppError::PathSecurity("an installed file name is not UTF-8".into()))?
             .to_owned();
-        if !directory.is_regular_file(&name)? {
+        if !step("check an installed file", directory.is_regular_file(&name))? {
             return Err(AppError::PathSecurity(format!(
                 "the installed entry {name} is not a regular file"
             )));
         }
-        let sha256 = directory.hash_file(&name)?;
+        let sha256 = step("hash an installed file", directory.hash_file(&name))?;
         let size = std::fs::metadata(root.join(&relative).join(&name))
             .map(|metadata| metadata.len())
             .unwrap_or(0);
@@ -517,6 +532,16 @@ pub fn install_release(
     }
 }
 
+/// Windows reports a file that another process has open or running as access denied (5), a
+/// sharing violation (32) or a lock violation (33).
+fn is_file_in_use(error: &AppError) -> bool {
+    cfg!(windows)
+        && matches!(
+            error,
+            AppError::Io(source) if matches!(source.raw_os_error(), Some(5 | 32 | 33))
+        )
+}
+
 /// Remove an installed version, but only while its files still hash to what
 /// Setup recorded. A changed folder is kept.
 pub fn remove_release(
@@ -539,7 +564,15 @@ pub fn remove_release(
     let directory = install_root.open_dir(version)?;
     let identity = directory.identity_token()?;
     drop(directory);
-    if !install_root.remove_tree_if_identity(version, &identity)? {
+    // A previous version whose program is still running (for example the sign-in the Ready
+    // screen started) cannot be deleted on Windows. The new version is already installed and
+    // checked, so the old one is kept and the next Update or Repair removes it.
+    let removed = match install_root.remove_tree_if_identity(version, &identity) {
+        Ok(removed) => removed,
+        Err(error) if is_file_in_use(&error) => return Ok(RemoveResult::ModifiedKept),
+        Err(error) => return Err(error),
+    };
+    if !removed {
         return Ok(RemoveResult::ModifiedKept);
     }
     let _ = relative;

@@ -1387,6 +1387,52 @@ fn abort_before_named_placement() {
     }
 }
 
+/// Pauses between attempts to open a file that another process briefly holds.
+#[cfg_attr(not(windows), allow(dead_code))]
+const TRANSIENT_OPEN_DELAYS_MS: [u64; 7] = [50, 100, 200, 400, 800, 1600, 3200];
+
+/// On Windows a virus scanner or indexer that has just seen a file can make an
+/// open fail with access denied (5), a sharing violation (32) or a lock
+/// violation (33) for a moment. No other platform reports these as transient.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_transient_open_error(error: &AppError) -> bool {
+    cfg!(windows)
+        && matches!(
+            error,
+            AppError::Io(source) if matches!(source.raw_os_error(), Some(5 | 32 | 33))
+        )
+}
+
+/// Run a read-only open again, with short bounded pauses, while it fails for a
+/// transient reason. Only read-only opens use this: a retried write or delete
+/// could repeat a change.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn retry_transient_open<T>(operation: impl FnMut() -> Result<T, AppError>) -> Result<T, AppError> {
+    retry_with(
+        operation,
+        is_transient_open_error,
+        &TRANSIENT_OPEN_DELAYS_MS.map(std::time::Duration::from_millis),
+    )
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn retry_with<T>(
+    mut operation: impl FnMut() -> Result<T, AppError>,
+    is_transient: impl Fn(&AppError) -> bool,
+    delays: &[std::time::Duration],
+) -> Result<T, AppError> {
+    let mut pauses = delays.iter();
+    loop {
+        match operation() {
+            Err(error) if is_transient(&error) => match pauses.next() {
+                Some(delay) => std::thread::sleep(*delay),
+                None => return Err(error),
+            },
+            other => return other,
+        }
+    }
+}
+
 fn remove_file_at(parent: &RootedDir, name: &OsStr) -> Result<(), AppError> {
     validate_component(name)?;
     remove_file_impl(parent, name)
@@ -1906,22 +1952,31 @@ fn create_windows_file(
     share: u32,
 ) -> Result<File, AppError> {
     let path = windows_api_path_z(path);
-    let handle = unsafe {
-        CreateFileW(
-            path.as_ptr(),
-            access,
-            share,
-            std::ptr::null(),
-            disposition,
-            attributes,
-            std::ptr::null_mut(),
-        )
+    let open = || {
+        let handle = unsafe {
+            CreateFileW(
+                path.as_ptr(),
+                access,
+                share,
+                std::ptr::null(),
+                disposition,
+                attributes,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error().into());
+        }
+        // SAFETY: `CreateFileW` returned a valid, uniquely owned handle.
+        Ok(unsafe { File::from_raw_handle(handle as _) })
     };
-    if handle == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error().into());
+    // Opening an existing file or directory changes nothing, so a refusal that a scanner or
+    // indexer causes for a moment is retried. Creating a file is never repeated.
+    if disposition == OPEN_EXISTING {
+        retry_transient_open(open)
+    } else {
+        open()
     }
-    // SAFETY: `CreateFileW` returned a valid, uniquely owned handle.
-    Ok(unsafe { File::from_raw_handle(handle as _) })
 }
 
 #[cfg(unix)]
@@ -2063,6 +2118,78 @@ fn windows_file_identity(file: &File) -> Result<(u64, [u8; 16]), AppError> {
 #[cfg(test)]
 mod io_error_tests {
     use super::*;
+
+    fn access_denied() -> AppError {
+        AppError::from(io::Error::from_raw_os_error(5))
+    }
+
+    #[test]
+    fn a_transient_open_failure_is_retried_until_it_succeeds() {
+        let mut attempts = 0;
+        let delays = [std::time::Duration::ZERO; 3];
+        let result = retry_with(
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    Err(access_denied())
+                } else {
+                    Ok(attempts)
+                }
+            },
+            |_| true,
+            &delays,
+        );
+        assert_eq!(result.unwrap(), 3);
+    }
+
+    #[test]
+    fn a_persistent_open_failure_stops_after_the_bounded_pauses() {
+        let mut attempts = 0;
+        let delays = [std::time::Duration::ZERO; 3];
+        let result: Result<(), AppError> = retry_with(
+            || {
+                attempts += 1;
+                Err(access_denied())
+            },
+            |_| true,
+            &delays,
+        );
+        assert!(result.is_err());
+        assert_eq!(attempts, 4, "one try plus one per pause");
+    }
+
+    #[test]
+    fn a_failure_that_is_not_transient_is_not_retried() {
+        let mut attempts = 0;
+        let delays = [std::time::Duration::ZERO; 3];
+        let result: Result<(), AppError> = retry_with(
+            || {
+                attempts += 1;
+                Err(AppError::from(io::Error::from(io::ErrorKind::NotFound)))
+            },
+            |error| !error_is_missing(error),
+            &delays,
+        );
+        assert!(result.is_err());
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn only_windows_access_sharing_and_lock_errors_are_transient() {
+        for code in [5, 32, 33] {
+            assert_eq!(
+                is_transient_open_error(&AppError::from(io::Error::from_raw_os_error(code))),
+                cfg!(windows),
+                "os error {code}"
+            );
+        }
+        assert!(!is_transient_open_error(&AppError::from(
+            io::Error::from_raw_os_error(2)
+        )));
+        assert!(!is_transient_open_error(&AppError::PathSecurity(
+            "link".into()
+        )));
+    }
 
     #[test]
     fn io_classification_is_independent_of_localized_error_text() {
