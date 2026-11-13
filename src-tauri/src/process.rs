@@ -1014,11 +1014,28 @@ fn macos_publisher_requirement(expected_publisher: &str) -> Option<String> {
     let team = match expected_publisher {
         "OpenAI" => "2DC432GLL2",
         "Anthropic" => "Q6L2SF6YDW",
+        // The official Node.js builds (nodejs.org/dist), which the kit's
+        // macOS bootstrap installs privately for HOI4 Agent Tools.
+        "OpenJS Foundation" => "HX7739G8FX",
+        // The python.org installer's interpreter, or Apple's own CPython
+        // from the Command Line Tools or Xcode (signed by Apple itself, so
+        // `anchor apple` excludes every Developer ID lookalike).
+        "Python Software Foundation" => {
+            return Some(format!(
+                "(anchor apple and identifier \"com.apple.python3\") or ({})",
+                developer_id_requirement("BMM5U3QVKW")
+            ))
+        }
         _ => return None,
     };
-    Some(format!(
+    Some(developer_id_requirement(team))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn developer_id_requirement(team: &str) -> String {
+    format!(
         "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"{team}\""
-    ))
+    )
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -1045,9 +1062,31 @@ fn macos_signature_matches_publisher(expected_publisher: &str, details: &str) ->
                     .lines()
                     .any(|line| line.trim() == "TeamIdentifier=Q6L2SF6YDW")
         }
-        // Codex and Claude Code are the macOS account-bearing routes. MCP and the
-        // credential-bearing Meshy route are Windows-only, so do not infer a
-        // macOS OpenJS identity without a reviewed Apple Team ID.
+        "Python Software Foundation" => {
+            let lines = || details.lines().map(str::trim);
+            let python_org = lines().any(|line| {
+                line == "Authority=Developer ID Application: Python Software Foundation (BMM5U3QVKW)"
+            }) && lines().any(|line| line == "TeamIdentifier=BMM5U3QVKW");
+            // Apple's CPython: Apple's own signing chain, never a team ID of
+            // a third party.
+            let apple = lines().any(|line| line == "Identifier=com.apple.python3")
+                && lines().any(|line| line == "Authority=Software Signing")
+                && lines().any(|line| line == "Authority=Apple Root CA");
+            python_org || apple
+        }
+        "OpenJS Foundation" => {
+            // Developer ID identity of the official Node.js macOS builds.
+            let expected_authority =
+                "Authority=Developer ID Application: Node.js Foundation (HX7739G8FX)";
+            details
+                .lines()
+                .any(|line| line.trim() == expected_authority)
+                && details
+                    .lines()
+                    .any(|line| line.trim() == "TeamIdentifier=HX7739G8FX")
+        }
+        // The credential-bearing Meshy route is Windows-only; no other macOS
+        // identity is inferred without a reviewed Apple Team ID.
         _ => false,
     }
 }
@@ -1404,7 +1443,54 @@ process.stdout.write(JSON.stringify(Object.fromEntries(names.map((name) => [name
         assert!(macos_publisher_requirement("OpenAI")
             .unwrap()
             .contains("\"2DC432GLL2\""));
-        assert!(macos_publisher_requirement("OpenJS Foundation").is_none());
+        assert!(macos_publisher_requirement("OpenJS Foundation")
+            .unwrap()
+            .ends_with("certificate leaf[subject.OU] = \"HX7739G8FX\""));
+        let python = macos_publisher_requirement("Python Software Foundation").unwrap();
+        assert!(python.starts_with(
+            "(anchor apple and identifier \"com.apple.python3\") or (anchor apple generic"
+        ));
+        assert!(python.contains("\"BMM5U3QVKW\""));
+        assert!(macos_publisher_requirement("Homebrew").is_none());
+    }
+
+    #[test]
+    fn macos_node_and_python_identities_are_exact() {
+        let node = "Authority=Developer ID Application: Node.js Foundation (HX7739G8FX)\nAuthority=Developer ID Certification Authority\nTeamIdentifier=HX7739G8FX\n";
+        assert!(macos_signature_matches_publisher("OpenJS Foundation", node));
+        assert!(!macos_signature_matches_publisher(
+            "OpenJS Foundation",
+            &node.replace("HX7739G8FX", "AAAA111111")
+        ));
+        assert!(!macos_signature_matches_publisher(
+            "Python Software Foundation",
+            node
+        ));
+
+        let python_org = "Identifier=python3\nAuthority=Developer ID Application: Python Software Foundation (BMM5U3QVKW)\nTeamIdentifier=BMM5U3QVKW\n";
+        assert!(macos_signature_matches_publisher(
+            "Python Software Foundation",
+            python_org
+        ));
+        assert!(!macos_signature_matches_publisher(
+            "Python Software Foundation",
+            &python_org.replace("(BMM5U3QVKW)", "(AAAA111111)")
+        ));
+        let apple = "Identifier=com.apple.python3\nAuthority=Software Signing\nAuthority=Apple Code Signing Certification Authority\nAuthority=Apple Root CA\nTeamIdentifier=59GAB85EFG\n";
+        assert!(macos_signature_matches_publisher(
+            "Python Software Foundation",
+            apple
+        ));
+        // An ad-hoc or Developer ID build that only names itself com.apple.python3.
+        let lookalike = "Identifier=com.apple.python3\nAuthority=Developer ID Application: Someone (AAAA111111)\nTeamIdentifier=AAAA111111\n";
+        assert!(!macos_signature_matches_publisher(
+            "Python Software Foundation",
+            lookalike
+        ));
+        assert!(!macos_signature_matches_publisher(
+            "OpenJS Foundation",
+            apple
+        ));
     }
 
     #[test]

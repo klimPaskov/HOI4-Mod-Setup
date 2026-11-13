@@ -157,3 +157,7 @@ the Setup-written `.mcp.json` and `.codex/config.toml` keep the kit's
 ## Failure evidence
 
 When a Windows scenario fails, `result.json` also carries `failureJournal`: the newest transaction's journal (state, error, last checkpoint, recovery fields and the post-install stage first, then the whole journal; long lists cut at 40 entries and the whole string at 8,000 characters), next to `failureReadiness` and `failureLiveReadiness`. Use it to locate an intermittent transaction error, for example `Access is denied (os error 5)`, without rerunning.
+
+## First-run MCP checks
+
+After the first install (Windows `new` and `clients` in latest mode, and Linux), the acceptance does what the kit's `docs/first-run.md` asks a user to check by hand. It reads the project's `.mcp.json`, starts every stdio server the way a coding client does (expanding `${NAME}` and `${NAME:-default}`, working folder = the project), completes `initialize` and `tools/list`, and requires at least one tool from each, which is what Claude Code's `/mcp` shows as connected. For `hoi4_agent_tools` it then calls the mod index tool with `{"mode":"overview"}` on the new mod and requires a result that is not an error. The report keeps each server's name, version, tool count and the mod index call under `mcpServers`.

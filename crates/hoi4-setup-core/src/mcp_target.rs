@@ -14,6 +14,22 @@ pub const HEALTH_RULE_ID: &str = "mcp.hoi4.health";
 /// pinned release for the current user (it is not an MCP package of this app).
 pub const LIVE_TOOLS_COMPONENT_ID: &str = "workflow.live_tools";
 
+/// Whether HOI4 Mod Setup has a native HOI4 Agent Tools route on `platform`.
+/// The manifest still decides per platform whether a route is declared.
+pub fn has_native_route(platform: Platform) -> bool {
+    matches!(
+        platform,
+        Platform::Windows | Platform::Linux | Platform::Macos
+    )
+}
+
+/// Whether the client registration on `platform` starts a verified Node
+/// runtime with the package entry (Linux and macOS) rather than npm's
+/// Windows wrapper.
+pub fn launches_with_node(platform: Platform) -> bool {
+    matches!(platform, Platform::Linux | Platform::Macos)
+}
+
 pub const MAX_TOOL_COUNT: usize = 4096;
 pub const MAX_TOOL_NAME_BYTES: usize = 256;
 

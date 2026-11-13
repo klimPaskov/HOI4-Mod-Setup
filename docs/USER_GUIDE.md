@@ -112,8 +112,8 @@ project files for a ChatGPT project.
   Linux server: WSL on Windows, or a Linux machine/VM through SSH on macOS.
   Follow the [Linux setup guide](LIVE_TESTING_LINUX.md), then explicitly
   confirm readiness. Configure later records a to-do without registration.
-  HOI4 Live Tools is experimental, slower, and not fully tested; its current
-  public package verifies Windows only, with an incomplete macOS scaffold.
+  HOI4 Live Tools is experimental, slower, and not fully tested. It installs
+  on Windows and macOS; it is not offered on Linux.
   None disables live testing. The next capture is `17-live-testing.png`.
 
 HOI4 Agent Tools installs and registers its MCP server for your selected coding

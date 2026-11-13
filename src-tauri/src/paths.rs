@@ -102,6 +102,39 @@ pub(crate) fn linux_npm_prefix() -> Result<PathBuf, AppError> {
     Ok(linux_xdg_directory("XDG_DATA_HOME", ".local/share")?.join("hoi4-mod-setup/npm"))
 }
 
+/// The macOS source bootstrap installs the package and its private Node.js
+/// runtime into this exact current-user prefix. Resolution does not create it.
+pub(crate) fn macos_npm_prefix() -> Result<PathBuf, AppError> {
+    // The bootstrap resolves the home folder (`Path.home().resolve()`), so a
+    // home reached through a link names the same real prefix here.
+    let home = required_platform_root("HOME")?;
+    let home = std::fs::canonicalize(&home).unwrap_or(home);
+    let prefix = home.join("Library/Application Support/hoi4-mod-setup/npm");
+    if prefix
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err(AppError::PathSecurity(
+            "the macOS npm prefix must not contain traversal".into(),
+        ));
+    }
+    Ok(prefix)
+}
+
+/// The current-user npm prefix of a platform whose registration launches
+/// Node with the package entry.
+pub(crate) fn node_route_npm_prefix(
+    platform: crate::models::Platform,
+) -> Result<PathBuf, AppError> {
+    match platform {
+        crate::models::Platform::Linux => linux_npm_prefix(),
+        crate::models::Platform::Macos => macos_npm_prefix(),
+        _ => Err(AppError::UnsupportedPlatform(
+            "this platform starts HOI4 Agent Tools without a Node route".into(),
+        )),
+    }
+}
+
 /// The Windows source bootstrap installs into this exact current-user prefix,
 /// independently of existing npm commands on PATH. Resolution does not create it.
 pub(crate) fn windows_npm_prefix() -> Result<PathBuf, AppError> {

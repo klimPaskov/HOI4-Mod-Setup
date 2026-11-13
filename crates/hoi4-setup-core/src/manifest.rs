@@ -130,6 +130,7 @@ pub fn validate_manifest_schema(value: &Value) -> Result<(), AppError> {
         .and_then(|version| version.split('.').next())
         .and_then(|version| version.parse::<u64>().ok());
     let schema = match major {
+        Some(7) => include_str!("../../../docs/schemas/remote-manifest.v7.schema.json"),
         Some(6) => include_str!("../../../docs/schemas/remote-manifest.v6.schema.json"),
         Some(5) => include_str!("../../../docs/schemas/remote-manifest.v5.schema.json"),
         Some(4) => include_str!("../../../docs/schemas/remote-manifest.v4.schema.json"),
