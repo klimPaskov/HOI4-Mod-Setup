@@ -22,6 +22,37 @@ pub fn legacy_selection(components: &[LockComponent]) -> LiveTestingSelection {
     }
 }
 
+/// Platforms with a reviewed HOI4 Live Tools installer route.
+pub fn live_tools_supported(platform: Platform) -> bool {
+    matches!(platform, Platform::Windows | Platform::Macos)
+}
+
+/// The launcher HOI4 Live Tools' installer writes for the current user:
+/// `%LOCALAPPDATA%\hoi4-live-tools\app\hoi4-live-tools.cmd` on Windows and
+/// `~/Library/Application Support/hoi4-live-tools/app/hoi4-live-tools` on macOS.
+pub fn live_tools_launcher(platform: Platform) -> Result<std::path::PathBuf, AppError> {
+    let absolute = |name: &str| {
+        std::env::var_os(name)
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .ok_or_else(|| {
+                AppError::InvalidInput(format!(
+                    "an absolute {name} is required for HOI4 Live Tools"
+                ))
+            })
+    };
+    match platform {
+        Platform::Windows => {
+            Ok(absolute("LOCALAPPDATA")?.join("hoi4-live-tools/app/hoi4-live-tools.cmd"))
+        }
+        Platform::Macos => Ok(absolute("HOME")?
+            .join("Library/Application Support/hoi4-live-tools/app/hoi4-live-tools")),
+        _ => Err(AppError::InvalidInput(
+            "HOI4 Live Tools supports Windows and macOS".into(),
+        )),
+    }
+}
+
 pub fn validate(selection: &LiveTestingSelection, platform: Platform) -> Result<(), AppError> {
     let invalid = |message: &str| AppError::InvalidInput(message.into());
     if !["clausewitz_mcp", "hoi4_live_tools", "none"].contains(&selection.provider.as_str()) {
@@ -44,8 +75,8 @@ pub fn validate(selection: &LiveTestingSelection, platform: Platform) -> Result<
             ));
         }
     }
-    if selection.provider == "hoi4_live_tools" && platform != Platform::Windows {
-        return Err(invalid("HOI4 LiveTools supports Windows only"));
+    if selection.provider == "hoi4_live_tools" && !live_tools_supported(platform) {
+        return Err(invalid("HOI4 Live Tools supports Windows and macOS"));
     }
     if selection.provider == "clausewitz_mcp"
         && selection.linux_ready
@@ -145,11 +176,7 @@ pub fn route(
         return Ok(None);
     }
     if selection.provider == "hoi4_live_tools" {
-        let appdata = std::env::var("LOCALAPPDATA").map_err(|_| {
-            AppError::InvalidInput("LOCALAPPDATA is required for HOI4 LiveTools".into())
-        })?;
-        let command = std::path::Path::new(&appdata)
-            .join("hoi4-live-tools/app/hoi4-live-tools.cmd")
+        let command = live_tools_launcher(platform)?
             .to_string_lossy()
             .into_owned();
         return Ok(Some((
@@ -437,10 +464,13 @@ pub fn validate_catalog(manifest: &RemoteManifest) -> Result<(), AppError> {
             ));
         }
         if id == "hoi4_live_tools"
-            && (row["supported_platforms"] != json!(["windows"])
+            && ((row["supported_platforms"] != json!(["windows"])
+                && row["supported_platforms"] != json!(["windows", "macos"]))
                 || route["source_repository"] != "klimPaskov/HOI4-Live-Tools")
         {
-            return Err(invalid("LiveTools supports Windows only"));
+            return Err(invalid(
+                "HOI4 Live Tools declares Windows, or Windows and macOS, from its own repository",
+            ));
         }
         if id == "hoi4_live_tools" {
             let action = manifest
@@ -694,6 +724,37 @@ mod tests {
     }
 
     #[test]
+    fn live_tools_is_offered_on_windows_and_macos_only() {
+        let selection = LiveTestingSelection {
+            provider: "hoi4_live_tools".into(),
+            ..Default::default()
+        };
+        assert!(validate(&selection, Platform::Windows).is_ok());
+        assert!(validate(&selection, Platform::Macos).is_ok());
+        assert!(validate(&selection, Platform::Linux).is_err());
+        assert!(live_tools_launcher(Platform::Linux).is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_live_tools_route_starts_the_installed_posix_launcher() {
+        let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+        let selection = LiveTestingSelection {
+            provider: "hoi4_live_tools".into(),
+            ..Default::default()
+        };
+        let (id, route) = route(&selection, Platform::Macos).unwrap().unwrap();
+        assert_eq!(id, "hoi4-live");
+        assert_eq!(
+            route["command"],
+            home.join("Library/Application Support/hoi4-live-tools/app/hoi4-live-tools")
+                .to_string_lossy()
+                .as_ref()
+        );
+        assert_eq!(route["args"], json!([]));
+    }
+
+    #[test]
     fn selection_roundtrip_and_legacy_component_restore_are_explicit() {
         let selection = confirmed();
         assert_eq!(
@@ -798,7 +859,12 @@ mod selection_tests {
                 json!("other/HOI4-Live-Tools"),
             ),
             (1, "/route/source_revision", json!("latest")),
-            (1, "/supported_platforms", json!(["windows", "macos"])),
+            (
+                1,
+                "/supported_platforms",
+                json!(["windows", "macos", "linux"]),
+            ),
+            (1, "/supported_platforms", json!(["macos"])),
             (2, "/route/source_repository", json!("other/manual")),
         ] {
             let mut manifest = manifest();

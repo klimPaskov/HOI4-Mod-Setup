@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { actionTimings, assertAgentToolsProfiles, cleanAppEnvironment, createPhaseClock, inside, requireDisposableLinux, inventoryDigest, requireHostedWindows, reviewedApplyLabel, reviewedDownloadUrl, reviewedMetadataPath, sanitizeReport, setupPythonPath, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
+import { actionTimings, assertAgentToolsProfiles, assertProjectMcpServersWork, expandMcpValue, cleanAppEnvironment, createPhaseClock, inside, requireDisposableLinux, inventoryDigest, requireHostedWindows, reviewedApplyLabel, reviewedDownloadUrl, reviewedMetadataPath, sanitizeReport, setupPythonPath, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
 
 test("Latest acceptance metadata stays in the fixed repository and immutable manifest route", () => {
   const repository = "/repos/klimPaskov/Agentic-HOI4-Modding";
@@ -231,4 +231,56 @@ test("assertAgentToolsProfiles requires the kit's profile variable in the Claude
   } finally {
     await rm(project, { recursive: true, force: true });
   }
+});
+
+const FAKE_MCP_SERVER = String.raw`
+const readline = require("node:readline");
+const mode = process.env.FAKE_MCP_MODE ?? "ok";
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  const reply = (result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }) + "\n");
+  if (message.method === "initialize") return reply({ protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fake", version: "1.0.0" } });
+  if (message.method === "tools/list") return reply({ tools: [{ name: "hoi4.mod_index" }, { name: "hoi4.other" }] });
+  if (message.method === "tools/call") {
+    if (mode === "crash") process.exit(3);
+    if (message.params.name !== "hoi4.mod_index" || message.params.arguments.mode !== "overview" || process.env.EXPANDED !== "yes") return reply({ isError: true, content: [{ type: "text", text: "bad call" }] });
+    return reply(mode === "tool-error" ? { isError: true, content: [{ type: "text", text: "index failed" }] } : { content: [{ type: "text", text: "Mod overview: 1 descriptor" }] });
+  }
+});
+`;
+
+async function fakeProject(mode, extraServers = {}) {
+  const root = await mkdtemp(join(tmpdir(), "hoi4-mcp-probe-"));
+  await writeFile(join(root, "fake-mcp.cjs"), FAKE_MCP_SERVER);
+  const server = (env = {}) => ({ type: "stdio", command: process.execPath, args: ["fake-mcp.cjs"], env: { FAKE_MCP_MODE: mode, EXPANDED: "${HOI4_PROBE_UNSET_FLAG:-yes}", ...env } });
+  await writeFile(join(root, ".mcp.json"), JSON.stringify({ mcpServers: { hoi4_agent_tools: server(), ...Object.fromEntries(Object.entries(extraServers).map(([name, env]) => [name, server(env)])) } }));
+  return root;
+}
+
+test("Every .mcp.json server starts and lists tools, and a first mod index call succeeds", async () => {
+  const root = await fakeProject("ok", { hoi4_imagegen: { FAKE_MCP_MODE: "ok" } });
+  try {
+    const report = await assertProjectMcpServersWork(root);
+    assert.deepEqual(Object.keys(report), ["hoi4_agent_tools", "hoi4_imagegen"]);
+    assert.equal(report.hoi4_agent_tools.tools, 2);
+    assert.equal(report.hoi4_agent_tools.modIndex.tool, "hoi4.mod_index");
+    assert.equal(report.hoi4_imagegen.modIndex, undefined);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("A failing mod index call or a crashing server fails the check", async () => {
+  for (const mode of ["tool-error", "crash"]) {
+    const root = await fakeProject(mode);
+    try {
+      await assert.rejects(assertProjectMcpServersWork(root), mode === "crash" ? /exited early/ : /returned an error/);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }
+});
+
+test("MCP values expand ${NAME} and ${NAME:-default} like Claude Code", () => {
+  assert.equal(expandMcpValue("${A}/x", { A: "a" }), "a/x");
+  assert.equal(expandMcpValue("${B:-dflt}", {}), "dflt");
+  assert.equal(expandMcpValue("plain", {}), "plain");
 });

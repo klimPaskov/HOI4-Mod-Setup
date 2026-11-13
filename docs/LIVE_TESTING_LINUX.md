@@ -57,4 +57,4 @@ With the compatible game running, test the server from Linux:
 
 This is an MCP stdio server, so it may wait for client input. Starting without an immediate error is not proof that live game reads work. Verify the client connection and a bounded read against the compatible game before treating gameplay testing as available.
 
-After readiness is confirmed, the app registers a reviewed native Linux, WSL or SSH route. Restart the selected coding client after applying the plan. **Configured** describes the registered route; it does not claim live gameplay was verified. The alternative HOI4 Live Tools provider is experimental, slower, and not fully tested. Its current public package verifies Windows only, and its macOS scaffold remains incomplete.
+After readiness is confirmed, the app registers a reviewed native Linux, WSL or SSH route. Restart the selected coding client after applying the plan. **Configured** describes the registered route; it does not claim live gameplay was verified. The alternative HOI4 Live Tools provider is experimental, slower, and not fully tested. It installs on Windows and macOS, not on Linux.

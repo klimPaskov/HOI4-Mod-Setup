@@ -60,7 +60,7 @@ What each system gets:
 | --- | --- | --- | --- |
 | Instructions, skills, subagents, offline wiki | Yes | Yes | Yes |
 | hoi4-imagegen | Yes | Yes | Yes |
-| HOI4 Agent Tools | Yes | Not yet | Yes |
+| HOI4 Agent Tools | Yes | Apple silicon | Yes |
 | HOI4 Live Tools, 3D models workflow | Yes | No | No |
 | Clausewitz MCP live testing | Through WSL | Through SSH to Linux | Native |
 

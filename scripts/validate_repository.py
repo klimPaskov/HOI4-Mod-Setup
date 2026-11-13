@@ -123,6 +123,7 @@ def load_manifest_schema(manifest: dict) -> dict:
         "4": "remote-manifest.v4.schema.json",
         "5": "remote-manifest.v5.schema.json",
         "6": "remote-manifest.v6.schema.json",
+        "7": "remote-manifest.v7.schema.json",
     }.get(version.split(".")[0])
     if schema_name is None:
         fail("canonical source manifest has an unsupported schema_version")

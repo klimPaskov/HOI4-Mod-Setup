@@ -135,9 +135,20 @@ fn known_locations(roots: &Roots, platform: Platform) -> Vec<PathBuf> {
             }
         }
         Platform::Macos => {
-            let framework = Path::new("/Library/Frameworks/Python.framework/Versions");
-            for dir in child_dirs(framework, "3") {
-                found.push(dir.join("bin").join("python3"));
+            // `bin/python3` is a link in these frameworks, which the search
+            // refuses, so each version's real `bin/python3.N` is named: the
+            // python.org installer, then Apple's Command Line Tools and Xcode.
+            for framework in [
+                "/Library/Frameworks/Python.framework/Versions",
+                "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions",
+                "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions",
+            ] {
+                for dir in child_dirs(Path::new(framework), "3") {
+                    if let Some(version) = dir.file_name().and_then(|name| name.to_str()) {
+                        found.push(dir.join("bin").join(format!("python{version}")));
+                    }
+                    found.push(dir.join("bin").join("python3"));
+                }
             }
             found.push(PathBuf::from("/opt/homebrew/bin/python3"));
             found.push(PathBuf::from("/usr/local/bin/python3"));
