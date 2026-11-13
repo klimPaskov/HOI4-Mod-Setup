@@ -350,3 +350,121 @@ export async function assertAgentToolsProfiles(project) {
   const section = codex.split(/^\[/m).filter((block) => /^mcp_servers\.hoi4_agent_tools[\].]/.test(block)).join("\n");
   if (!/HOI4_AGENT_TOOLS_PROFILES\s*=\s*"all"/.test(section)) throw new Error(".codex/config.toml lost HOI4_AGENT_TOOLS_PROFILES=all");
 }
+
+// Expand ${NAME} and ${NAME:-default} the way Claude Code reads .mcp.json values.
+export function expandMcpValue(value, env = process.env) {
+  return String(value).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_, name, fallback) => env[name] ?? fallback ?? "");
+}
+
+/**
+ * Start one stdio MCP server the way a coding client does and talk JSON-RPC to it: initialize,
+ * notifications/initialized, tools/list, then optional tools/call requests. Resolves with what it
+ * learned; rejects on a protocol error, a JSON-RPC error, an early exit or the time limit.
+ */
+export async function probeStdioMcpServer({ command, args = [], env = {}, cwd, calls = [], timeoutMs = 120_000, spawnProcess }) {
+  const { spawn } = await import("node:child_process");
+  const start = spawnProcess ?? spawn;
+  const windowsScript = process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+  const executable = /[\/]/.test(command) && !isAbsolute(command) ? resolve(cwd, command) : command;
+  const child = windowsScript
+    ? start(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `"${[executable, ...args].map((part) => `"${part}"`).join(" ")}"`], { cwd, env: { ...process.env, ...env }, windowsHide: true, windowsVerbatimArguments: true, stdio: ["pipe", "pipe", "pipe"] })
+    : start(executable, args, { cwd, env: { ...process.env, ...env }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  let stderr = "";
+  child.stderr?.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
+  const pending = new Map();
+  let buffer = "";
+  let nextId = 1;
+  let failure;
+  const fail = (error) => { failure ??= error; for (const { reject } of pending.values()) reject(failure); pending.clear(); };
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    let newline;
+    while ((newline = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (!line) continue;
+      let message;
+      try { message = JSON.parse(line); } catch { continue; }
+      if (message.id === undefined || !pending.has(message.id)) continue;
+      const { resolve: done, reject } = pending.get(message.id);
+      pending.delete(message.id);
+      if (message.error) reject(new Error(`${message.error.code}: ${message.error.message}`));
+      else done(message.result);
+    }
+  });
+  child.on("error", (error) => fail(error));
+  child.on("exit", (code, signal) => fail(new Error(`MCP server exited early (code ${code}, signal ${signal}). ${stderr.trim().slice(-600)}`)));
+  const request = (method, params) => {
+    if (failure) return Promise.reject(failure);
+    const id = nextId++;
+    const reply = new Promise((done, reject) => pending.set(id, { resolve: done, reject }));
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    return reply;
+  };
+  const timer = setTimeout(() => fail(new Error(`MCP server did not answer within ${timeoutMs} ms. ${stderr.trim().slice(-600)}`)), timeoutMs);
+  try {
+    const initialized = await request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "hoi4-mod-setup-acceptance", version: "1" } });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+    const tools = [];
+    let cursor;
+    do {
+      const page = await request("tools/list", cursor ? { cursor } : {});
+      tools.push(...(page.tools ?? []).map((tool) => tool.name));
+      cursor = page.nextCursor;
+    } while (cursor);
+    const results = [];
+    for (const call of calls) {
+      const name = typeof call.name === "function" ? tools.find(call.name) : call.name;
+      if (!name) throw new Error("The server does not list the tool this check calls.");
+      const result = await request("tools/call", { name, arguments: call.arguments ?? {} });
+      results.push({ name, result });
+    }
+    return { serverName: initialized?.serverInfo?.name, serverVersion: initialized?.serverInfo?.version, tools, results };
+  } finally {
+    clearTimeout(timer);
+    child.removeAllListeners("exit");
+    try { child.stdin.end(); } catch { /* already closed */ }
+    // Wait for the process to end: on Windows a live child keeps its working folder locked.
+    const ended = child.exitCode !== null || child.signalCode !== null
+      ? Promise.resolve()
+      : new Promise((done) => { child.once("close", done); setTimeout(done, 10_000).unref?.(); });
+    try { child.kill(); } catch { /* already gone */ }
+    await ended;
+  }
+}
+
+/**
+ * The checks the kit's first-run page asks users to do by hand: every server in the project's .mcp.json
+ * starts and lists its tools (what Claude Code's /mcp shows as connected), and a first HOI4 Agent Tools
+ * mod index call succeeds on the new mod.
+ */
+export async function assertProjectMcpServersWork(project, { probe = probeStdioMcpServer, env = process.env } = {}) {
+  const servers = JSON.parse(await readFile(join(project, ".mcp.json"), "utf8")).mcpServers ?? {};
+  const names = Object.keys(servers);
+  if (!names.includes("hoi4_agent_tools")) throw new Error(".mcp.json does not register hoi4_agent_tools");
+  const report = {};
+  for (const name of names) {
+    const server = servers[name];
+    if ((server.type ?? "stdio") !== "stdio") { report[name] = { skipped: `transport ${server.type}` }; continue; }
+    const modIndex = name === "hoi4_agent_tools";
+    const probed = await probe({
+      command: expandMcpValue(server.command, env),
+      args: (server.args ?? []).map((value) => expandMcpValue(value, env)),
+      env: Object.fromEntries(Object.entries(server.env ?? {}).map(([key, value]) => [key, expandMcpValue(value, env)])),
+      cwd: project,
+      calls: modIndex ? [{ name: (tool) => /(^|[._])mod_index$/.test(tool), arguments: { mode: "overview" } }] : [],
+    }).catch((error) => { throw new Error(`MCP server ${name} from .mcp.json failed: ${error.message}`); });
+    if (!probed.tools.length) throw new Error(`MCP server ${name} lists no tools`);
+    const entry = { server: probed.serverName, version: probed.serverVersion, tools: probed.tools.length };
+    if (modIndex) {
+      const call = probed.results[0];
+      if (!call || call.result?.isError) throw new Error(`hoi4_agent_tools ${call?.name ?? "mod index"} returned an error: ${JSON.stringify(call?.result?.content ?? []).slice(0, 600)}`);
+      const text = (call.result.content ?? []).filter((part) => part.type === "text").map((part) => part.text).join("\n");
+      if (!text.trim() && call.result.structuredContent === undefined) throw new Error(`hoi4_agent_tools ${call.name} returned no content`);
+      entry.modIndex = { tool: call.name, characters: text.length };
+    }
+    report[name] = entry;
+  }
+  return report;
+}

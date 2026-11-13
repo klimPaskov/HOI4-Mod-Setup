@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { chromium, expect } from "@playwright/test";
 import { assertWindowsInstallerRegistryIsClean, cleanupWindowsInstallerRegistry, resolveNativeSystemExecutable, resolveSystemPowerShellPath, uninstallKey, windowsRegistry } from "./windows_installer_registry.mjs";
-import { assertAgentToolsProfiles, assertOriginals,cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, actionTimings, createPhaseClock, sanitizeReport, setupPythonPath, snapshot, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
+import { assertAgentToolsProfiles, assertOriginals, assertProjectMcpServersWork,cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, actionTimings, createPhaseClock, sanitizeReport, setupPythonPath, snapshot, stageTimings, startPlannerFixture, stopOwnedSession, timingSummary, verifiedCandidate } from "./released_e2e_support.mjs";
 import { configureHostedWebView } from "./released_e2e_windows.mjs";
 
 requireHostedWindows();
@@ -552,6 +552,8 @@ try {
     assert.ok(existsSync(join(project, "CLAUDE.md")) && existsSync(join(project, "AGENTS.md")));
     assert.ok(existsSync(join(project, ".codex/config.toml")) && existsSync(join(project, ".mcp.json")));
     if (lock.source.mode === "latest") await assertAgentToolsProfiles(project);
+    // The first-run checks a user would do by hand: every .mcp.json server connects, and a first mod index works.
+    if (fresh && lock.source.mode === "latest") result.mcpServers = await clock.measure("MCP servers connect and mod index", () => assertProjectMcpServersWork(project));
     result.installed = { files: lock.files.length, source: lock.source, primary: lock.primary_coding_environment, additional: lock.additional_coding_environments, image: lock.image_generation.primary_provider };
     if (fresh) {
       const descriptor = await readFile(join(project, "descriptor.mod"), "utf8");
