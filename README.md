@@ -61,10 +61,17 @@ What each system gets:
 | Instructions, skills, subagents, offline wiki | Yes | Yes | Yes |
 | hoi4-imagegen | Yes | Yes | Yes |
 | HOI4 Agent Tools | Yes | Apple silicon | Yes |
-| HOI4 Live Tools, 3D models workflow | Yes | No | No |
+| HOI4 Live Tools (experimental) | Yes | Yes | No |
+| 3D models workflow | Yes | No | No |
 | Clausewitz MCP live testing | Through WSL | Through SSH to Linux | Native |
 
 An unavailable item shows as "Not available on this computer" and never blocks the rest of the setup.
+
+**Before the first run**, install what Setup cannot install for you: Python from python.org on
+Windows; on Linux a package-manager Node.js 22.19+ (or 24) at `/usr/bin/node` and `python3`; and
+the coding client you want to use. The [requirements](docs/USER_GUIDE.md#requirements) list the
+details. After setup, the kit's [first-run guide](https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/docs/first-run.md)
+shows how to check that your agent works.
 
 ## Web edition (lightweight)
 
@@ -93,7 +100,7 @@ with your coding client.
   and edits graphical assets, then processes, validates, and exports them as DDS. Setup installs it
   with one checkbox and offers the ChatGPT sign-in. Sign-in, providers, and troubleshooting are in its README.
 - **[HOI4 Live Tools](https://github.com/klimPaskov/HOI4-Live-Tools)** is an experimental MCP server
-  that lets your AI client test the mod and play the game. Stable on Windows. The alternative is
+  that lets your AI client test the mod and play the game. Windows and macOS; slower and not fully tested. The alternative is
   [Clausewitz MCP](https://github.com/smerss/Clausewitz-MCP) by smerss, which needs native Linux.
 - **[ComfyUI portraits](https://github.com/klimPaskov/comfyui-hoi4-portraits)** are
   identity-preserving leader portrait workflows, run on Comfy Cloud, your own ComfyUI, or RunPod.
