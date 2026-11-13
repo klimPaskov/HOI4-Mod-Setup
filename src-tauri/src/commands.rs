@@ -5463,6 +5463,7 @@ fn build_maintenance_plan_blocking(
                 installed_image.installed_release_version.clone();
             desired_image.installed_release_tree_sha256 =
                 installed_image.installed_release_tree_sha256.clone();
+            desired_image.pending_removals = installed_image.pending_removals.clone();
             desired_image.installed_package_lock_sha256 =
                 installed_image.installed_package_lock_sha256.clone();
         }
@@ -5823,6 +5824,7 @@ fn build_maintenance_plan_blocking(
                     installed_image.installed_release_version.clone();
                 desired_image.installed_release_tree_sha256 =
                     installed_image.installed_release_tree_sha256.clone();
+                desired_image.pending_removals = installed_image.pending_removals.clone();
                 desired_image.installed_package_lock_sha256 =
                     installed_image.installed_package_lock_sha256.clone();
             }
@@ -6901,8 +6903,9 @@ fn build_maintenance_plan_blocking(
     } else {
         Vec::new()
     };
-    // hoi4-imagegen: one reviewed download for the selected provider, and a
-    // cleanup of the recorded version when it is replaced, deselected or removed.
+    // hoi4-imagegen: one reviewed download for the selected provider, a
+    // cleanup of the recorded version when it is replaced, deselected or
+    // removed, and a cleanup of every earlier version kept because it was in use.
     let imagegen_selected = provider_bootstrap_selected(
         &mode,
         selected_image_generation.as_ref(),
@@ -6930,17 +6933,11 @@ fn build_maintenance_plan_blocking(
             }
         }
     }
-    if let Some((version, tree)) = lock.image_generation.as_ref().and_then(|selection| {
-        Some((
-            selection.installed_release_version.clone()?,
-            selection.installed_release_tree_sha256.clone()?,
-        ))
-    }) {
-        if imagegen_state != "unsupported_platform"
-            && imagegen_planned_version.as_deref() != Some(version.as_str())
-        {
-            external_actions.push(crate::imagegen_actions::cleanup_action(&version, &tree));
-        }
+    if imagegen_state != "unsupported_platform" {
+        external_actions.extend(crate::imagegen_actions::planned_cleanups(
+            lock.image_generation.as_ref(),
+            imagegen_planned_version.as_deref(),
+        ));
     }
     optional_workflows.insert(
         hoi4_setup_core::release_binary::COMPONENT_ID.into(),
@@ -8700,6 +8697,7 @@ mod tests {
             installed_package_lock_sha256: None,
             installed_release_version: None,
             installed_release_tree_sha256: None,
+            pending_removals: Vec::new(),
         };
         let guided = adapt_image_generation_guidance(b"Before\n<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:START -->\nplaceholder\n<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:END -->\nAfter", &manifest, &selection).unwrap();
         let guided = String::from_utf8(guided).unwrap();
@@ -8895,6 +8893,7 @@ mod tests {
             installed_package_lock_sha256: None,
             installed_release_version: None,
             installed_release_tree_sha256: None,
+            pending_removals: Vec::new(),
         };
         let adapted = adapt_image_generation_client_config(
             br#"{"mcpServers":{"user_tool":{"command":"keep"},"hoi4_image_openai_api":{"command":"old"},"hoi4_image_old_provider":{"command":"older"}}}"#,
@@ -8961,6 +8960,7 @@ mod tests {
             installed_package_lock_sha256: None,
             installed_release_version: None,
             installed_release_tree_sha256: None,
+            pending_removals: Vec::new(),
         };
         let root = tempdir().unwrap();
         std::fs::write(

@@ -268,7 +268,16 @@ two declared entries, and installs them in
 Linux). It then runs `hoi4-imagegen --version` and requires the declared
 version. An update installs the new version beside the old one, retargets the
 client entries, and removes the old version only after the check passed and
-only while its files still hash to what the lock recorded. The retired
+only while its files still hash to what the lock recorded. When Windows
+refuses that delete because the old program is still running (os error 5, 32
+or 33), or the new version fails its check, the old version is kept and the
+lock lists it under `image_generation.pending_removals` with the hash of the
+recorded files still in its folder (a refused delete can stop part way). Every
+later Update, Repair and managed removal plans one cleanup per pending entry
+(never for the version being installed); an entry is dropped once its folder
+is removed or already absent, and also when its files no longer match, in
+which case the folder is kept, because Setup never deletes content it did not
+record. Older locks without the list mean none is pending. The retired
 `local_package` GPTImage route (`imagegen.gptimage`, `hoi4_image_gptimage`) is
 never installed; an older manifest that lists it is accepted and its provider
 is ignored with a message.
