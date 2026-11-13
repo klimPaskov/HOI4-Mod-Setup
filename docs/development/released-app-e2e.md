@@ -153,3 +153,7 @@ HOI4 Agent Tools lists only its core tools unless the client registration sets
 `HOI4_AGENT_TOOLS_PROFILES`. The `new` and Linux scenarios therefore assert that
 the Setup-written `.mcp.json` and `.codex/config.toml` keep the kit's
 `HOI4_AGENT_TOOLS_PROFILES=all` after Setup retargets the launch command.
+
+## Failure evidence
+
+When a Windows scenario fails, `result.json` also carries `failureJournal`: the newest transaction's journal (state, error, last checkpoint, recovery fields and the post-install stage first, then the whole journal; long lists cut at 40 entries and the whole string at 8,000 characters), next to `failureReadiness` and `failureLiveReadiness`. Use it to locate an intermittent transaction error, for example `Access is denied (os error 5)`, without rerunning.
