@@ -210,6 +210,7 @@ pub(crate) fn image_generation_selection_from_state(
     selection.installed_package_lock_sha256 = None;
     selection.installed_release_version = None;
     selection.installed_release_tree_sha256 = None;
+    selection.pending_removals.clear();
     if selection.primary_provider.trim().is_empty() {
         selection.primary_provider = default_provider.to_owned();
     }

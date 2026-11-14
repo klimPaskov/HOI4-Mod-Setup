@@ -304,6 +304,14 @@ a newer bootstrap.
   archive opens, only the two declared entries are extracted, and the
   `local_package` GPTImage route is retired (ignored, never installed). Keep the
   schema in formats 4 to 6 in step with the model.
+- A replaced hoi4-imagegen version that cannot be deleted because its program
+  is running (`RemoveResult::InUseKept`) is recorded in
+  `ImageGenerationSelection.pending_removals` with the tree hash of what is
+  left; `imagegen_actions::planned_cleanups` plans a cleanup per entry on the
+  next Update, Repair or removal, and the runner reports the complete remaining
+  list as `pending-removal:<version>:<tree>` evidence that the transaction
+  writes into the lock. A tree mismatch (`ModifiedKept`) is never pending: the
+  folder is kept and dropped from the list.
 - The image step offers hoi4-imagegen or none. The backends come from the
   route's optional `backends` array, or are derived from its `credential_fields`
   (`crates/hoi4-setup-core/src/image_backends.rs`, which also maps an older

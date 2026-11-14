@@ -133,6 +133,13 @@ export interface ImageGenerationSelection {
   installed_package_lock_sha256?: string | null;
   installed_release_version?: string | null;
   installed_release_tree_sha256?: string | null;
+  /** Earlier hoi4-imagegen versions kept because they were in use; the next maintenance run removes them. */
+  pending_removals?: PendingReleaseRemoval[];
+}
+
+export interface PendingReleaseRemoval {
+  version: string;
+  tree_sha256: string;
 }
 
 export interface CodingEnvironmentSelection {
