@@ -531,6 +531,9 @@ pub(crate) fn prepare(
             chosen.image.installed_release_tree_sha256 =
                 recorded.installed_release_tree_sha256.clone();
         }
+        // The web edition deletes nothing, so the versions a desktop update
+        // could not remove yet stay recorded for the next desktop run.
+        chosen.image.pending_removals = recorded.pending_removals.clone();
     }
     let (identity, conventions, provenance) = match (maintenance, lock.as_ref(), project.as_ref()) {
         (Some(_), Some(lock), Some(project)) => {

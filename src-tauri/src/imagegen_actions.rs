@@ -4,12 +4,14 @@
 //! Planning turns the verified source manifest into one install action (the
 //! declared URL, size and SHA-256 of this platform's archive) and, when a
 //! version is being replaced or removed, one cleanup action for the recorded
-//! tree. The runner re-validates both from the plan alone: the renderer can
-//! never supply or change them.
+//! tree, plus one for every earlier version the lock lists as pending removal
+//! (kept because its program was running). The runner re-validates them from
+//! the plan alone: the renderer can never supply or change them.
 
 use crate::imagegen::{CliRunner, InstalledImagegen};
 use crate::models::{
-    ExternalAction, ImageGenerationSelection, InstallationPlan, Platform, RemoteManifest,
+    ExternalAction, ImageGenerationSelection, InstallationPlan, PendingReleaseRemoval, Platform,
+    RemoteManifest,
 };
 use crate::release_install::{install_release, remove_release, ReleaseDownloader, RemoveResult};
 use crate::transaction::PostInstallActionOutcome;
@@ -24,6 +26,8 @@ pub const INSTALL_ACTION_ID: &str = "external.imagegen.hoi4_imagegen.install";
 pub const CLEANUP_ACTION_ID: &str = "external.imagegen.hoi4_imagegen.cleanup";
 const INSTALL_SOURCE: &str = "app_managed_download";
 const CLEANUP_SOURCE: &str = "app_managed_cleanup";
+/// The schema bound of `pending_removals` in the plan, lock and project state.
+const MAX_PENDING_REMOVALS: usize = 64;
 
 fn base_action(id: &str, source: &str) -> ExternalAction {
     ExternalAction {
@@ -145,6 +149,35 @@ pub fn cleanup_action(version: &str, tree_sha256: &str) -> ExternalAction {
     action
 }
 
+/// The cleanup actions a maintenance plan carries: the recorded version when
+/// it is not the one being installed, and every earlier version kept because
+/// it was in use. The version being installed is never cleaned up.
+pub fn planned_cleanups(
+    recorded: Option<&ImageGenerationSelection>,
+    planned_version: Option<&str>,
+) -> Vec<ExternalAction> {
+    let Some(recorded) = recorded else {
+        return Vec::new();
+    };
+    let installed = recorded
+        .installed_release_version
+        .as_deref()
+        .zip(recorded.installed_release_tree_sha256.as_deref());
+    let mut planned = std::collections::BTreeSet::new();
+    installed
+        .into_iter()
+        .chain(
+            recorded
+                .pending_removals
+                .iter()
+                .map(|entry| (entry.version.as_str(), entry.tree_sha256.as_str())),
+        )
+        .filter(|(version, _)| Some(*version) != planned_version)
+        .filter(|(version, _)| planned.insert(version.to_owned()))
+        .map(|(version, tree)| cleanup_action(version, tree))
+        .collect()
+}
+
 fn outcome(state: &str, evidence: impl Into<String>) -> PostInstallActionOutcome {
     PostInstallActionOutcome {
         component_id: COMPONENT_ID.into(),
@@ -224,8 +257,29 @@ pub fn run_reviewed_actions(
     };
     let (installs, cleanups) = (of(INSTALL_ACTION_ID), of(CLEANUP_ACTION_ID));
     let removing = plan.maintenance_mode.as_deref() == Some("remove");
+    let recorded_pending = plan
+        .image_generation
+        .as_ref()
+        .map(|selection| selection.pending_removals.as_slice())
+        .unwrap_or_default();
+    // A cleanup is either the one recorded version or an earlier version the
+    // plan's selection lists as pending; each version is cleaned up once.
+    let cleanups = cleanups
+        .into_iter()
+        .map(|action| {
+            let (version, tree) = reviewed_cleanup(action)?;
+            let pending = recorded_pending
+                .iter()
+                .any(|entry| entry.version == version && entry.tree_sha256 == tree);
+            Ok((version, tree, pending))
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
+    let mut versions = std::collections::BTreeSet::new();
     if installs.len() > 1
-        || cleanups.len() > 1
+        || cleanups.iter().filter(|(_, _, pending)| !pending).count() > 1
+        || !cleanups
+            .iter()
+            .all(|(version, _, _)| versions.insert(version.as_str()))
         || (installs.is_empty() && cleanups.is_empty())
         || (removing && !installs.is_empty())
     {
@@ -272,25 +326,98 @@ pub fn run_reviewed_actions(
             }
         }
     }
-    if let Some(action) = cleanups.first() {
-        let (old_version, tree) = reviewed_cleanup(action)?;
-        if installed_ok && installed_version.as_deref() != Some(old_version.as_str()) {
-            match remove_release(root, &old_version, &tree)? {
-                RemoveResult::Removed | RemoveResult::AlreadyAbsent => {
-                    if installs.is_empty() {
-                        parts.push(route::EVIDENCE_REMOVED.into());
-                    }
+    // The versions still on disk that a later run removes. The outcome lists
+    // all of them, and the transaction records exactly that list.
+    let mut still_pending = Vec::new();
+    for (old_version, tree, pending) in &cleanups {
+        if installed_version.as_deref() == Some(old_version.as_str()) {
+            // That version is the one installed now.
+            continue;
+        }
+        if !installed_ok {
+            // The new version failed its check, so nothing is removed yet.
+            still_pending.push((old_version.clone(), tree.clone()));
+            continue;
+        }
+        match remove_release(root, old_version, tree)? {
+            RemoveResult::Removed | RemoveResult::AlreadyAbsent => {
+                if installs.is_empty() && !pending {
+                    parts.push(route::EVIDENCE_REMOVED.into());
                 }
-                RemoveResult::ModifiedKept => {
-                    parts.push(format!("old-version-kept:{old_version}"));
-                    if installs.is_empty() {
-                        state = "incomplete";
-                    }
+            }
+            RemoveResult::ModifiedKept => {
+                parts.push(format!("old-version-kept:{old_version}"));
+                if installs.is_empty() {
+                    state = "incomplete";
+                }
+            }
+            RemoveResult::InUseKept { remaining_tree } => {
+                parts.push(format!("old-version-kept:{old_version}"));
+                still_pending.push((old_version.clone(), remaining_tree));
+                if installs.is_empty() {
+                    state = "incomplete";
                 }
             }
         }
     }
+    // A pending entry without a cleanup in this plan stays recorded, unless it
+    // is the version installed now.
+    let current = installed_version.or_else(|| {
+        plan.image_generation
+            .as_ref()
+            .and_then(|selection| selection.installed_release_version.clone())
+    });
+    for entry in recorded_pending {
+        if current.as_deref() != Some(entry.version.as_str())
+            && !cleanups
+                .iter()
+                .any(|(version, _, _)| *version == entry.version)
+        {
+            still_pending.push((entry.version.clone(), entry.tree_sha256.clone()));
+        }
+    }
+    for (version, tree) in still_pending {
+        parts.push(format!(
+            "{}{version}:{tree}",
+            route::EVIDENCE_PENDING_PREFIX
+        ));
+    }
     Ok(outcome(state, parts.join(";")))
+}
+
+fn plain_version(version: &str) -> bool {
+    let digits = version.split('.').collect::<Vec<_>>();
+    digits.len() == 3
+        && digits
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+/// The earlier versions an action outcome reports as still on disk and to be
+/// removed by a later run. Every entry must carry a plain version and a
+/// SHA-256, and a version appears at most once.
+pub fn pending_from_evidence(evidence: &str) -> Result<Vec<PendingReleaseRemoval>, AppError> {
+    let invalid =
+        || AppError::Transaction("hoi4-imagegen returned an invalid pending removal".into());
+    let mut pending: Vec<PendingReleaseRemoval> = Vec::new();
+    for part in evidence.split(';') {
+        let Some(entry) = part.strip_prefix(route::EVIDENCE_PENDING_PREFIX) else {
+            continue;
+        };
+        let (version, tree) = entry.split_once(':').ok_or_else(invalid)?;
+        if !plain_version(version)
+            || hoi4_setup_core::manifest::validate_sha256(tree).is_err()
+            || pending.iter().any(|known| known.version == version)
+            || pending.len() >= MAX_PENDING_REMOVALS
+        {
+            return Err(invalid());
+        }
+        pending.push(PendingReleaseRemoval {
+            version: version.to_owned(),
+            tree_sha256: tree.to_owned(),
+        });
+    }
+    Ok(pending)
 }
 
 /// What the transaction records from an action outcome: the installed
@@ -313,12 +440,7 @@ pub fn receipt_from_evidence(
             hoi4_setup_core::manifest::validate_sha256(tree).map_err(|_| {
                 AppError::Transaction("hoi4-imagegen returned an invalid install hash".into())
             })?;
-            let digits = version.split('.').collect::<Vec<_>>();
-            if digits.len() != 3
-                || digits
-                    .iter()
-                    .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
-            {
+            if !plain_version(version) {
                 return Err(AppError::Transaction(
                     "hoi4-imagegen returned an invalid version".into(),
                 ));

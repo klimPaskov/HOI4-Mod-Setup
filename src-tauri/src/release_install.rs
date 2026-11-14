@@ -362,11 +362,19 @@ pub struct InstallReceipt {
     pub reused: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoveResult {
     Removed,
     AlreadyAbsent,
+    /// The folder no longer matches what Setup recorded. It is kept and never
+    /// retried: Setup does not delete content it did not record.
     ModifiedKept,
+    /// The files matched, but Windows refused the delete because the program
+    /// is running. `remaining_tree` is the hash of the recorded files still in
+    /// the folder (a delete can stop part way), so a later run can retry.
+    InUseKept {
+        remaining_tree: String,
+    },
 }
 
 fn directory_name(version: &str) -> Result<String, AppError> {
@@ -542,6 +550,33 @@ fn is_file_in_use(error: &AppError) -> bool {
         )
 }
 
+/// After Windows refused part of a delete, what is left of a version folder
+/// whose files were verified just before: the hash of the recorded files still
+/// present, so a later run removes exactly those. An entry Setup did not record
+/// makes the folder modified, and it is then never retried.
+fn tree_left_after_refusal(
+    project: &RootedDir,
+    relative: &str,
+    verified: &[InstalledFile],
+) -> Result<RemoveResult, AppError> {
+    if !project.is_directory(relative)? {
+        return Ok(RemoveResult::Removed);
+    }
+    let mut left = Vec::new();
+    for name in project.open_dir(relative)?.read_dir_names()? {
+        match verified
+            .iter()
+            .find(|file| name.to_str() == Some(file.name.as_str()))
+        {
+            Some(file) => left.push(file.clone()),
+            None => return Ok(RemoveResult::ModifiedKept),
+        }
+    }
+    Ok(RemoveResult::InUseKept {
+        remaining_tree: route::tree_sha256(&left),
+    })
+}
+
 /// Remove an installed version, but only while its files still hash to what
 /// Setup recorded. A changed folder is kept.
 pub fn remove_release(
@@ -551,14 +586,20 @@ pub fn remove_release(
 ) -> Result<RemoveResult, AppError> {
     hoi4_setup_core::manifest::validate_sha256(expected_tree)?;
     let relative = directory_name(version)?;
-    let tree = match installed_tree(root, version) {
-        Ok(Some((_, tree))) => tree,
+    let files = match installed_tree(root, version) {
+        Ok(Some((files, tree))) if tree == expected_tree => files,
+        Ok(Some(_)) => return Ok(RemoveResult::ModifiedKept),
         Ok(None) => return Ok(RemoveResult::AlreadyAbsent),
+        // A file Windows will not let Setup read even after the retries of a
+        // read-only open is most likely held by the running program. Nothing
+        // was deleted, so the recorded tree is retried later.
+        Err(error) if cfg!(windows) && !matches!(error, AppError::PathSecurity(_)) => {
+            return Ok(RemoveResult::InUseKept {
+                remaining_tree: expected_tree.to_owned(),
+            })
+        }
         Err(_) => return Ok(RemoveResult::ModifiedKept),
     };
-    if tree != expected_tree {
-        return Ok(RemoveResult::ModifiedKept);
-    }
     let project = RootedDir::open(root)?;
     let install_root = project.open_dir(route::INSTALL_ROOT)?;
     let directory = install_root.open_dir(version)?;
@@ -569,13 +610,15 @@ pub fn remove_release(
     // checked, so the old one is kept and the next Update or Repair removes it.
     let removed = match install_root.remove_tree_if_identity(version, &identity) {
         Ok(removed) => removed,
-        Err(error) if is_file_in_use(&error) => return Ok(RemoveResult::ModifiedKept),
+        Err(error) if is_file_in_use(&error) => {
+            drop(install_root);
+            return tree_left_after_refusal(&project, &relative, &files);
+        }
         Err(error) => return Err(error),
     };
     if !removed {
         return Ok(RemoveResult::ModifiedKept);
     }
-    let _ = relative;
     // Drop the install root once the last version is gone. The handle is
     // released first: Windows will not delete a directory that is held open.
     drop(install_root);

@@ -4,6 +4,7 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Fix a hoi4-imagegen version kept because it was in use staying on disk for good (#195). Setup now records it in the lock as pending removal, and the next Update, Repair or removal deletes it once its program is closed, only while its files still match what Setup installed.
 - Redesign the Image generation step: one switch card for hoi4-imagegen with what it does at a glance, and the other backends as labelled tiles (with what each needs, such as an API key or a server address) and their limits behind "Use another backend". The leftover "Image providers loaded." line is gone.
 - Explain an "Access is denied" or "file in use" stop on the recovery screen: close the coding client or hoi4-imagegen window that holds the file, then continue. Undo changes alone did not help while that program stayed open.
 - Fix the step heading reserving a large empty gap above the content in narrow windows.

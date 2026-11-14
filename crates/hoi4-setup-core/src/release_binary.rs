@@ -386,6 +386,9 @@ pub fn tree_sha256(files: &[InstalledFile]) -> String {
 pub const EVIDENCE_VERSION_PREFIX: &str = "release-version:";
 pub const EVIDENCE_TREE_PREFIX: &str = "release-tree-sha256:";
 pub const EVIDENCE_REMOVED: &str = "release-removed";
+/// `pending-removal:<version>:<tree sha256>`: an earlier version that is
+/// still on disk and that the next maintenance run tries to remove again.
+pub const EVIDENCE_PENDING_PREFIX: &str = "pending-removal:";
 
 #[cfg(test)]
 mod tests {

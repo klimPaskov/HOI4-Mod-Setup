@@ -472,6 +472,21 @@ pub struct ImageGenerationSelection {
     pub installed_release_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_release_tree_sha256: Option<String>,
+    /// Earlier hoi4-imagegen versions that Setup installed and could not
+    /// remove yet, because their program was running. The next Update, Repair
+    /// or removal tries again, and deletes a version only while its files
+    /// still hash to `tree_sha256`. Absent in older locks, which means none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_removals: Vec<PendingReleaseRemoval>,
+}
+
+/// One kept hoi4-imagegen version that a later maintenance run removes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PendingReleaseRemoval {
+    pub version: String,
+    /// The hash of the files Setup recorded and left in that version's folder.
+    pub tree_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

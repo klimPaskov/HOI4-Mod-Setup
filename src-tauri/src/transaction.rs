@@ -1866,6 +1866,18 @@ fn run_transaction_inner(
                             selection.installed_release_tree_sha256 = tree;
                         }
                     }
+                    // The runner reports every earlier version still on disk,
+                    // so its list replaces the recorded one. The installed
+                    // version is never pending removal.
+                    let pending =
+                        crate::imagegen_actions::pending_from_evidence(&outcome.evidence)?;
+                    if let Some(selection) = effective_plan.image_generation.as_mut() {
+                        let installed = selection.installed_release_version.clone();
+                        selection.pending_removals = pending
+                            .into_iter()
+                            .filter(|entry| installed.as_deref() != Some(entry.version.as_str()))
+                            .collect();
+                    }
                 }
                 if outcome.component_id == LEGACY_GPTIMAGE_COMPONENT {
                     if outcome.evidence == "package-tree-removed" {
@@ -10836,6 +10848,7 @@ my tweak
             installed_package_lock_sha256: None,
             installed_release_version: None,
             installed_release_tree_sha256: None,
+            pending_removals: Vec::new(),
         });
         lock.live_testing = Some(LiveTestingSelection {
             provider: "clausewitz_mcp".into(),
@@ -13775,10 +13788,25 @@ description: Example skill.
                 expected_sha256: sha256_bytes(b"safe"),
             })
             .collect::<Vec<_>>();
+        // An earlier version kept because it was in use is removed too, and an
+        // entry this plan does not clean up stays recorded.
+        let kept = crate::imagegen_tests::install_fake_release(project.path(), "0.1.0");
+        let carried = PendingReleaseRemoval {
+            version: "0.0.9".into(),
+            tree_sha256: "f".repeat(64),
+        };
+        selection.pending_removals = vec![
+            PendingReleaseRemoval {
+                version: "0.1.0".into(),
+                tree_sha256: kept.tree_sha256.clone(),
+            },
+            carried.clone(),
+        ];
         update.image_generation = Some(selection);
         update.external_actions = vec![
             action,
             crate::imagegen_actions::cleanup_action("0.2.0", &old_tree),
+            crate::imagegen_actions::cleanup_action("0.1.0", &kept.tree_sha256),
         ];
         let (_, updated) = run_test_transaction(
             project.path(),
@@ -13807,6 +13835,19 @@ description: Example skill.
         assert!(
             !versions.join("0.2.0").exists(),
             "the recorded old version is removed"
+        );
+        assert!(
+            !versions.join("0.1.0").exists(),
+            "the pending version is removed"
+        );
+        assert_eq!(image.pending_removals, vec![carried]);
+        let saved: InstallationLock = serde_json::from_slice(
+            &fs::read(project.path().join(".hoi4-mod-setup/install.lock.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            saved.image_generation.unwrap().pending_removals,
+            image.pending_removals
         );
     }
 
