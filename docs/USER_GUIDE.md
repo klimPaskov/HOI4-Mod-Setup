@@ -5,6 +5,31 @@ start, use the [README](../README.md) or the [quick start](QUICKSTART.md); for
 fixes, see [Troubleshooting](TROUBLESHOOTING.md). The desktop app is the recommended,
 full setup; the web edition is a lighter, faster way to get the basics.
 
+## Requirements
+
+Setup installs most tools for you. Install these yourself before the first run:
+
+- **Everywhere:** the coding client you want to use, and Git if you choose Git
+  setup.
+- **Windows:** Python 3.9 or newer from
+  [python.org](https://www.python.org/downloads/windows/). The package scripts
+  need it, and Setup accepts only the python.org build (it checks the
+  signature). Node.js is optional: when it is missing, Setup installs the LTS
+  release with winget.
+- **macOS:** Python 3.9 or newer, from python.org or Apple's Command Line Tools
+  (`xcode-select --install`). Node.js is not needed. HOI4 Agent Tools needs an
+  Apple silicon Mac.
+- **Linux:** Node.js 22.19 or newer within version 22, or Node.js 24, from your
+  package manager, so that it is at `/usr/bin/node`. Ubuntu 22.04's own package
+  is Node 12, which is too old; use the NodeSource Node 22 repository instead.
+  A Node.js from nvm or a downloaded archive does not count. Python is the
+  system `python3`. The [Linux guide](LINUX.md) lists what the app itself needs.
+
+If Python is missing, setup still finishes and marks HOI4 Agent Tools as
+incomplete. Install Python, then choose **Repair installation**. After setup,
+the kit's [first-run guide](https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/docs/first-run.md)
+shows how to check that your agent works.
+
 ## Using the desktop app (recommended)
 
 ### Choose a project and setup assistant
@@ -69,20 +94,21 @@ screen links their setup guide; Aider has no MCP support.
 
 ### Choose how to make images
 
-Pick a main image provider and add optional providers. The ChatGPT sign-in through hoi4-imagegen
-is selected by default (Setup installs it; sign in on the last screen). The list also includes image APIs, local servers, Codex
-image generation when Codex is the main client, and a choice to make art yourself.
-The app stores API keys in the operating-system credential store.
+One checkbox, **Install hoi4-imagegen**, sets up image generation. It is
+ticked by default and uses your ChatGPT sign-in: after setup, the Ready screen
+opens the sign-in in your browser by itself. Untick it to make the art
+yourself. To use something else, open **Use another backend**, for example an
+OpenAI, Gemini or fal key or a local ComfyUI server; the list comes from the
+setup package. The app stores API keys in the operating-system credential
+store. A project that already uses an older image provider keeps it, and
+**Update and repair** offers to move it to hoi4-imagegen.
 
-![Choose an image-generation provider](screenshots/16-image-generation.png)
+![Choose how to make images](screenshots/16-image-generation.png)
 
 Choose instructions, skills, tools, and the offline wiki. The app adapts the
 guidance to your mod and fills the game and Workshop folders it finds through
-Steam. Required components stay selected.
-
-Choosing an image provider automatically selects its required setup component;
-changing providers removes stale image-route components before the next review.
-The final dependency and file plan is always checked by the app core.
+Steam. Required components stay selected. Your image choice adds or removes
+the files it needs, and the review step shows the result.
 
 ![Choose instructions, skills, tools, wiki, and ChatGPT files](screenshots/04-components.png)
 
@@ -112,13 +138,13 @@ project files for a ChatGPT project.
   Linux server: WSL on Windows, or a Linux machine/VM through SSH on macOS.
   Follow the [Linux setup guide](LIVE_TESTING_LINUX.md), then explicitly
   confirm readiness. Configure later records a to-do without registration.
-  HOI4 Live Tools is experimental, slower, and not fully tested. It installs
-  on Windows and macOS; it is not offered on Linux.
+  HOI4 Live Tools is experimental, slower and not fully tested. It installs
+  on Windows and macOS only.
   None disables live testing. The next capture is `17-live-testing.png`.
 
 HOI4 Agent Tools installs and registers its MCP server for your selected coding
-clients on Windows, including `.mcp.json` for Claude Code. It works independently
-of the assistant you used for setup.
+clients on Windows, Linux x64 and Apple silicon Macs, including `.mcp.json` for
+Claude Code. It works independently of the assistant you used for setup.
 
 ![Review selected integrations and credential state](screenshots/06-mcp-credentials.png)
 

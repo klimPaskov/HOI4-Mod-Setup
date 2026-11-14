@@ -71,8 +71,8 @@ explicit sign-in action and is checked against its pinned integrity values.
 **Fix:** Finish the provider's own terminal sign-in, close that terminal, and
 choose **Check again**. If the app says the route is unavailable on this
 computer, use the hosted API-key profile instead; macOS is not supported by the
-current experimental terminal worker. Real account completion is a manual
-live-test gate and is not implied by the presence of the account option.
+current experimental terminal worker. The account option is experimental: it
+has not yet been tested end to end with real accounts.
 
 ## Codex cannot be found
 
@@ -105,7 +105,7 @@ Your draft is kept, and recovery remains available while planning is paused.
 
 > This setup needs to reinstall HOI4 Agent Tools at the version it uses, but an app connected to the HOI4 MCP is using the installed copy. Close Codex, Claude Code, Cursor, or any other app using the HOI4 MCP, then prepare the changes again. For an older project, Check for updates moves it to the current version instead. Nothing was changed.
 
-**Cause:** HOI4 Agent Tools is installed once for your Windows account and shared by every mod. The setup you are preparing uses a different version from the installed copy, and a connected MCP client is holding files that must be replaced.
+**Cause:** HOI4 Agent Tools is installed once for your user account and shared by every mod. The setup you are preparing uses a different version from the installed copy, and a connected MCP client is holding files that must be replaced.
 
 **Fix:** Close Codex, Claude Code, Cursor, and any other client connected to the HOI4 MCP, then choose **Prepare changes** again. If you were repairing an older project while a newer HOI4 Agent Tools is installed, choose **Check for updates** instead: it moves the project to the current version rather than reinstalling the older one.
 
@@ -185,6 +185,8 @@ You do not have to: the missing step never blocks **Start installation**. Setup 
 
 **Cause:** Setup stopped before all installation and final checks completed.
 
+If the message says **Access is denied**, **os error 5** or that a file **is being used by another process**, another program still has a file of this project open. That is usually a coding client (Claude Code, Codex, Cursor and others) running the project's MCP servers, or the hoi4-imagegen sign-in window. Close it first. **Undo changes** alone does not help while that program stays open, so the same stop repeats. HOI4 Mod Setup 0.9.5 and newer keep an old hoi4-imagegen version that is still in use instead of stopping, and remove it on a later Update or Repair.
+
 **Fix:** Reopen the project through **Manage an existing project** and use **Recover interrupted setup** if offered.
 On the recovery screen, select an available choice and press the matching button:
 
@@ -202,10 +204,10 @@ Keep the verified backup until recovery finishes.
 
 > The source-declared MCP initialize check did not pass.
 
-**Cause:** The MCP could not complete its startup check; missing Node.js LTS is one possible cause.
-This message alone does not identify the cause.
+**Cause:** Setup started HOI4 Agent Tools to check it, and it did not answer as expected. A missing or too old Node.js is the most common cause, but this message alone does not say which.
 
-**Fix:** On Windows, the reviewed HOI4 Agent Tools bootstrap installs Node.js LTS through winget when it is missing, then prepares the MCP package.
+**Fix:** On Windows, Setup installs the Node.js LTS with winget when it is missing, then prepares HOI4 Agent Tools.
+On Linux, install Node.js 22.19 or newer (or 24) from your package manager so it is at `/usr/bin/node`; see the [Linux guide](LINUX.md).
 Use **Manage an existing project**, choose **Repair installation**, and review the changes before applying them so the bootstrap can run again.
 Afterward, use **Refresh checks** on **Project ready**, or **Check integration** if offered.
 
@@ -234,19 +236,11 @@ On an Intel Mac, leave the component unselected; core setup remains usable.
 
 **Fix:** Follow the [Run anyway and Open Anyway guide](RUN_ANYWAY.md).
 
-## The selected image provider did not add its setup component
+## Image generation does not work after setup
 
-> The image provider choice and component list do not match
+**Cause:** hoi4-imagegen is installed in the project, but it has no sign-in or key yet, or the backend you chose needs a key or server address that is missing.
 
-**Cause:** Image providers are backed by manifest-declared route components.
-Changing a primary or additional provider invalidates the current plan and
-refreshes the route-component selection; the final dependency closure is still
-validated by Rust.
-
-**Fix:** Return to **Choose an image provider**, select the intended route, and
-reload the component list if the source manifest failed to load. Review the
-updated dependency and file list before preparing changes. No stale
-`imagegen.*` route is intentionally retained after a provider change.
+**Fix:** For the default ChatGPT sign-in, open the project in HOI4 Mod Setup and finish the sign-in on the Ready screen. For another backend, use **Manage an existing project**, **Update and repair**, open **Use another backend** on the image step, add the key or address, and repair. Keys stay in your operating system's credential store, never in the project.
 
 ## HOI4 Live Tools is unavailable
 
@@ -294,7 +288,7 @@ python .tools/sync/sync_agents.py
 python .tools/sync/sync_skills.py
 ```
 
-Add `--check` to any of them to see what is out of date without writing.
+On macOS and Linux, type `python3` instead of `python`. Add `--check` to any of them to see what is out of date without writing.
 
 ## HOI4 Live Tools is incomplete or not listed in a coding client
 

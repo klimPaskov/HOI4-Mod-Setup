@@ -141,8 +141,8 @@ The default path uses npm `dist.integrity` and fails closed while the pinned
 version is unpublished. The application and bootstrap keep their registry
 installation contract.
 
-TODO before publication is considered verified: replace local-pack integrity
-with the published npm `dist.integrity`, recapture the complete tree and entry
+A pin verified only from a local tarball is not yet a published release. Before
+it counts as published, replace the local-pack integrity with the published npm `dist.integrity`, recapture the complete tree and entry
 from a clean published-package install, regenerate the canonical source
 manifest, copy its committed Git blob into the bundle, and rerun the default
 registry smoke test. Local smoke evidence does not prove npm publication.

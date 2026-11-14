@@ -1,30 +1,32 @@
 # HOI4 Mod Setup documentation
 
-The root [README](../README.md) is the user guide. This directory contains
-the implementation contract and planning material used to build and review the
-application.
+## For users
 
-Start with [the compact goal](GOAL_PROMPT.md), then read the numbered product
-documents in order. Schemas, examples, prompts, diagrams, source audits, UI
-references, screenshots, and development handoffs are grouped beside the
-documents that define them.
+- [Quick start](QUICKSTART.md): install and set up a mod, step by step
+- [User guide](USER_GUIDE.md): the full walkthrough, requirements and the rules for existing mods
+- [Linux guide](LINUX.md) and [Linux live testing](LIVE_TESTING_LINUX.md)
+- [Run anyway](RUN_ANYWAY.md): the Windows "Run anyway" and macOS "Open Anyway" steps
+- [Troubleshooting](TROUBLESHOOTING.md)
+- [Image generation providers](image-generation-providers.md)
 
-## Contents
+## For contributors
 
-- `01_product_requirements.md` through
-  `31_ai_provider_profiles_and_chat_sources.md`: accepted requirements and
-  architecture
+This directory also holds the implementation contract and planning material
+used to build and review the application. Start with
+[the compact goal](GOAL_PROMPT.md), then read the numbered documents in order:
+`00_source_audit.md` through `39_service_facade.md` are the accepted
+requirements and architecture (there is no 24 or 25).
+
 - `prompts/`: implementation prompts
 - `schemas/`: JSON Schemas
 - `examples/`: validated example payloads
 - `diagrams/`: Mermaid source
-- `source-manifest/`: the one bundled remote-manifest snapshot
+- `source-manifest/`: one bundled remote-manifest snapshot kept as a test
+  fixture; it is historical and may list retired routes such as GPTImage
 - `source-audit/`: source inventories and verification boundaries
 - `ui-references/`: design references
-- `screenshots/`: README walkthrough images
-- `USER_GUIDE.md`: the full walkthrough moved out of the README, including the existing-mod rules
-- `RUN_ANYWAY.md`: the Windows "Run anyway" and macOS "Open Anyway" steps for the unsigned installers
-- `development/`: current implementation status
+- `screenshots/`: walkthrough images
+- `development/`: implementation status, test notes and archived release validations
 
 The workflow source is
 [`klimPaskov/Agentic-HOI4-Modding`](https://github.com/klimPaskov/Agentic-HOI4-Modding).

@@ -8,7 +8,7 @@ The app registers image tools for each selected coding client. OpenCode uses the
 project's root `opencode.json` and its `mcp` settings, following the
 [OpenCode MCP server guide](https://opencode.ai/docs/mcp-servers/).
 
-An image provider is separate from the coding environment. Pick one primary image route and add optional routes only when the workflow needs them. A route may be a local MCP server, a vendor-hosted MCP server, a direct API adapter, a local image server, or manual art.
+An image provider is separate from the coding environment. In the app, one switch installs hoi4-imagegen, which signs in with ChatGPT by default; its other backends (OpenAI, Gemini, fal or a ComfyUI server) are under **Use another backend**, and switching it off means you make the art yourself. This guide describes the underlying services so you can pick a backend.
 
 Some services allow several images in one request. The HOI4 asset workflow should still request **one finished asset per call**. That gives each icon, portrait, or illustration its own output path and review result. Model-specific limits below are not interchangeable; check the selected model’s live schema before sending a request.
 

@@ -33,7 +33,7 @@ git pull --ff-only
 git switch -c feat/short-description
 ```
 
-Use these prefixes:
+Prefixes like these help, for example:
 
 - `feat/` for user-visible capabilities
 - `fix/` for defects
@@ -87,7 +87,7 @@ Keep pull requests reviewable. Split a large change by stable architectural boun
 
 ## Required checks
 
-Run the commands defined by the repository scripts. The planned baseline is:
+Run the commands defined by the repository scripts. The baseline is:
 
 ```bash
 corepack enable
@@ -126,4 +126,4 @@ Never commit real credentials, private project data, signing keys, Apple notariz
 
 ## Merge policy
 
-`main` should require a pull request, passing required checks, and review. Squash merge is the preferred default for ordinary contributions. Preserve a multi-commit history only when the commits are intentionally reviewable and useful independently.
+`main` requires a pull request and passing required checks. The maintainer reviews outside contributions before they merge. Squash merge is the preferred default for ordinary contributions. Preserve a multi-commit history only when the commits are intentionally reviewable and useful independently.
