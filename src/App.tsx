@@ -4,7 +4,7 @@ import { applyInstallationResult, approveInstallation, checkInstallationRequirem
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
 import { base64ByteLength, base64DataUrl, renderCoverPng, renderReferenceJpeg } from "./lib/images";
 import { backendSettingsProblem, imageSettingLabel, imageSettingProblem } from "./lib/imageSettings";
-import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, ContextDocumentState, ContextImageState, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, McpSupport, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SetupRequirement, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
+import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, ContextDocumentState, ContextImageState, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageBackend, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, McpSupport, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SetupRequirement, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 import claudeModels from "./claude-models.json";
 import freeAssistantConfig from "./free-assistant.json";
@@ -3121,6 +3121,8 @@ function formatFindingDetails(raw: string): string {
 
 function formatManifestSize(component: ManifestComponentPreview): string {
   const bytes = component.expected_files.reduce((total, file) => total + (file.size ?? 0), 0);
+  // A component without project files (an MCP server or tool installed for the user) is not "0 files".
+  if (component.expected_files.length === 0) return "Installed for your user";
   const size = bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : bytes ? `${bytes} B` : "—";
   return `${component.expected_files.length === 1 ? "1 file" : `${component.expected_files.length} files`} · ${size}`;
 }
@@ -3461,19 +3463,50 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
   const backendField = imagegen?.route.credential_fields?.find((field) => field.id === backend?.credential_field);
   const backendKey = backendField ? `${IMAGEGEN_PROVIDER_ID}.${backendField.id}` : "";
   const backendKeySaved = Boolean(backendKey && selection.credential_references[backendKey]);
+  const backendHint = (option: ImageBackend) => {
+    if (option.default) return "No key needed. Sign in after setup.";
+    const field = imagegen?.route.credential_fields?.find((candidate) => candidate.id === option.credential_field);
+    if (field) return field.display_name;
+    if (option.settings.some((setting) => setting.kind === "url")) return "Your own server address";
+    return "No key needed";
+  };
+  const capabilities = primary && <div className="image-capabilities" role="group" aria-label="What this backend supports">
+    <div><strong>References</strong><span>{primary.capabilities.reference_images?.notes ?? "Check the selected provider's model limits."}</span></div>
+    <div><strong>Transparent images</strong><span>{primary.capabilities.transparent_background?.notes ?? "Check the selected provider's model limits."}</span></div>
+    <div><strong>Edits</strong><span>{primary.capabilities.image_edits ? "Reference edits are available on supported models." : "This provider may make a new image from references instead of editing."}</span></div>
+  </div>;
   return <div className="stack narrow">
-    <section className="panel">
-      <PanelTitle title="Where images are made" />
-      <p className="muted">One tick installs hoi4-imagegen, and its browser sign-in opens after setup unless you pick another backend. A key stays in this computer's credential store, never in your project.</p>
-      {!catalog && <p className="muted" role="status">{loadMessage}</p>}
-      {catalog && imagegen && legacyIds.length === 0 && <label className="coding-environment-option image-checkbox"><input type="checkbox" name="image-generation" checked={usingImagegen} disabled={!compatible(imagegen)} onChange={(event) => chooseImagegen(event.target.checked)} /><span className="coding-environment-copy"><strong>Install hoi4-imagegen</strong><small>{imagegen.description} Uncheck it to make the art yourself.</small></span></label>}
-      {catalog && imagegen && usingImagegen && legacyIds.length === 0 && backends.length > 0 && <details className="image-backend-details" open={Boolean(backend && !backend.default)}><summary>Use another backend</summary><div className="image-backend-panel">
-        <span className="field-label" id="image-backend-label">Generate with</span>
-        <div className="coding-environment-options" role="radiogroup" aria-labelledby="image-backend-label">{backends.map((option) => <label className="coding-environment-option" key={option.id}><input type="radio" name="image-backend" value={option.id} checked={backend?.id === option.id} onChange={() => chooseBackend(option.id)} /><span className="coding-environment-copy"><strong>{option.display_name}</strong>{option.default && <small>Default. Signs in with your ChatGPT account after setup.</small>}{option.live_verified === false && <small>Untested with the real service.</small>}</span></label>)}</div>
-        <p className="muted">Setup downloads hoi4-imagegen from its GitHub release, checks its SHA-256, and installs it in this project.{backend?.default ? " After setup you can sign in with ChatGPT on the last screen." : ""}</p>
-        {backendField && <div className="image-provider-secret" key={backendField.id}><label className="field-label" htmlFor={`image-secret-${backendKey}`}>{backendField.display_name}</label><div className="input-with-action"><input id={`image-secret-${backendKey}`} className="text-input" type="password" autoComplete="off" value={drafts[backendKey] ?? ""} onChange={(event) => update({ imageGenerationCredentialDrafts: { ...drafts, [backendKey]: event.target.value } })} /><button type="button" className="input-action" disabled={!drafts[backendKey]?.trim() || savingKey === backendKey} onClick={() => imagegen && void saveCredential(imagegen, backendField.id)}>{savingKey === backendKey ? "Saving…" : "Store"}</button>{backendKeySaved && <button type="button" className="text-button" onClick={() => imagegen && void deleteCredential(imagegen, backendField.id)}>Delete</button>}</div><small className="muted">{backendKeySaved ? "Stored in the operating-system credential vault." : "Needed only for this backend. The key is not added to project files."}</small></div>}
-        {backend?.settings.map((setting) => { const value = selection.route_settings[IMAGEGEN_PROVIDER_ID]?.[setting.key] ?? ""; const problem = imageSettingProblem(setting.kind, value); return <div className="image-provider-secret" key={setting.key}><Field label={`${imageSettingLabel(setting.key)}${setting.required ? "" : " (optional)"}`} value={value} onChange={(next) => setRouteSetting(IMAGEGEN_PROVIDER_ID, setting.key, next.trim())} placeholder={setting.default ?? undefined} />{problem && <small className="status-review" role="alert">{problem}</small>}</div>; })}
-      </div></details>}
+    <section className={`panel image-panel${usingImagegen ? " is-on" : ""}`}>
+      {!catalog && <p className="muted image-loading" role="status">{loadMessage}</p>}
+      {catalog && imagegen && legacyIds.length === 0 && <label className="image-install">
+        <span className="image-install-copy">
+          <strong>Install hoi4-imagegen</strong>
+          <small>{imagegen.description}</small>
+        </span>
+        <input className="switch" type="checkbox" name="image-generation" checked={usingImagegen} disabled={!compatible(imagegen)} onChange={(event) => chooseImagegen(event.target.checked)} />
+      </label>}
+      {catalog && imagegen && legacyIds.length === 0 && (usingImagegen
+        ? <ul className="image-facts" aria-label="How hoi4-imagegen runs">
+          <li>Runs on this computer</li>
+          <li>Keys stay in the OS credential store</li>
+          {backend?.default ? <li>Sign in with ChatGPT after setup</li> : <li>Checked against its SHA-256 before install</li>}
+        </ul>
+        : <p className="muted image-off">No image tool is installed. You add artwork yourself.</p>)}
+      {catalog && imagegen && usingImagegen && legacyIds.length === 0 && backends.length > 0 && <details className="image-backend-details" open={Boolean(backend && !backend.default)}>
+        <summary><span>Use another backend</span>{backend && <small className="image-backend-current">Now: {backend.display_name}</small>}</summary>
+        <div className="image-backend-panel">
+          <span className="visually-hidden" id="image-backend-label">Generate with</span>
+          <div className="image-backend-grid" role="radiogroup" aria-labelledby="image-backend-label">{backends.map((option) => <div className="image-backend-option" key={option.id}>
+            <input id={`image-backend-${option.id}`} type="radio" name="image-backend" value={option.id} checked={backend?.id === option.id} onChange={() => chooseBackend(option.id)} aria-describedby={`image-backend-hint-${option.id}`} />
+            <span className="image-backend-mark" aria-hidden="true">{option.display_name.replace(/[^A-Za-z0-9]/g, "").slice(0, 2).replace(/^./, (first) => first.toUpperCase()) || "?"}</span>
+            {/* Only the name labels the radio; the whole tile is clickable through the label's overlay. */}
+            <span className="image-backend-copy"><span className="image-backend-title"><label className="image-backend-name" htmlFor={`image-backend-${option.id}`}>{option.display_name}</label>{option.default && <span className="image-backend-pill">Default</span>}</span><small id={`image-backend-hint-${option.id}`}>{backendHint(option)}</small>{option.live_verified === false && <small className="image-backend-untested">Untested with the real service.</small>}</span>
+          </div>)}</div>
+          {backendField && <div className="image-provider-secret" key={backendField.id}><label className="field-label" htmlFor={`image-secret-${backendKey}`}>{backendField.display_name}</label><div className="input-with-action"><input id={`image-secret-${backendKey}`} className="text-input" type="password" autoComplete="off" value={drafts[backendKey] ?? ""} onChange={(event) => update({ imageGenerationCredentialDrafts: { ...drafts, [backendKey]: event.target.value } })} /><button type="button" className="input-action" disabled={!drafts[backendKey]?.trim() || savingKey === backendKey} onClick={() => imagegen && void saveCredential(imagegen, backendField.id)}>{savingKey === backendKey ? "Saving…" : "Store"}</button>{backendKeySaved && <button type="button" className="text-button" onClick={() => imagegen && void deleteCredential(imagegen, backendField.id)}>Delete</button>}</div><small className="muted">{backendKeySaved ? "Stored in the operating-system credential vault." : "Needed only for this backend. The key is not added to project files."}</small></div>}
+          {backend?.settings.map((setting) => { const value = selection.route_settings[IMAGEGEN_PROVIDER_ID]?.[setting.key] ?? ""; const problem = imageSettingProblem(setting.kind, value); return <div className="image-provider-secret" key={setting.key}><Field label={`${imageSettingLabel(setting.key)}${setting.required ? "" : " (optional)"}`} value={value} onChange={(next) => setRouteSetting(IMAGEGEN_PROVIDER_ID, setting.key, next.trim())} placeholder={setting.default ?? undefined} />{problem && <small className="status-review" role="alert">{problem}</small>}</div>; })}
+          {capabilities}
+        </div>
+      </details>}
       {catalog && legacyIds.map((id) => {
         const legacy = catalog.providers.find((candidate) => candidate.id === id);
         const name = legacy?.display_name ?? id;
@@ -3483,11 +3516,10 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
           {legacy && target ? <><p className="muted">hoi4-imagegen now covers it with the {target.display_name} backend.{legacy.replaced_by?.credential_moves.length ? " Moving keeps your saved key in this computer's credential store." : ""}</p><button type="button" className="button secondary" onClick={() => void moveToImagegen(legacy)}>Move to hoi4-imagegen ({target.display_name})</button></> : <p className="muted">hoi4-imagegen does not cover it yet. Nothing changes until it does.</p>}
         </div>;
       })}
-      {retiredListed && <p className="muted" role="note">GPTImage is retired. Setup no longer installs it; use the ChatGPT sign-in in hoi4-imagegen instead.</p>}
-      {message && <p role="status" className="muted">{message}</p>}
-      <p className="muted" aria-live="polite">{loadMessage}</p>
+      {retiredListed && <p className="muted image-note" role="note">GPTImage is retired. Setup no longer installs it; use the ChatGPT sign-in in hoi4-imagegen instead.</p>}
+      {message && <p role="status" className="muted image-note">{message}</p>}
+      {catalog && <p className="visually-hidden" aria-live="polite">{loadMessage}</p>}
     </section>
-    {catalog && <section className="panel"><PanelTitle title="What the selected provider supports" /><div className="list-row"><strong>References</strong><span>{primary?.capabilities.reference_images?.notes ?? "Check the selected provider's model limits."}</span></div><div className="list-row"><strong>Transparent images</strong><span>{primary?.capabilities.transparent_background?.notes ?? "Check the selected provider's model limits."}</span></div><div className="list-row"><strong>Edits</strong><span>{primary?.capabilities.image_edits ? "Reference edits are available on supported models." : "This provider may make a new image from references instead of editing."}</span></div><p className="muted">The asset instructions will use these limits. Each image request is made separately, and generated transparency is checked after saving.</p></section>}
   </div>;
 }
 
@@ -4450,10 +4482,20 @@ function readableRecoveryAction(value: string) {
 }
 
 /** One plain sentence for what to do about a recorded setup failure. */
-export function recoveryNextStep(message: string | undefined, rollbackAllowed: boolean): string {
+export function recoveryNextStep(message: string | undefined, rollbackAllowed: boolean, platform: "windows" | "macos" | "linux" = currentUiPlatform()): string {
   const undo = rollbackAllowed ? "Choose Undo changes to return your mod to how it was before this setup began, then" : "Choose an option below, then";
-  if (message && /python|node\.js|npm|winget/i.test(message)) {
-    return `${undo} install Python from python.org (tick “Add python.exe to PATH”) and set up again. HOI4 Agent Tools needs it.`;
+  if (message && /access is denied|os error (?:5|32|33)\b|being used by another process|\bEBUSY\b|\bEPERM\b/i.test(message)) {
+    return "Another program is using a file in this project. That is usually a coding client (Claude Code, Codex, Cursor and others) running the project's MCP servers, or the hoi4-imagegen sign-in window. Close it, then choose Continue setup or try again. Undo changes alone does not help while that program stays open.";
+  }
+  if (message && /python/i.test(message)) {
+    return platform === "linux"
+      ? `${undo} install python3 with your package manager and set up again. HOI4 Agent Tools needs it.`
+      : `${undo} install Python from python.org${platform === "windows" ? " (tick “Add python.exe to PATH”)" : ""} and set up again. HOI4 Agent Tools needs it.`;
+  }
+  if (message && /node\.js|\bnode\b|\bnpm\b|winget/i.test(message)) {
+    return platform === "linux"
+      ? `${undo} install Node.js 22 or newer from your package manager so it is at /usr/bin/node (on Ubuntu 22.04 use the NodeSource Node 22 repository), and set up again. HOI4 Agent Tools needs it.`
+      : `${undo} install the Node.js LTS from nodejs.org${platform === "windows" ? " (or run winget install OpenJS.NodeJS.LTS)" : ""} and set up again. HOI4 Agent Tools needs it.`;
   }
   return `${undo} try again. If it stops at the same point, choose Copy diagnostics and include it in a report.`;
 }

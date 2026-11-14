@@ -2,7 +2,7 @@ import { backendSettingsProblem } from "./lib/imageSettings";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { CopyDiagnosticsButton, analysisBrief, CodingEnvironments, Components, ContextAttachments, contextEvidence, Conflict, DryRun, Findings, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, integrationReviewNeeded, maintenanceReviewScreen, nextScreen, previousScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
+import App, { recoveryNextStep, CopyDiagnosticsButton, analysisBrief, CodingEnvironments, Components, ContextAttachments, contextEvidence, Conflict, DryRun, Findings, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, integrationReviewNeeded, maintenanceReviewScreen, nextScreen, previousScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, runAgentSetupResult, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, checkInstallationRequirements, confirmCodexAnalysis, draftModDescription, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, moveImageGenerationCredential, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickContextDocuments, pickContextImages, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult, readDiagnostics } from "./lib/tauri";
 import type { AiAccountStatus, AiProviderId, CodexAnalysisResult, ContextDocument, ContextImage, FolderSelection, InstallationPlan, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { renderCoverPng, renderReferenceJpeg } from "./lib/images";
@@ -2537,7 +2537,8 @@ describe("HOI4 Mod Setup wizard", () => {
 
     expect(await screen.findByText("What stopped setup")).toBeInTheDocument();
     expect(screen.getAllByText(/Python is unavailable for the source-declared MCP bootstrap/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/install Python from python.org .*HOI4 Agent Tools needs it/)).toBeInTheDocument();
+    // The hint follows the test machine's platform (jsdom reports it in its user agent).
+    expect(screen.getByText(/install (Python from python.org|python3 with your package manager).*HOI4 Agent Tools needs it/)).toBeInTheDocument();
   });
 
   it("does not blame Python when the failure names the tools component but not Python", async () => {
@@ -2564,7 +2565,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\mods\removal" } });
 
     expect(await screen.findByText("What stopped setup")).toBeInTheDocument();
-    expect(screen.queryByText(/install Python from python.org/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/install (Python from python.org|python3 with your package manager)/)).not.toBeInTheDocument();
     expect(screen.getByText(/try again\. If it stops at the same point/)).toBeInTheDocument();
   });
 
@@ -3334,5 +3335,23 @@ describe("optional setup context", () => {
     expect(screen.getByText("Context changed — run the review again to use it.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Review again" }));
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ codexAnalysis: undefined, codexAnalysisRecord: undefined, plan: undefined }));
+  });
+});
+
+describe("recovery guidance", () => {
+  it("tells the user to close the program that holds a file when Windows refuses access", () => {
+    for (const message of [
+      "transaction error: post-install action imagegen.hoi4_imagegen could not use a file: Access is denied. (os error 5)",
+      "The process cannot access the file because it is being used by another process. (os error 32)",
+      "npm error code EBUSY",
+    ]) {
+      expect(recoveryNextStep(message, true)).toMatch(/Close it/);
+      expect(recoveryNextStep(message, true)).toMatch(/Undo changes alone does not help/);
+    }
+    expect(recoveryNextStep("Python was not found", true, "windows")).toMatch(/python[.]org.*PATH/);
+    expect(recoveryNextStep("Python was not found", true, "linux")).toMatch(/python3/);
+    expect(recoveryNextStep("npm was not found", true, "windows")).toMatch(/nodejs[.]org.*winget/);
+    expect(recoveryNextStep("npm was not found", true, "linux")).toContain("/usr/bin/node");
+    expect(recoveryNextStep("something else", false)).toMatch(/Copy diagnostics/);
   });
 });
