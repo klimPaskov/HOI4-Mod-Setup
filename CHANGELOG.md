@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Audit dependencies in two steps. The audit of what users install stays strict, and a full audit including development tools fails on every high or critical advisory except a short reviewed list in `scripts/audit-exceptions.json`. Nothing changes in the installed app.
+
 ## 0.9.5 - 2026-11-16
 
 - Fix a hoi4-imagegen version kept because it was in use staying on disk for good (#195). Setup now records it in the lock as pending removal, and the next Update, Repair or removal deletes it once its program is closed, only while its files still match what Setup installed.
