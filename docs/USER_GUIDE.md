@@ -212,9 +212,7 @@ automatically. If an update fails, you can keep using the app and retry.
 
 ## Existing mods: import, reimport, update
 
-These are the rules the app follows with a mod that already exists. They were
-checked on disposable copies of real Workshop mods (see
-[the review record](development/2026-10-24-app-review.md)).
+These are the rules the app follows with a mod that already exists.
 
 - **Import** reads the folder and writes nothing. The assistant fills in the
   details, you confirm them, and installation then adds the setup on top of
