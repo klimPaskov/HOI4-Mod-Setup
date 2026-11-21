@@ -152,6 +152,15 @@ Publish changed script evidence through the source-owned generator and consume
 that immutable manifest commit; old pinned repairs must not silently substitute
 a newer bootstrap.
 
+## Checking a source-package change before it merges
+
+Setup installs from the kit's `main`, so a kit change that moves, splits or rewrites files, or edits the package manifest, needs this check first. Steps a small model can follow:
+
+1. In a kit worktree on the change, commit it, then regenerate the evidence the way the kit's publish workflow does and commit that on a throwaway local branch (never push it): `python scripts/generate_manifest_evidence.py --manifest hoi4-mod-setup.manifest.json --source-root . --revision "$(git rev-parse HEAD)"`. Without this every changed file fails with "verified download evidence does not match".
+2. Run the fast acceptance against that worktree: `HOI4_MOD_SETUP_SOURCE_REPOSITORY=<absolute worktree path> cargo test -p hoi4-mod-setup --all-features --lib -- local_source_serves_every_declared_file offline_image_guidance --ignored --nocapture` (about two minutes once built). It verifies every declared file and the feature-assets skill ceiling.
+3. The all-component lifecycle test (`offline_lifecycle::offline_all_component...`) takes more than 30 minutes in a debug build on Windows and is not in CI. Run it only when the change touches install, repair, removal or rollback, and under the heavy-job slot.
+4. Delete the throwaway branch. The kit's publish workflow regenerates the real evidence after the merge.
+
 ## Repeatable MCP package verification
 
 - Run `pnpm test:scratch-live` with an explicit committed source checkout to
