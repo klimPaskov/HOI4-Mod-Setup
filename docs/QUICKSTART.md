@@ -1,44 +1,25 @@
-# Quick start on Windows, macOS and Linux
+# Quick start
 
-Follow these steps to prepare a new or existing mod for AI-assisted development.
+Set up a new or existing Hearts of Iron IV mod for AI-assisted development in about six steps. Each step links to the part of the [user guide](USER_GUIDE.md) with the details.
 
-**Before you start:** install the few tools Setup cannot install for you, listed under [Requirements](USER_GUIDE.md#requirements): Python on Windows and macOS, Node.js and `python3` on Linux, and the coding client you want to use. You can finish setup assistant sign-in when prompted. The app explains any extra setup needed for an optional workflow.
+**Before you start:** install the coding client you want to use (Claude Code, Codex or another one the app lists). On Windows install Python from python.org. On Linux install Node.js 22.19 or newer and `python3` from your package manager. The [requirements](USER_GUIDE.md#requirements) list the rest.
 
-1. **Install HOI4 Mod Setup.** From [GitHub Releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases), download the Windows installer or the macOS disk image for your Mac. Run the Windows installer, or open the disk image and move the app to Applications. Windows and macOS warn about an unknown publisher the first time: click **More info**, then **Run anyway** on Windows, or **Open Anyway** in **System Settings**, **Privacy & Security** on macOS ([step by step](RUN_ANYWAY.md)). For Linux, choose the AppImage or Debian package and follow the [Linux install guide](LINUX.md). Then open the app.
+1. **Install HOI4 Mod Setup.** Download the installer for your system from the [latest release](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest) and open it. Windows and macOS warn about an unknown publisher the first time, which is expected: the [Run anyway guide](RUN_ANYWAY.md) shows the two clicks. On Linux follow the [Linux guide](LINUX.md).
 
-2. **Choose your starting point.** On **Start a mod project**, choose **Create new mod** or **Import existing mod**. [Screenshot](screenshots/01-welcome.jpg)
+2. **Choose a starting point and an assistant.** Choose **Create new mod**, or **Import existing mod** for a mod you already have. Pick the assistant that fills in the next screens; the free one needs no account. [Screenshot](screenshots/01-welcome.jpg) · [Details](USER_GUIDE.md#choose-a-project-and-setup-assistant)
 
-3. **Choose a setup assistant.** Pick any provider offered on the **Provider** screen and connect it using the sign-in, key, or local address shown there. This assistant helps prepare the mod; it does not choose the coding client you use later. [Screenshot](screenshots/10-provider-selection.png)
+3. **Describe the mod.** Enter a name and a short description, then check the project ID, prefix, folders and locations the assistant suggests and confirm them. An imported mod is scanned first without being changed. [Screenshot](screenshots/02-description.png) · [Details](USER_GUIDE.md#describe-the-mod-and-review-its-details)
 
-4. **Describe or scan the mod.** For a new mod, fill in **Mod name** and **Description** on **Describe the mod**, then choose **Next**. For an import, use **Browse** beside **Project folder**, let the read-only scan finish, and review **Confirm scan findings** with your selected assistant. [New mod](screenshots/02-description.png) · [Existing mod](screenshots/11-existing-project.png)
+4. **Choose your coding client and what to install.** Pick one main client and any others you use. Leave **Install hoi4-imagegen** ticked if you want generated images. The defaults are right for most mods; optional workflows such as 3D models, Super Events, portraits and live testing can be added now or later. [Screenshot](screenshots/15-coding-environments.png) · [Details](USER_GUIDE.md#choose-your-coding-clients-and-components)
 
-5. **Confirm the identity.** For a new mod, review **Project identity**, including the project ID, script prefix, namespace, tags, initial folders, and project and launcher paths. Edit any incorrect suggestions and use the assistant's suggestion-confirmation button before continuing; imported projects also require confirmation of the assistant's suggestions. [Screenshot](screenshots/03-identity.png)
+5. **Review and install.** Choose a Git option (**Skip Git setup** is fine), review the planned files, then choose **Start installation**. Nothing is written until then, and your own files are never overwritten without asking. [Screenshot](screenshots/09-dry-run.png) · [Details](USER_GUIDE.md#review-and-install)
 
-6. **Choose your coding clients.** On **Coding environments**, choose any supported client as your primary one, then select any other clients you use. Setup prepares matching instructions, tools, and settings for the clients you select. [Screenshot](screenshots/15-coding-environments.png)
+6. **Open the ready mod.** On **Project ready**, choose **Open in** your client and approve the project's tools when it asks. Then follow the kit's [first-run guide](https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/docs/first-run.md) to check that your agent works. [Screenshot](screenshots/08-ready.png) · [Details](USER_GUIDE.md#open-the-prepared-project)
 
-7. **Install image generation.** One checkbox installs hoi4-imagegen; untick it to make the art yourself. When setup finishes, your browser opens the ChatGPT sign-in by itself (the program's notice is shown beside it, and finishing the sign-in accepts it). To use something else, open **Use another backend** in the same step, such as an OpenAI, Gemini or fal key or a local ComfyUI server; the list comes from the setup package. The app keeps API keys in the Windows credential store, macOS Keychain or Linux Secret Service. Change the backend later in **Update and repair**, which also offers to move a project that uses an older image provider to hoi4-imagegen. [Screenshot](screenshots/16-image-generation.png)
+## Later
 
-8. **Choose components.** On **Choose what to install**, review the project instructions, skills, subagents, tools, and offline Paradox wiki. Required items stay selected. [Screenshot](screenshots/04-components.png)
+Reopen the app and choose **Manage an existing project** to update, repair, add a workflow or remove the setup. See [update, repair or add workflows](USER_GUIDE.md#update-repair-or-add-workflows-later).
 
-9. **Choose optional workflows.** On **Optional workflows**, enable any available **3D models workflow** (Meshy and Blender), **Super Events workflow**, **ComfyUI portrait production** (Comfy Cloud, Local ComfyUI, or RunPod), or **Live testing**. If the 3D workflow asks for a Meshy key, choose **Store in vault** or **Configure later**; the key stays on your computer. Incomplete optional workflows do not block core setup. [Screenshot](screenshots/05-integrations.png)
+## If something goes wrong
 
-9a. **If you selected Live testing**, choose Clausewitz MCP, experimental HOI4 Live Tools, or None in its separate step. Clausewitz MCP by smerss requires native Linux HOI4 1.19.2 and manual Linux game/server setup: WSL on Windows, Linux and SSH on macOS. On Linux it runs directly, with no extra WSL, VM or SSH environment. Follow the [Linux guide](LIVE_TESTING_LINUX.md). If the server is not ready yet, leave the ready checkbox empty: setup records it as a to-do and does not register it. Registering it does not mean live play was tested. HOI4 Live Tools is experimental, slower and not fully tested; it installs on Windows and macOS only.
-
-10. **Review integrations and credentials.** This step appears only when the 3D workflow or HOI4 Live Tools is selected. Check the credential status and per-user setup, then choose **Next**. Secret values stay outside the mod folder. [Screenshot](screenshots/06-mcp-credentials.png)
-
-11. **Choose Git setup.** Select **Initialize a Git repository**, **Preserve the existing repository**, or **Skip Git setup**. Leave **Keep this project local** selected unless you want an online action, which asks for separate approval. [Screenshot](screenshots/07-git.png)
-
-12. **Review the changes.** Choose **Prepare changes** if needed, inspect the planned files and folders, and use **Resolve conflicts** if offered. Nothing has been applied yet; resolve blocking conflicts before choosing **Start installation**. [Screenshot](screenshots/09-dry-run.png)
-
-13. **Let installation finish.** Wait for installation to complete, then choose **Continue**. If setup stops unexpectedly, follow the [recovery instructions](TROUBLESHOOTING.md#installation-was-interrupted).
-
-14. **Open the prepared mod.** On **Project ready**, review the checks and choose **Open in** your primary client when it is available. Follow that client's prompt to approve project tools. Choose **Finish** after reviewing readiness; optional workflow status can still need attention while core setup is ready. [Screenshot](screenshots/08-ready.png)
-
-## Working in the prepared mod
-
-- Edit the shared project instructions, skills, and specialist agents, then run the included sync tools to update the copies for your selected clients.
-- Reopen the project in HOI4 Mod Setup with **Manage an existing project** to update, repair, add a workflow, or remove the setup.
-
-After setup, follow the kit's [first-run guide](https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/docs/first-run.md) to check that your agent works. If something blocks setup, see [Troubleshooting](TROUBLESHOOTING.md).
-
-New projects use **Latest** by default: the current published Agentic HOI4 Modding package, fixed to one exact commit when you prepare the changes. Under **Choose source version**, you can pick a **Specific commit** or a **Release** instead. Existing projects keep their reviewed source choice.
+Find the message in [Troubleshooting](TROUBLESHOOTING.md). If setup stops part-way, follow the [recovery steps](TROUBLESHOOTING.md#installation-was-interrupted).
