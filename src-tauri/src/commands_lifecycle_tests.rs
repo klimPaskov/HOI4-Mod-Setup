@@ -537,6 +537,115 @@ mod offline_lifecycle {
     }
 
     #[test]
+    #[ignore = "live scratch acceptance installs published MCP packages and the hoi4-imagegen release into an isolated profile"]
+    fn live_scratch_install_with_git_leaves_only_the_lock_uncommitted() {
+        let _guard = test_state_guard();
+        let _profile = IsolatedProfile::new();
+        let revision = resolve_source(
+            &HttpSourceClient::new().unwrap(),
+            &SourceRequest {
+                mode: SourceMode::Latest,
+                requested_ref: None,
+                release: None,
+            },
+        )
+        .unwrap()
+        .identity
+        .resolved_revision;
+        let parent = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let root = parent.path().join("atlantis_rising");
+        let mut selection = state(&root, "new");
+        selection["sourceMode"] = json!("pinned_commit");
+        selection["pinnedRef"] = json!(revision);
+        selection["gitMode"] = json!("initialize");
+        selection["initialCommit"] = json!(true);
+        selection["primaryCodingEnvironment"] = json!("claude_code");
+        selection["additionalCodingEnvironments"] = json!(["codex"]);
+        selection["selectedComponents"] = json!([]);
+        selection["meshSelected"] = json!(false);
+        selection["superEventsSelected"] = json!(false);
+        selection["portraitPipeline"] = json!({"enabled":false,"provider":"disabled"});
+        selection["liveTesting"] = json!({"provider":"none"});
+        selection["imageGeneration"] = json!({
+            "primary_provider": "hoi4_imagegen",
+            "additional_providers": [],
+            "route_settings": {"hoi4_imagegen": {"backend": "openai"}},
+            "credential_references": {},
+        });
+        confirm(&mut selection);
+        let (mut plan, prepared) = build_plan(&selection).unwrap();
+        plan.approvals.dry_run_reviewed = true;
+        plan.approvals.external_actions_reviewed = true;
+        let (journal, lock) = run_transaction(
+            &root,
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().to_owned()),
+                post_install_action_runner: Some(run_reviewed_post_install_actions),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(journal.state, "completed");
+        let status = std::process::Command::new("git")
+            .args(["-c", "core.autocrlf=false", "status", "--porcelain"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        let status = String::from_utf8_lossy(&status.stdout).to_string();
+        eprintln!("git status after a fresh install:\n{status}");
+        // Setup's own commit holds every managed file as installed. Only the lock, which is
+        // written after the commit, may remain outside it.
+        let dirty = status
+            .lines()
+            .filter(|line| {
+                !line.ends_with(".hoi4-mod-setup/") && !line.contains("install.lock.json")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            dirty.is_empty(),
+            "files changed after Setup's commit: {dirty:?}"
+        );
+        // The first Check for updates on an untouched project shows no conflict and keeps the
+        // hoi4-imagegen registration in every client file.
+        let mut update_state = selection.clone();
+        update_state["mode"] = json!("existing");
+        update_state["gitMode"] = json!("preserve");
+        confirm(&mut update_state);
+        let (update_plan, update_bytes) = build_plan(&update_state).unwrap();
+        eprintln!("update conflicts: {}", update_plan.conflicts.len());
+        assert!(
+            update_plan.conflicts.is_empty(),
+            "an unchanged project must not conflict on update"
+        );
+        let incoming = incoming_files(&update_plan, &update_bytes);
+        let operations = crate::transaction::update_operations(&lock, &incoming, &root).unwrap();
+        for operation in &operations {
+            eprintln!(
+                "update operation: {} {:?}",
+                operation.destination, operation.action
+            );
+        }
+        assert!(
+            operations
+                .iter()
+                // Setup's own record folder is handled by the update command, not by this plan.
+                .filter(|operation| !operation.destination.starts_with(".hoi4-mod-setup/"))
+                .all(|operation| operation.action == OperationAction::Skip),
+            "an unchanged project must not change on update"
+        );
+        for file in [".mcp.json", ".codex/config.toml"] {
+            let text = std::fs::read_to_string(root.join(file)).unwrap();
+            assert!(
+                text.contains("hoi4_imagegen"),
+                "{file} lost the hoi4_imagegen registration"
+            );
+        }
+    }
+
+    #[test]
     #[ignore = "offline skill ceiling regression requires an explicit committed package checkout"]
     fn offline_image_guidance_preserves_the_published_feature_assets_skill_byte_ceiling() {
         let _guard = test_state_guard();
