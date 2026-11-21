@@ -26,6 +26,7 @@ import DoneStep from "./steps/DoneStep";
 import IntegrationsStep from "./steps/IntegrationsStep";
 import ReviewStep, { splitConflicts } from "./steps/ReviewStep";
 import type { Analysis, AnalysisRequest, ApprovedEvidence, AssistantProvenance, Comparison, Decision, ExportEntry, ExportRequest, ImageChoice, LiveTestingChoice, Platform, PortraitChoice, ReadinessCheck, ScanSummary, SourcePreview } from "./protocol";
+import { seededOptionalIds } from "./platform-defaults";
 
 type Step = "start" | "describe" | "details" | "components" | "integrations" | "review" | "done";
 const STEP_LABELS: Record<Step, string> = {
@@ -657,7 +658,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
       seededAnalysis.current = analysis.analysis_id;
       const recommendedIds = new Set(analysis.component_recommendations.filter((item) => item.recommendation !== "not_recommended").map((item) => item.component_id));
       const currentProfile = current.profiles.find((item) => item.id === profileId) ?? current.profiles.find((item) => item.default) ?? current.profiles[0];
-      setOptional(new Set(optionalComponentsFor(current, currentProfile).filter((component) => recommendedIds.has(component.id) && !DESKTOP_ONLY_COMPONENTS.has(component.id)).map((component) => component.id)));
+      setOptional(seededOptionalIds(optionalComponentsFor(current, currentProfile), recommendedIds, DESKTOP_ONLY_COMPONENTS, platform));
     }
     setStep("components");
   });

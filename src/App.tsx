@@ -10,6 +10,7 @@ import claudeModels from "./claude-models.json";
 import freeAssistantConfig from "./free-assistant.json";
 import DescriptionWand from "./DescriptionWand";
 import { AccountProviderAccess } from "./AccountProviderAccess";
+import { LINUX_ONLY_DEFAULT_COMPONENT_IDS } from "./web/platform-defaults";
 
 const PHASES: Array<{ id: PhaseId; label: string }> = [
   { id: "project", label: "Project" },
@@ -3573,9 +3574,13 @@ export function Components({ state, update }: { state: WizardState; update: (pat
       const profileSelections = state.existingInstallationDetected
         ? defaultProfileIds.filter((id) => result.components.find((component) => component.id === id)?.optional !== true)
         : defaultProfileIds;
+      const platformDefaultIds = state.existingInstallationDetected || currentUiPlatform() !== "linux"
+        ? []
+        : LINUX_ONLY_DEFAULT_COMPONENT_IDS.filter((id) => supportedIds.has(id));
       const selectedComponents = Array.from(new Set([
         ...retainedSelections,
         ...profileSelections,
+        ...platformDefaultIds,
         ...Array.from(installedIds).filter((id) => !environmentIds.has(id) && availableIds.has(id) && supportedIds.has(id)),
         ...Array.from(explicitlyRequestedIds).filter((id) => availableIds.has(id) && supportedIds.has(id)),
         ...requiredIds,
