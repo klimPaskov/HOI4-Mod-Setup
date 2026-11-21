@@ -174,6 +174,7 @@ Code and Codex as the primary client in turn. Each scratch mod includes both
 clients, the full selected skill set, Agent Tools. It installs their
 actual runtimes and performs initialize/tools-list handshakes. Only setup
 analysis is a fixture; no sign-in, paid image call, or game operation runs.
+It also installs one more mod with Git initialised and hoi4-imagegen selected, then checks that only the lock file is left uncommitted, that an unchanged project shows no update conflict, and that the `hoi4_imagegen` registration stays in `.mcp.json` and `.codex/config.toml`. The hoi4-imagegen release is downloaded for real. Run the whole script when you change Git setup, post-install actions, client registrations or the lock write (each run takes about ten minutes).
 Profiles, registrations and projects are temporary. Other optional servers
 need their own prerequisites and separate checks.
 

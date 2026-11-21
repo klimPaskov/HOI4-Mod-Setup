@@ -8,7 +8,7 @@ if (!source || !isAbsolute(source)) {
 const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) =>
   !/(?:TOKEN|SECRET|PASSWORD|API.?KEY|COOKIE|AUTHORIZATION|CREDENTIAL|^ANTHROPIC_|^OPENAI_|^MESHY_|^CODEX_HOME$)/i.test(name)));
 const result = spawnSync(process.execPath, [resolve(import.meta.dirname, "run_rust_tests.mjs"),
-  "live_scratch_install_starts_every_registered_server_for_claude_and_codex", "--", "--ignored", "--nocapture"], {
+  "live_scratch_install_", "--", "--ignored", "--nocapture"], {
   cwd: resolve(import.meta.dirname, ".."),
   env: { ...environment, HOI4_TEST_RUST_THREADS: "1" },
   stdio: "inherit", windowsHide: true,
