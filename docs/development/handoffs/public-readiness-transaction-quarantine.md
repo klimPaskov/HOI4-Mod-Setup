@@ -97,7 +97,7 @@ The existing stage and operation fault matrix, `fail_after_live_mutation`, and e
 - When rollback restores a forward quarantine beside an absent destination and is interrupted before its checkpoint, the retry re-captures the restored bytes as the child's inverse backup. The inverse rollback then treats them as pre-rollback bytes; no bytes are lost because the inverse takes its own backup first.
 - A conflict that keeps both files blocks rollback for manual review instead of rolling back the remaining operations.
 - The Windows flush fallback reopens the directory by its retained path. Ancestor handles deny delete sharing and the identity is compared, but this is not a handle-only flush. Directory-entry durability across sudden power loss is still unproven.
-- `docs/13_security_model.md`, `.agents/skills/hoi4-mod-setup-security/SKILL.md`, and `docs/development/handoffs/session-continuation-2026-10-03.md` still describe displaced bytes as unquarantined. They were outside this task's file scope and need an owner update.
+- `docs/13_security_model.md`, `.agents/skills/hoi4-mod-setup-security/SKILL.md` still describe displaced bytes as unquarantined. They were outside this task's file scope and need an owner update.
 - Items 1, 3, and 4 of the transaction-handles handoff remain open.
 
 ## Audit follow-up (2026-10-03)

@@ -46,7 +46,7 @@ Fix: return `AppError::Process("... timed out")` when no completion was observed
 Evidence: `process.rs` `validate_executable_publisher_uncached` runs `codesign --verify --strict --verbose=2` without a requirement (lines 907-922), then parses `codesign -dv --verbose=4` text with `macos_signature_matches_publisher` (lines 923-944, 958-986).
 `codesign --verify` without `-R` validates the signature against the binary's own designated requirement, so a self-signed signature verifies; the publisher decision then rests on matching display text (`Authority=` and `TeamIdentifier=` lines).
 Failure scenario: a lookalike `claude` placed earlier on PATH or in `~/.local/bin`, signed with a self-made certificate whose common name is `Developer ID Application: Anthropic PBC (Q6L2SF6YDW)`, passes the `Authority=` check; whether `TeamIdentifier=` can be forged for a non-Apple anchor is unverified, so the gate depends on an undocumented codesign behavior rather than a cryptographic check.
-The same function protects the Codex route (`OpenAI`), and the Anthropic Team ID itself is recorded as unverified on a Mac in `session-progress-2026-10-03-claude.md`.
+The same function protects the Codex route (`OpenAI`).
 Fix: verify with an explicit requirement such as `codesign --verify --strict --all-architectures -R='anchor apple generic and certificate leaf[subject.OU] = "Q6L2SF6YDW"'` (and the OpenAI equivalent), treat that exit status as authoritative, and keep text parsing only as a secondary check.
 
 ### P3-1. Renderer account state is not bound to the selected provider
