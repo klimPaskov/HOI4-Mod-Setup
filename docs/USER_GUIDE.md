@@ -74,7 +74,8 @@ For a new mod, enter its name and a short description.
 
 The app suggests a project ID, script prefix, namespace, tags, and starter
 folders. It fills the standard HOI4 mod location and launcher file. Edit any
-value before continuing. Setup creates both `descriptor.mod` files and a replaceable
+value before continuing, then use the assistant's suggestion-confirmation button
+(an imported project also needs its suggestions confirmed). Setup creates both `descriptor.mod` files and a replaceable
 600x600 black `thumbnail.png`.
 
 ![Review the generated project identity and locations](screenshots/03-identity.png)
@@ -125,7 +126,8 @@ project files for a ChatGPT project.
 ![Choose the optional workflows](screenshots/05-integrations.png)
 
 - **3D models workflow** prepares Meshy and Blender on Windows. Add a Meshy key
-  to use it; the key stays in Windows Credential Manager. Missing tools or
+  to use it (**Store in vault**, or **Configure later**); the key stays in Windows
+  Credential Manager. Missing tools or
   credentials leave this workflow incomplete while the rest of setup remains
   usable.
 - **Super Events workflow** adds the popup, templates, example, assets, and
@@ -146,6 +148,10 @@ HOI4 Agent Tools installs and registers its MCP server for your selected coding
 clients on Windows, Linux x64 and Apple silicon Macs, including `.mcp.json` for
 Claude Code. It works independently of the assistant you used for setup.
 
+The credentials step appears only when the 3D models workflow or HOI4 Live Tools
+is selected. Check the status, then continue. Secret values stay outside the mod
+folder.
+
 ![Review selected integrations and credential state](screenshots/06-mcp-credentials.png)
 
 ### Choose Git setup
@@ -160,10 +166,12 @@ ask for a separate confirmation.
 
 ![Review the files and folders before installation](screenshots/09-dry-run.png)
 
-Review the files and folders to add or update, then start installation. For an
+Choose **Prepare changes** if needed and review the files and folders to add or
+update. Nothing is applied until you choose **Start installation**; resolve any
+blocking conflict first with **Resolve conflicts**. For an
 edited file, choose to keep your version, use the incoming version, merge, keep
 both, or skip when available. Installation shows file counts, progress, and an
-estimated time.
+estimated time. When it finishes, choose **Continue**.
 
 Changes are written to your mod folder; use Git to review or undo them.
 
@@ -177,8 +185,14 @@ prepared files. The app offers the actions available for that installation.
 ![Completed setup and project checks](screenshots/08-ready.png)
 
 The Ready screen shows the project and tool checks. **Open in your primary
-client** starts that client in the mod folder when it is available. Optional
+client** starts that client in the mod folder when it is available; approve the
+project's tools when the client asks. Choose **Finish** after reading the checks:
+optional workflows can still need attention while core setup is ready. Optional
 workflows show their own setup status.
+
+In the prepared mod, edit the shared project instructions, skills and specialist
+agents, then run the included sync tools to update the copies for your selected
+clients.
 
 For ChatGPT, check the optional packager component during setup. It adds
 `.tools/package_chatgpt_project_sources.py` and a Windows `.bat` launcher; the
