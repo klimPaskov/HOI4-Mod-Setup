@@ -246,12 +246,18 @@ const downloadBullets = [...platformSummaries].sort((left, right) => installRank
   const packageLink = downloadBase ? `[${summary.package}](${downloadBase}/${encodeURIComponent(summary.package)})` : `\`${summary.package}\``;
   return `- ${label}: ${packageLink}`;
 });
+const MAX_CHANGE_LENGTH = 400;
 const changelogLines = (await readFile(resolve(root, "CHANGELOG.md"), "utf8")).split(/\r?\n/);
 const changesStart = changelogLines.findIndex((line) => line === `## ${releaseVersion}` || line.startsWith(`## ${releaseVersion} - `));
 if (changesStart < 0) throw new Error(`CHANGELOG.md is missing release ${releaseVersion}`);
 const changesEnd = changelogLines.findIndex((line, index) => index > changesStart && line.startsWith("## "));
 const releaseChanges = changelogLines.slice(changesStart + 1, changesEnd < 0 ? undefined : changesEnd);
 if (!releaseChanges.some((line) => line.trim())) throw new Error(`CHANGELOG.md has no changes for release ${releaseVersion}`);
+// The release page is the first thing a new modder reads: keep every change short and free of internal identifiers.
+for (const line of releaseChanges.filter((entry) => entry.startsWith("- "))) {
+  if (line.length > MAX_CHANGE_LENGTH) throw new Error(`CHANGELOG.md release ${releaseVersion}: a change is ${line.length} characters, the limit is ${MAX_CHANGE_LENGTH}. Say what changed for a modder in one or two plain sentences: ${line.slice(0, 60)}`);
+  if (/Team ID|Developer ID|decision [A-Z]-d+|[DR]-d{1,3}/.test(line)) throw new Error(`CHANGELOG.md release ${releaseVersion}: a change names an internal decision or signing identifier: ${line.slice(0, 60)}`);
+}
 await writeFile(resolve(outputRoot, "RELEASE_NOTES.md"), [
   `# HOI4 Mod Setup ${releaseVersion}`,
   "",
@@ -262,9 +268,9 @@ await writeFile(resolve(outputRoot, "RELEASE_NOTES.md"), [
   "Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app to Applications. On Linux x64, make the `.AppImage` executable and run it, or install the `.deb` with your Debian/Ubuntu package manager.",
   "",
   "## Changes", ...releaseChanges, "",
-  "Choose a main image provider and optional alternatives; the ChatGPT sign-in in hoi4-imagegen is the default. Coding clients remain independent of the setup assistant. Change image and live-testing providers later in Update and repair.",
+  "Setup installs hoi4-imagegen with one checkbox and offers its ChatGPT sign-in. Your coding client is your own choice and is separate from the setup assistant. You can change image and live-testing providers later in **Update and repair**.",
   "",
-  "Optional live testing offers Clausewitz MCP by smerss, which requires native Linux HOI4 1.19.2 and manual Linux game/server setup. Follow the [Linux setup guide](https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/LIVE_TESTING_LINUX.md); registration alone does not verify gameplay. Experimental HOI4 Live Tools is slower and not fully tested; its current upstream package supports Windows only, and the macOS scaffold is incomplete.",
+  "Live testing is optional. Clausewitz MCP by smerss needs native Linux HOI4 1.19.2 and a Linux game and server you prepare yourself (see the [Linux live testing guide](https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/LIVE_TESTING_LINUX.md)); registering it does not prove that gameplay works. HOI4 Live Tools is experimental, slower and not fully tested, and installs on Windows and macOS.",
   "",
   "See the [README](https://github.com/klimPaskov/HOI4-Mod-Setup#readme) and [Quickstart](https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/QUICKSTART.md) for provider choices and setup steps.",
   "",
