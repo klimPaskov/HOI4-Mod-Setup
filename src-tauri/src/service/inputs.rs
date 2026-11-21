@@ -1216,6 +1216,9 @@ mod location_message_tests {
         assert!(message.contains("projects"), "{message}");
         assert!(message.contains("mod"), "{message}");
         assert!(message.contains("Choose the HOI4 mod folder for both"));
-        assert!(!message.contains("\\?\\"), "no extended-length prefix: {message}");
+        assert!(
+            !message.contains("\\?\\"),
+            "no extended-length prefix: {message}"
+        );
     }
 }
