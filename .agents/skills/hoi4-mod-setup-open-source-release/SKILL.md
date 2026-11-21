@@ -314,4 +314,4 @@ or screenshots. Validate the canonical tree through `pnpm validate`
 
 Update this skill when any Git, GitHub, CI, dependency, version, packaging, signing, notarization, updater, or release workflow changes.
 
-Stable release notes lead with the platform downloads, explain image and live-testing choices in plain language, and link the setup guide and current README. Emit community signing and notarization limits only for platforms whose verified build metadata declares community signing; do not replace signature evidence with a generic false-positive claim.
+Stable release notes lead with the platform downloads, explain image and live-testing choices in plain language, and link the setup guide and current README. Emit community signing and notarization limits only for platforms whose verified build metadata declares community signing; do not replace signature evidence with a generic false-positive claim. The script refuses a changelog change over 400 characters or one that names a decision number or signing identifier, so write each change for a modder in one or two plain sentences.

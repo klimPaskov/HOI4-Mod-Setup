@@ -96,7 +96,8 @@ test(`curates ${signing} installers, release notes, and complete updater metadat
       releaseNotes.split("\n").filter((line) => /^- (Windows|Mac|Linux)/.test(line)).map((line) => line.split(":")[0]),
       ["- Windows", "- Mac (Apple silicon)", "- Mac (Intel)", "- Linux x64 (AppImage)", "- Linux x64 (Debian/Ubuntu)"],
     );
-    for (const feature of ["hoi4-imagegen is the default", "Coding clients remain independent", "Update and repair", "Clausewitz MCP by smerss", "native Linux HOI4 1.19.2", "manual Linux game/server setup", "supports Windows only", "README", "Quickstart"]) assert.ok(releaseNotes.includes(feature), feature);
+    for (const feature of ["hoi4-imagegen with one checkbox", "separate from the setup assistant", "Update and repair", "Clausewitz MCP by smerss", "native Linux HOI4 1.19.2", "you prepare yourself", "installs on Windows and macOS", "README", "Quickstart"]) assert.ok(releaseNotes.includes(feature), feature);
+    assert.doesNotMatch(releaseNotes, /supports Windows only|scaffold is incomplete|Choose a main image provider/);
     for (const step of ["**More info**, then **Run anyway**", "**Privacy & Security**", "**Open Anyway**", "docs/RUN_ANYWAY.md"]) assert.ok(releaseNotes.includes(step), step);
     assert.equal(releaseNotes.includes("community certificate named ChaosX"), signing === "community");
     assert.equal(releaseNotes.includes("not Apple-notarized"), signing === "community");
@@ -129,6 +130,8 @@ test(`curates ${signing} installers, release notes, and complete updater metadat
 for (const [label, changelog, expectedError] of [
   ["missing", "# Changelog\n\n## 0.3.0\n\n- Another version.\n", /missing release 0\.2\.0/],
   ["empty", "# Changelog\n\n## 0.2.0 - 2026-10-13\n\n## 0.1.0\n\n- Older changes.\n", /no changes for release 0\.2\.0/],
+  ["overlong", `# Changelog\n\n## 0.2.0 - 2026-10-13\n\n- ${"A very long change. ".repeat(30)}\n`, /limit is 400/],
+  ["internal", "# Changelog\n\n## 0.2.0 - 2026-10-13\n\n- Accept the Developer ID signature (Team ID ABC123).\n", /internal decision or signing identifier/],
 ]) {
   test(`release curation rejects a ${label} version changelog section`, async () => {
     const temporary = await mkdtemp(join(tmpdir(), "hoi4-mod-setup-changelog-test-"));

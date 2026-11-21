@@ -20,7 +20,7 @@ Pre-releases use identifiers such as `v0.3.0-beta.1`.
 4. Confirm user-facing README, release notes, support status, and known limitations.
 5. Run `pnpm release:notices THIRD_PARTY_NOTICES.md` to refresh the checked-in notices, then `pnpm release:sbom` for `dist/release/SBOM.cdx.json`. Native builds also generate both inventories under `dist/release/`. Review them together with bundled assets and dependency license text.
 6. Confirm no credentials or private paths are present in artifacts, logs, source maps, or debug symbols.
-7. Update the changelog and version through the repository-owned release script.
+7. Update the changelog and version through the repository-owned release script. Write each change for a modder in one or two plain sentences (at most 400 characters, no decision numbers or signing identifiers). `scripts/prepare_release_assets.mjs` (run by the release workflow) refuses a longer or internal entry, and the release page is built from this section.
 8. Update affected repo-local skills when release, signing, packaging, or validation steps changed.
 
 Set the intended version once with `pnpm version:set -- MAJOR.MINOR.PATCH` and
