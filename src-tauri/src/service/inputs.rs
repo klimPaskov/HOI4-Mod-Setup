@@ -998,13 +998,27 @@ pub(crate) fn project_identity_with_launcher(
             .ok_or_else(|| AppError::InvalidInput("project root has no parent".into()))?;
         let project_parent = validate_project_root(project_parent)?;
         if !same_project_root(&launcher_parent, &project_parent) {
-            return Err(AppError::InvalidInput(
-                "project folder and launcher descriptor must use the same HOI4 mod directory"
-                    .into(),
-            ));
+            return Err(AppError::InvalidInput(location_mismatch_message(
+                root.parent().unwrap_or(root),
+                identity
+                    .launcher_descriptor_path
+                    .as_deref()
+                    .and_then(Path::parent)
+                    .unwrap_or(root),
+            )));
         }
     }
     Ok(identity)
+}
+
+/// Tells a modder what to change when the project folder and the launcher
+/// descriptor are in different folders, by naming both.
+fn location_mismatch_message(project_parent: &Path, launcher_parent: &Path) -> String {
+    format!(
+        "The project folder and the launcher descriptor must be in the same HOI4 mod folder. The project is in {} and the descriptor in {}. Choose the HOI4 mod folder for both.",
+        project_parent.display(),
+        launcher_parent.display()
+    )
 }
 
 pub(crate) fn generated_state(state: &Value) -> BTreeMap<String, String> {
@@ -1187,5 +1201,21 @@ pub(crate) fn image_generation_credential_field_supported(provider: &str, field:
         "microsoft_foundry" => matches!(field, "resource_url" | "api_key"),
         "aws_bedrock" => matches!(field, "access_key" | "secret_key"),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod location_message_tests {
+    use super::location_mismatch_message;
+    use std::path::Path;
+
+    #[test]
+    fn the_message_names_both_folders_and_the_fix() {
+        let message = location_mismatch_message(Path::new("projects"), Path::new("mod"));
+        assert!(message.contains("same HOI4 mod folder"));
+        assert!(message.contains("projects"), "{message}");
+        assert!(message.contains("mod"), "{message}");
+        assert!(message.contains("Choose the HOI4 mod folder for both"));
+        assert!(!message.contains("\\?\\"), "no extended-length prefix: {message}");
     }
 }
