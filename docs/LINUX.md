@@ -41,4 +41,4 @@ API image-provider adapters also require `libsecret-tools`; the Debian package i
 
 Settings use `$XDG_CONFIG_HOME/hoi4-mod-setup`, application data uses `$XDG_DATA_HOME/hoi4-mod-setup`, and verified downloads use `$XDG_CACHE_HOME/hoi4-mod-setup`, with standard XDG defaults. Project transaction journals and installation locks remain under `.hoi4-mod-setup` in the selected mod.
 
-The verified Meshy/Blender 3D bootstrap and experimental HOI4 Live Tools installer remain Windows-only. Their unavailable state does not block the Linux core workflow. HOI4 Agent Tools runs on Windows, Linux x64 and Apple silicon macOS; the [README](../README.md#desktop-app-recommended) compares the three systems.
+The verified Meshy/Blender 3D bootstrap remains Windows-only, and experimental HOI4 Live Tools installs on Windows and macOS, not Linux. Their unavailable state does not block the Linux core workflow. HOI4 Agent Tools runs on Windows, Linux x64 and Apple silicon macOS; the [README](../README.md#desktop-app-recommended) compares the three systems.

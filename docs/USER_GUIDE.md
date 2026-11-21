@@ -140,7 +140,7 @@ project files for a ChatGPT project.
   confirm readiness. Configure later records a to-do without registration.
   HOI4 Live Tools is experimental, slower and not fully tested. It installs
   on Windows and macOS only.
-  None disables live testing. The next capture is `17-live-testing.png`.
+  None disables live testing.
 
 HOI4 Agent Tools installs and registers its MCP server for your selected coding
 clients on Windows, Linux x64 and Apple silicon Macs, including `.mcp.json` for

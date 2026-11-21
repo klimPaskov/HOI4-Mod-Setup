@@ -37,7 +37,6 @@ Follow these steps to prepare a new or existing mod for AI-assisted development.
 ## Working in the prepared mod
 
 - Edit the shared project instructions, skills, and specialist agents, then run the included sync tools to update the copies for your selected clients.
-- Each specialist subagent has a fixed Claude model tier: Opus for the improvement loop planner, Sonnet for the 3D pipeline, feature completion auditor, localisation auditor, scripted system architect, and skill maintainer, and Haiku for the rest.
 - Reopen the project in HOI4 Mod Setup with **Manage an existing project** to update, repair, add a workflow, or remove the setup.
 
 After setup, follow the kit's [first-run guide](https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/docs/first-run.md) to check that your agent works. If something blocks setup, see [Troubleshooting](TROUBLESHOOTING.md).
