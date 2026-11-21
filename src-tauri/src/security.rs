@@ -99,7 +99,7 @@ pub fn validate_external_destination(raw: &str) -> Result<PathBuf, AppError> {
         .any(|component| matches!(component, Component::ParentDir))
     {
         return Err(AppError::PathSecurity(
-            "external destination cannot contain parent traversal".into(),
+            "A path outside the project cannot contain a '..' step. Use the full path of the folder instead.".into(),
         ));
     }
     let mut current = PathBuf::new();

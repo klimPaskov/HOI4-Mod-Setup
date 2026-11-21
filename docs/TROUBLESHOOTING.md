@@ -143,6 +143,22 @@ The app keeps the unverified files out of your mod.
 
 **Fix:** Check your internet connection and retry **Prepare changes**.
 
+## The HOI4 mod folder was not found
+
+> The standard HOI4 mod folder was not found. Choose its location once.
+
+**Cause:** Setup looks for `Documents/Paradox Interactive/Hearts of Iron IV/mod` (on Linux, `$XDG_DATA_HOME/Paradox Interactive/Hearts of Iron IV/mod`). It is created when the game starts for the first time, and it can also be somewhere else if you moved your Documents folder.
+
+**Fix:** Start Hearts of Iron IV once and close it, then reopen the step. Or choose the folder yourself next to **Project folder**. A new mod needs this folder because the launcher only lists mods that have a descriptor inside it.
+
+## The project folder and launcher descriptor must be in the same HOI4 mod folder
+
+> The project folder and the launcher descriptor must be in the same HOI4 mod folder.
+
+**Cause:** A new mod has two parts: the project folder and a small `.mod` launcher descriptor. The launcher only finds the mod when both sit in the HOI4 `mod` folder. The message names the folder each one is in.
+
+**Fix:** Choose the HOI4 mod folder as the location of both.
+
 ## The setup source returned GitHub HTTP 403
 
 > The setup source could not be downloaded or prepared. Check your connection and try again; nothing was changed.
