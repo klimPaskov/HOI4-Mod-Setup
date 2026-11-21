@@ -98,6 +98,8 @@ cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
+When a full Rust build is not practical, still check the files you changed before you push: `rustfmt +1.90.0 --edition 2021 --check <file>`. The edition must be 2021 (the crates' edition), because rustfmt's default edition rewrites imports and trailing semicolons the project does not use. CI's Format step fails a push that skips this.
+
 The web edition needs the `wasm32-unknown-unknown` Rust target and the
 `wasm-bindgen` CLI at the exact version in `Cargo.lock` (`cargo install
 wasm-bindgen-cli --version <version> --locked`); `scripts/build_web.mjs` stops
