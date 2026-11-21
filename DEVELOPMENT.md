@@ -232,6 +232,10 @@ The Tauri CLI uses the workspace-root `target/release` directory for native
 bundles; the release and launch-smoke scripts also accept the alternate
 `src-tauri/target/release` layout used by standalone Tauri projects.
 
+### Dependency audit
+
+CI and the release gate audit npm dependencies in two steps. `pnpm audit --prod --audit-level high` covers what users install and has no exceptions. `pnpm audit:gate` runs the full audit including development tools and fails on every high or critical advisory except one listed in `scripts/audit-exceptions.json` for its exact package, with a reason and a review date (maintainer decision D-97). A listed advisory still fails when it reaches the production dependencies, when its advisory names a patched version, when the review date has passed, or when the entry no longer matches any advisory. The list is empty while no such advisory exists.
+
 Transaction fault tests, security tests, accessibility tests, and release verification should also have repository-owned commands. Update this file and the owning skill when command names change.
 
 ## Planning and template validation

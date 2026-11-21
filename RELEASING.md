@@ -44,7 +44,8 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 pnpm test:rust
 cargo check --manifest-path fuzz/Cargo.toml --bins
-pnpm audit --audit-level high
+pnpm audit --prod --audit-level high
+pnpm audit:gate
 cargo audit
 ```
 

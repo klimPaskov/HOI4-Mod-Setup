@@ -78,7 +78,8 @@ jobs:
           pnpm test:e2e
           pnpm test:manifest
           pnpm test:release-assets
-          pnpm audit --audit-level high
+          pnpm audit --prod --audit-level high
+          pnpm audit:gate
           cargo install cargo-audit --version 0.22.2 --locked
           cargo audit
           python scripts/validate_repository.py
