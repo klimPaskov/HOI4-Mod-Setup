@@ -1253,6 +1253,48 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByLabelText("selected components")).toHaveTextContent("core.future_skills");
   });
 
+  describe("the Linux setup guide", () => {
+    const guide = {
+      id: "docs.linux", display_name: "Native Linux setup guide", category: "documentation", optional: true, platforms: ["all"],
+      source: { kind: "file", path: "docs/linux.md" }, destination: { path: "docs/linux.md", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [],
+      update: { strategy: "replace_if_unmodified", remove_obsolete: false, preserve_local_additions: true },
+    };
+    const userAgent = (value: string) => vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(value);
+    const selectedFor = async (agent: string) => {
+      userAgent(agent);
+      vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: {
+        schema_version: "1.0.0", manifest_id: "linux-guide",
+        source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
+        repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
+        components: [guide], profiles: [{ id: "core", display_name: "Core", components: [], default: true }],
+      } as unknown as SourceManifestPreview });
+      function ControlledComponents() {
+        const [state, setState] = useState({ aiProvider: "codex", sourceMode: "latest", pinnedRef: "", selectedComponents: [] } as unknown as WizardState);
+        return <><Components state={state} update={(patch) => setState((value) => ({ ...value, ...patch }))} /><output aria-label="selected guide components">{state.selectedComponents.join(",")}</output></>;
+      }
+      render(<ControlledComponents />);
+      await screen.findByText("Components loaded.");
+      return screen.getByLabelText("selected guide components");
+    };
+    afterEach(() => vi.restoreAllMocks());
+
+    it("is ticked by default on Linux", async () => {
+      expect(await selectedFor("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15")).toHaveTextContent("docs.linux");
+    });
+
+    it.each([
+      ["Windows", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"],
+      ["macOS", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15"],
+    ])("is left unticked, but can be ticked, on %s", async (_name, agent) => {
+      const selected = await selectedFor(agent);
+      expect(selected).not.toHaveTextContent("docs.linux");
+      const row = screen.getByRole("button", { name: /Native Linux setup guide/ });
+      expect(row).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(row);
+      expect(selected).toHaveTextContent("docs.linux");
+    });
+  });
+
   it("does not silently select a newly defaulted optional for an existing installation", async () => {
     const future = {
       id: "workflow.future_tools", display_name: "Future tools", category: "workflow", optional: true, platforms: ["all"],

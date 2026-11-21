@@ -5,6 +5,7 @@ HOI4 Mod Setup follows semantic versioning.
 ## Unreleased
 
 - Release notes no longer say that HOI4 Live Tools is Windows only, and a changelog entry that is too long or names an internal decision stops a release.
+- The Native Linux setup guide is ticked by default only on Linux. On Windows and macOS you can still tick it.
 
 - Audit dependencies in two steps. The audit of what users install stays strict, and a full audit including development tools fails on every high or critical advisory except a short reviewed list in `scripts/audit-exceptions.json`. Nothing changes in the installed app.
 
