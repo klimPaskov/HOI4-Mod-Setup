@@ -125,11 +125,12 @@ project files for a ChatGPT project.
 
 ![Choose the optional workflows](screenshots/05-integrations.png)
 
-- **3D models workflow** prepares Meshy and Blender on Windows. Add a Meshy key
-  to use it (**Store in vault**, or **Configure later**); the key stays in Windows
-  Credential Manager. Missing tools or
-  credentials leave this workflow incomplete while the rest of setup remains
-  usable.
+- **3D models workflow** prepares Blender and the HOI4 mesh tools on Windows.
+  Models are made in Tripo's web app in your own browser, so you need a Tripo
+  account but no key. A Meshy key is optional: choose **Configure later**
+  unless you continue old Meshy jobs, and a stored key stays in Windows
+  Credential Manager. Missing tools leave this workflow incomplete while the
+  rest of setup remains usable.
 - **Super Events workflow** adds the popup, templates, example, assets, and
   guidance for building Super Events with your mod's script prefix.
 - **ComfyUI portrait production** supports Comfy Cloud, Local ComfyUI, or RunPod.

@@ -105,8 +105,10 @@ with your coding client.
 - **[ComfyUI portraits](https://github.com/klimPaskov/comfyui-hoi4-portraits)** are
   identity-preserving leader portrait workflows, run on Comfy Cloud, your own ComfyUI, or RunPod.
 - **[3D models workflow](docs/USER_GUIDE.md#add-optional-workflows)** prepares
-  [Meshy](https://www.meshy.ai/) and [Blender](https://www.blender.org/) on Windows. A missing
-  Meshy key leaves only this workflow incomplete.
+  [Blender](https://www.blender.org/) and the HOI4 mesh tools on Windows. Models are made in
+  [Tripo](https://www.tripo3d.ai/)'s web app in your own browser, which needs no API key. The
+  workflow can also prepare [Meshy](https://www.meshy.ai/) for old Meshy jobs when you add a Meshy key; no key
+  is needed otherwise, and a missing key never leaves the workflow incomplete.
 - **[Coding clients](docs/36_coding_environment_catalog.md)**: Claude Code, Codex, Cursor, and many
   more each get their own native package. You pick one primary client and any others.
 
