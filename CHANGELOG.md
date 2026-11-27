@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- The 3D models workflow screens and guides now say that models are made in Tripo, which needs no key, and that a Meshy key is optional and only for old Meshy jobs.
+
 ## 0.9.6 - 2026-11-22
 
 - Release notes no longer say that HOI4 Live Tools is Windows only, and a changelog entry that is too long or names an internal decision stops a release.
