@@ -646,6 +646,184 @@ fn ensure_mcp_package_replaceable(plan: &InstallationPlan) -> Result<(), AppErro
 
 const MCP_IN_USE_MESSAGE: &str = "This setup needs to reinstall HOI4 Agent Tools at the version it uses, but an app connected to the HOI4 MCP is using the installed copy. Close Codex, Claude Code, Cursor, or any other app using the HOI4 MCP, then prepare the changes again. For an older project, Check for updates moves it to the current version instead.";
 
+const NODE_REQUIREMENT_ID: &str = "node.hoi4_agent_tools";
+const NODE_DOWNLOAD_PAGE: &str = "https://nodejs.org/en/download";
+
+/// The Node.js the Windows MCP bootstrap would use. It searches `node` on
+/// Path, then `%ProgramFiles%/nodejs` and `%LOCALAPPDATA%/Programs/nodejs`,
+/// takes the first supported one, installs the official Node.js 24 zip
+/// when none is installed, and fails when only unsupported ones are. The
+/// client command runs the first `node` on Path, so a second Node.js would
+/// not help, and the failure would come only after the project changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum McpNode {
+    Supported(String),
+    Absent,
+    Unsupported(String),
+}
+
+/// HOI4 Agent Tools' engines range: Node.js 22.19+ in major 22, or 24, as
+/// native x64 (the bootstrap's own check).
+fn mcp_node_version_supported(version: &str, arch: &str) -> bool {
+    let Some(captures) = regex::Regex::new(r"^v(22|24)\.([0-9]+)\.([0-9]+)$")
+        .expect("static Node.js version regex")
+        .captures(version)
+    else {
+        return false;
+    };
+    arch == "x64"
+        && (&captures[1] == "24" || captures[2].parse::<u32>().is_ok_and(|minor| minor >= 19))
+}
+
+fn mcp_node_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(path) = crate::process::find_path_executable(&["node.exe"]) {
+        candidates.push(path);
+    }
+    for (variable, relative) in [
+        ("ProgramFiles", "nodejs/node.exe"),
+        ("LOCALAPPDATA", "Programs/nodejs/node.exe"),
+    ] {
+        if let Some(value) = std::env::var_os(variable).filter(|value| !value.is_empty()) {
+            let candidate = PathBuf::from(value).join(relative);
+            if candidate.is_file() {
+                candidates.push(candidate);
+            }
+        }
+    }
+    let mut unique: Vec<PathBuf> = Vec::new();
+    for candidate in candidates {
+        let canonical = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+        if !unique.contains(&canonical) {
+            unique.push(canonical);
+        }
+    }
+    unique
+}
+
+/// Run an installed Node.js for its version and architecture. Only the
+/// OpenJS Foundation build is run, which is also what the MCP health check
+/// accepts; any other build is described without being started.
+fn probe_mcp_node(node: &Path) -> Result<(String, String), String> {
+    let Ok(sha256) = crate::process::verified_executable_sha256(node, "OpenJS Foundation") else {
+        return Err("a Node.js that is not the official nodejs.org build".into());
+    };
+    let spec = crate::process::ProcessSpec {
+        executable: node.to_path_buf(),
+        executable_sha256: Some(sha256),
+        args: vec!["-p".into(), "process.version + ' ' + process.arch".into()],
+        cwd: None,
+        platform: Platform::current(),
+        environment_names: Vec::new(),
+        timeout_seconds: 30,
+        max_output_bytes: 256,
+    };
+    let unknown = || "an installed Node.js that could not report its version".to_string();
+    let result = spec
+        .run(&[node.to_path_buf()], None)
+        .map_err(|_| unknown())?;
+    if result.status_code != Some(0) || result.timed_out {
+        return Err(unknown());
+    }
+    let mut parts = result.stdout.split_whitespace();
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(version), Some(arch), None)
+            if version.len() <= 32
+                && arch.len() <= 16
+                && version
+                    .chars()
+                    .all(|c| c == 'v' || c == '.' || c.is_ascii_digit())
+                && arch.chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            Ok((version.to_owned(), arch.to_owned()))
+        }
+        _ => Err(unknown()),
+    }
+}
+
+fn classify_mcp_node(
+    candidates: &[PathBuf],
+    probe: impl Fn(&Path) -> Result<(String, String), String>,
+) -> McpNode {
+    let mut first_unsupported = None;
+    for candidate in candidates {
+        match probe(candidate) {
+            Ok((version, arch)) if mcp_node_version_supported(&version, &arch) => {
+                return McpNode::Supported(version);
+            }
+            Ok((version, arch)) => {
+                first_unsupported.get_or_insert(format!("Node.js {version} ({arch})"));
+            }
+            Err(described) => {
+                first_unsupported.get_or_insert(described);
+            }
+        }
+    }
+    first_unsupported.map_or(McpNode::Absent, McpNode::Unsupported)
+}
+
+fn mcp_unsupported_node_message(found: &str) -> String {
+    format!(
+        "HOI4 Agent Tools needs Node.js 24 LTS, or Node.js 22.19 or later (64-bit), but this PC has {found}. Install Node.js 24 LTS from {NODE_DOWNLOAD_PAGE} (pick version 24 there; the newest LTS, 26, is not supported yet), or uninstall the current Node.js so Setup installs Node.js 24 for you."
+    )
+}
+
+fn node_requirement(node: &McpNode) -> SetupRequirement {
+    let (status, detail) = match node {
+        McpNode::Supported(version) => ("ready", format!("Node.js {version} was found.")),
+        McpNode::Absent => (
+            "installs",
+            "Node.js is not installed. Setup installs the official Node.js 24 LTS for your Windows user, with no administrator rights.".to_string(),
+        ),
+        McpNode::Unsupported(found) => (
+            "missing",
+            format!(
+                "{} Then choose Check again. You can also turn off HOI4 Agent Tools in the setup choices.",
+                mcp_unsupported_node_message(found)
+            ),
+        ),
+    };
+    SetupRequirement {
+        id: NODE_REQUIREMENT_ID.into(),
+        label: "Node.js for HOI4 Agent Tools".into(),
+        status: status.into(),
+        detail,
+    }
+}
+
+fn mcp_bootstrap_runs(plan: &InstallationPlan) -> bool {
+    plan.maintenance_mode.as_deref() != Some("remove")
+        && crate::mcp::has_native_route(Platform::current())
+        && plan
+            .external_actions
+            .iter()
+            .any(|action| action.component_id == "mcp.hoi4_agent_tools.bootstrap")
+        && plan
+            .optional_workflows
+            .get(crate::mcp::COMPONENT_ID)
+            .is_some_and(|state| {
+                matches!(state.as_str(), "selected_pending" | "incomplete" | "ready")
+            })
+}
+
+fn windows_mcp_node(plan: &InstallationPlan) -> Option<McpNode> {
+    (Platform::current() == Platform::Windows && mcp_bootstrap_runs(plan))
+        .then(|| classify_mcp_node(&mcp_node_candidates(), probe_mcp_node))
+}
+
+/// Refuse an installation whose MCP setup cannot succeed because only an
+/// unsupported Node.js is installed. Its bootstrap would fail at readiness,
+/// after every project file was applied, and leave the project in Recovery.
+fn ensure_mcp_node_supported(node: Option<McpNode>) -> Result<(), AppError> {
+    match node {
+        Some(McpNode::Unsupported(found)) => Err(AppError::InvalidInput(format!(
+            "{} Then prepare the changes again, or turn off HOI4 Agent Tools in the setup choices. Nothing was changed.",
+            mcp_unsupported_node_message(&found)
+        ))),
+        _ => Ok(()),
+    }
+}
+
 /// The current bytes of a generated file that still matches its installed
 /// hash. They are exactly the generated content, so a lock written before
 /// generated content was kept for updated files can still be repaired.
@@ -3101,20 +3279,11 @@ fn python_requirement(check: Result<PathBuf, McpPython>) -> SetupRequirement {
 /// project; it only reports what the installation would fail on.
 fn setup_requirements(plan: &InstallationPlan) -> Vec<SetupRequirement> {
     let mut requirements = Vec::new();
-    let mcp_runs = plan.maintenance_mode.as_deref() != Some("remove")
-        && crate::mcp::has_native_route(Platform::current())
-        && plan
-            .external_actions
-            .iter()
-            .any(|action| action.component_id == "mcp.hoi4_agent_tools.bootstrap")
-        && plan
-            .optional_workflows
-            .get(crate::mcp::COMPONENT_ID)
-            .is_some_and(|state| {
-                matches!(state.as_str(), "selected_pending" | "incomplete" | "ready")
-            });
-    if mcp_runs {
+    if mcp_bootstrap_runs(plan) {
         requirements.push(python_requirement(mcp_bootstrap_python()));
+    }
+    if let Some(node) = windows_mcp_node(plan) {
+        requirements.push(node_requirement(&node));
     }
     requirements
 }
@@ -7310,6 +7479,9 @@ fn apply_installation(plan_id: String, project_root: String) -> Result<Transacti
     // An MCP client may have started after the review; refuse before any
     // project file changes rather than failing at readiness.
     ensure_mcp_package_replaceable(&approved_plan).map_err(planning_command_error)?;
+    // Only an unsupported Node.js is installed: the MCP bootstrap would fail
+    // at readiness after the project changed, so refuse while nothing has.
+    ensure_mcp_node_supported(windows_mcp_node(&approved_plan)).map_err(planning_command_error)?;
     // A missing tool is reported on the review screen (check_installation_requirements)
     // but never blocks: the bootstrap records an incomplete state and Repair
     // finishes it once the tool is installed.
@@ -7882,7 +8054,11 @@ mod tests {
                     .iter()
                     .map(|requirement| requirement.id.as_str())
                     .collect::<Vec<_>>(),
-                vec![PYTHON_REQUIREMENT_ID],
+                if Platform::current() == Platform::Windows {
+                    vec![PYTHON_REQUIREMENT_ID, NODE_REQUIREMENT_ID]
+                } else {
+                    vec![PYTHON_REQUIREMENT_ID]
+                },
                 "{state}"
             );
         }
@@ -7893,6 +8069,146 @@ mod tests {
         let mut removal = requirement_plan(Some("selected_pending"), true);
         removal.maintenance_mode = Some("remove".into());
         assert!(setup_requirements(&removal).is_empty());
+    }
+
+    #[test]
+    fn mcp_node_versions_follow_the_agent_tools_engines_range() {
+        for (version, arch, supported) in [
+            ("v24.0.0", "x64", true),
+            ("v24.22.0", "x64", true),
+            ("v22.19.0", "x64", true),
+            ("v22.18.9", "x64", false),
+            ("v26.13.1", "x64", false),
+            ("v20.18.0", "x64", false),
+            ("v24.22.0", "arm64", false),
+            ("v24.22.0", "ia32", false),
+            ("24.22.0", "x64", false),
+            ("v24.22", "x64", false),
+        ] {
+            assert_eq!(
+                mcp_node_version_supported(version, arch),
+                supported,
+                "{version} {arch}"
+            );
+        }
+    }
+
+    type NodeAnswer<'a> = (&'a str, Result<(&'a str, &'a str), &'a str>);
+
+    fn node_probe(
+        answers: &[NodeAnswer<'_>],
+    ) -> impl Fn(&Path) -> Result<(String, String), String> {
+        let answers = answers
+            .iter()
+            .map(|(path, answer)| {
+                (
+                    PathBuf::from(path),
+                    answer
+                        .map(|(version, arch)| (version.to_owned(), arch.to_owned()))
+                        .map_err(ToOwned::to_owned),
+                )
+            })
+            .collect::<Vec<_>>();
+        move |path: &Path| {
+            answers
+                .iter()
+                .find(|(candidate, _)| candidate == path)
+                .map(|(_, answer)| answer.clone())
+                .expect("probed path is a candidate")
+        }
+    }
+
+    #[test]
+    fn the_windows_mcp_node_is_classified_as_the_bootstrap_would_use_it() {
+        // No Node.js: the bootstrap installs the official Node.js 24 zip itself.
+        assert_eq!(classify_mcp_node(&[], node_probe(&[])), McpNode::Absent);
+        // The newest LTS alone, as on a PC that just installed "Node.js LTS".
+        let latest = [("C:/Program Files/nodejs/node.exe", Ok(("v26.13.1", "x64")))];
+        assert_eq!(
+            classify_mcp_node(
+                &[PathBuf::from("C:/Program Files/nodejs/node.exe")],
+                node_probe(&latest)
+            ),
+            McpNode::Unsupported("Node.js v26.13.1 (x64)".into())
+        );
+        // A supported one anywhere in the search wins, as in the bootstrap.
+        let mixed = [
+            ("C:/Program Files/nodejs/node.exe", Ok(("v20.18.0", "x64"))),
+            (
+                "C:/Users/u/AppData/Local/Programs/nodejs/node.exe",
+                Ok(("v24.22.0", "x64")),
+            ),
+        ];
+        assert_eq!(
+            classify_mcp_node(
+                &[
+                    PathBuf::from("C:/Program Files/nodejs/node.exe"),
+                    PathBuf::from("C:/Users/u/AppData/Local/Programs/nodejs/node.exe"),
+                ],
+                node_probe(&mixed)
+            ),
+            McpNode::Supported("v24.22.0".into())
+        );
+        // A build that is not the signed nodejs.org one is described, never run.
+        let unsigned = [(
+            "C:/tools/node.exe",
+            Err("a Node.js that is not the official nodejs.org build"),
+        )];
+        assert_eq!(
+            classify_mcp_node(&[PathBuf::from("C:/tools/node.exe")], node_probe(&unsigned)),
+            McpNode::Unsupported("a Node.js that is not the official nodejs.org build".into())
+        );
+    }
+
+    #[test]
+    fn the_node_requirement_names_what_was_found_and_the_next_step() {
+        let ready = node_requirement(&McpNode::Supported("v24.22.0".into()));
+        assert_eq!(
+            (ready.id.as_str(), ready.status.as_str()),
+            (NODE_REQUIREMENT_ID, "ready")
+        );
+        let installs = node_requirement(&McpNode::Absent);
+        assert_eq!(installs.status, "installs");
+        assert!(installs
+            .detail
+            .contains("Setup installs the official Node.js 24 LTS"));
+        let missing = node_requirement(&McpNode::Unsupported("Node.js v26.13.1 (x64)".into()));
+        assert_eq!(missing.status, "missing");
+        for expected in [
+            "this PC has Node.js v26.13.1 (x64)",
+            "Install Node.js 24 LTS from https://nodejs.org/en/download",
+            "choose Check again",
+        ] {
+            assert!(
+                missing.detail.contains(expected),
+                "{expected}: {}",
+                missing.detail
+            );
+        }
+    }
+
+    #[test]
+    fn an_unsupported_node_refuses_the_installation_before_any_change() {
+        // A public install stopped in Recovery after winget answered 0x8A150010 at readiness. With only an
+        // unsupported Node.js installed the bootstrap cannot succeed, so Install refuses while nothing changed.
+        let error =
+            ensure_mcp_node_supported(Some(McpNode::Unsupported("Node.js v26.13.1 (x64)".into())))
+                .expect_err("an unsupported Node.js is refused");
+        let message = planning_user_message(error);
+        assert!(
+            message.starts_with("HOI4 Agent Tools needs Node.js 24 LTS"),
+            "{message}"
+        );
+        assert!(message.contains("v26.13.1"), "{message}");
+        assert!(message.ends_with("Nothing was changed."), "{message}");
+        assert!(!message.contains("exit code"), "{message}");
+        for allowed in [
+            None,
+            Some(McpNode::Absent),
+            Some(McpNode::Supported("v24.22.0".into())),
+        ] {
+            assert!(ensure_mcp_node_supported(allowed).is_ok());
+        }
     }
 
     pub(super) fn test_state_guard() -> MutexGuard<'static, ()> {

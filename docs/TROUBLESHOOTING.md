@@ -222,7 +222,8 @@ Keep the verified backup until recovery finishes.
 
 **Cause:** Setup started HOI4 Agent Tools to check it, and it did not answer as expected. A missing or too old Node.js is the most common cause, but this message alone does not say which.
 
-**Fix:** On Windows, Setup installs the Node.js LTS with winget when it is missing, then prepares HOI4 Agent Tools.
+**Fix:** On Windows, Setup installs the official Node.js 24 for your user when no Node.js is installed, then prepares HOI4 Agent Tools.
+If another Node.js version is installed (the newest LTS, 26, is not supported yet), the review screen lists it and Install stops before any file changes. Install Node.js 24 LTS from [nodejs.org](https://nodejs.org/en/download), or uninstall the other version, then choose **Check again**.
 On Linux, install Node.js 22.19 or newer (or 24) from your package manager so it is at `/usr/bin/node`; see the [Linux guide](LINUX.md).
 Use **Manage an existing project**, choose **Repair installation**, and review the changes before applying them so the bootstrap can run again.
 Afterward, use **Refresh checks** on **Project ready**, or **Check integration** if offered.
