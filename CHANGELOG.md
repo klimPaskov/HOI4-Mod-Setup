@@ -4,6 +4,10 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.9.7 - 2026-11-28
+
+- Setting up HOI4 Agent Tools on a Windows PC without Node.js now works: the setup package installs the official Node.js 24 for your user. Before, it stopped near the end with exit code 2316632080.
+- Two dependencies (cookie and url) are updated for security fixes.
 - On Windows, the review screen now shows whether Node.js for HOI4 Agent Tools is found or will be installed by setup. If only an unsupported version is installed (such as Node.js 26), Install stops before any file changes and says to install Node.js 24 LTS.
 - After a setup that stopped because Node.js could not be installed, the recovery screen now gives the right next step instead of a raw error code.
 - The 3D models workflow screens and guides now say that models are made in Tripo, which needs no key, and that a Meshy key is optional and only for old Meshy jobs.
