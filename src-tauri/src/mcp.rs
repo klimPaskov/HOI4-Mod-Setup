@@ -1052,7 +1052,7 @@ fn resolved_node() -> Result<PathBuf, AppError> {
         }
     }
     Err(AppError::Process(
-        "the reviewed MCP package requires Node.js LTS".into(),
+        "the reviewed MCP package requires Node.js 24 LTS, or Node.js 22.19 or later".into(),
     ))
 }
 

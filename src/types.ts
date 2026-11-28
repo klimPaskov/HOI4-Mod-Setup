@@ -690,7 +690,8 @@ export interface AgentSetupResult {
 export interface SetupRequirement {
   id: string;
   label: string;
-  status: "ready" | "missing";
+  /** "installs": not present, and setup installs it itself (Node.js on Windows). */
+  status: "ready" | "installs" | "missing";
   /** What was found and, when missing, the safe next step. */
   detail: string;
 }

@@ -3392,7 +3392,12 @@ describe("recovery guidance", () => {
     }
     expect(recoveryNextStep("Python was not found", true, "windows")).toMatch(/python[.]org.*PATH/);
     expect(recoveryNextStep("Python was not found", true, "linux")).toMatch(/python3/);
-    expect(recoveryNextStep("npm was not found", true, "windows")).toMatch(/nodejs[.]org.*winget/);
+    expect(recoveryNextStep("npm was not found", true, "windows")).toMatch(/Node[.]js 24 LTS from nodejs[.]org/);
+    expect(recoveryNextStep("npm was not found", true, "windows")).not.toMatch(/winget install/);
+    // The exact failure a public user hit: winget's 0x8A150010 from the old current-user Node.js install.
+    const wingetFailure = "transaction error: readiness is blocked; success lock was not written: mcp.hoi4: MCP package setup failed (exit=1, timed_out=false): A reviewed MCP setup command failed with exit code 2316632080.";
+    expect(recoveryNextStep(wingetFailure, true, "windows")).toMatch(/^Choose Undo changes .* set up again[.] When Node[.]js is missing, setup now installs Node[.]js 24 for you/);
+    expect(recoveryNextStep(wingetFailure, true, "windows")).not.toMatch(/Copy diagnostics/);
     expect(recoveryNextStep("npm was not found", true, "linux")).toContain("/usr/bin/node");
     expect(recoveryNextStep("something else", false)).toMatch(/Copy diagnostics/);
   });
